@@ -1,0 +1,55 @@
+{
+  "schema": "gsea.eval.scorecard.v1",
+  "protocol": {
+    "benchmark": "terminal-bench-2.1",
+    "dataset": "terminal-bench/terminal-bench-2-1",
+    "dataset_ref": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "harness": "harbor",
+    "primary_metric": "accuracy",
+    "expected_tasks": 89,
+    "minimum_attempts_per_task": 5
+  },
+  "harness_version": "0.22.0",
+  "agent": "gsea",
+  "agent_version": "sha256-609376cf7a7b",
+  "model": "openai/gpt-5.6-sol",
+  "reasoning_effort": "high",
+  "primary_metric": {
+    "name": "accuracy",
+    "value_percent": 0,
+    "standard_error_percent": 0,
+    "successful": 0,
+    "total": 1
+  },
+  "coverage": {
+    "expected_tasks": 89,
+    "observed_tasks": 1,
+    "minimum_attempts_per_task": 1,
+    "maximum_attempts_per_task": 1,
+    "trials": 1,
+    "successful_trials": 0,
+    "failed_trials": 1,
+    "errored_trials": 1,
+    "disqualified_trials": 0
+  },
+  "protocol_compliance": {
+    "comparable": false,
+    "official_audit_passed": false,
+    "violations": [
+      "every task requires at least 5 trials; observed minimum is 1",
+      "expected 89 tasks, observed 1"
+    ],
+    "warnings": [
+      "local score uses the official metric, but leaderboard certification additionally requires canonical task digests and trajectory/reward-hacking audit"
+    ]
+  },
+  "metadata": {
+    "dataset_ref": "terminal-bench/terminal-bench-2-1@sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+    "disqualified_trials": 0,
+    "exception_counts": {
+      "RewardFileNotFoundError": 1
+    },
+    "harbor_source": "terminal-bench/terminal-bench-2-1",
+    "reward_audit_applied": false
+  }
+}

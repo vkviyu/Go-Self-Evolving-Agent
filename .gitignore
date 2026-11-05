@@ -1,0 +1,9 @@
+/.local-agent/
+/bin/
+/local-agent
+/coverage.out
+*.prof
+*.test
+__pycache__/
+*.py[cod]
+/testdata/

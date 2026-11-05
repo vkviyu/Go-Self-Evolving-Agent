@@ -1,0 +1,17 @@
+{
+  "manifest": {
+    "PluginID": "example-echo",
+    "Tool": {
+      "Name": "extension_echo",
+      "Revision": "echo-v1",
+      "Description": "Echo an input JSON object without host access",
+      "RiskClass": "pure",
+      "InputSchema": {"type": "object"}
+    },
+    "Timeout": 1000000000
+  },
+  "source": "package main\nimport \"encoding/json\"\nfunc Invoke(input json.RawMessage) (json.RawMessage, error) { return input, nil }\n",
+  "cases": [
+    {"name": "echo", "input": {"hello": "world"}, "expected": {"hello": "world"}}
+  ]
+}

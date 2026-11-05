@@ -1,0 +1,5 @@
+datasets==5.0.1
+harbor==0.22.0
+inspect-ai==0.3.262
+swebench==5.0.2
+terminal-bench==0.2.18
