@@ -10,7 +10,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
 
@@ -38,9 +38,9 @@ func (ledger interruptedUsageLedger) SettleReservation(ctx context.Context, id s
 	return ledger.DurableReservationLedger.SettleReservation(ctx, id, record)
 }
 
-func openAccountingDB(t *testing.T, path string) (*sqlitestore.Database, orchestration.ActorScope) {
+func openAccountingDB(t *testing.T, path string) (*testfixture.Database, orchestration.ActorScope) {
 	t.Helper()
-	database, err := sqlitestore.Open(context.Background(), path)
+	database, err := testfixture.Open(t, context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

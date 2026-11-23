@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
 func TestLoadTeamSnapshotCombinesDurableProjections(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func (reader fakeUsageReader) UsageReport(_ context.Context, query tokenusage.Us
 }
 
 func TestLoadTeamSnapshotOverlaysLiveActivityAndUsage(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,9 +12,12 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/vkviyu/go-self-evolving-agent/internal/experienceport"
+	"github.com/vkviyu/go-self-evolving-agent/internal/modeltelemetry"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
+	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
 type recordingModel struct {
@@ -33,6 +36,12 @@ type recordingModel struct {
 	background        backgroundState
 	replay            *journalReplay
 	receipt           modelReceipt
+	toolSnapshot      *tool.Snapshot
+	openingInput      string
+	experienceContext *experienceport.Context
+	experienceRetry   *experienceJob
+	budgetSessionID   session.ID
+	liveSink          EventSink
 }
 
 var _ model.BaseChatModel = (*recordingModel)(nil)
@@ -46,6 +55,9 @@ func (m *recordingModel) Generate(ctx context.Context, input []*schema.Message, 
 	if err != nil {
 		return nil, err
 	}
+	if m.factory != nil && m.factory.tokenizer != nil {
+		m.emitLive(ctx, m.modelLifecycleEvent(EventContextTokenCountingStarted))
+	}
 	estimated := m.countRequestInput(input, options)
 	requestID := m.requestID()
 	if err := m.reserve(ctx, estimated, requestID, options); err != nil {
@@ -55,10 +67,15 @@ func (m *recordingModel) Generate(ctx context.Context, input []*schema.Message, 
 		m.releaseUnsent(ctx, requestID, err.Error())
 		return nil, fmt.Errorf("record model request: %w", err)
 	}
+	if err := m.checkExperience(ctx); err != nil {
+		m.releaseUnsent(ctx, requestID, err.Error())
+		return nil, err
+	}
 	if err := m.markDispatched(ctx, requestID); err != nil {
 		m.releaseUnsent(ctx, requestID, err.Error())
 		return nil, err
 	}
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelRequestStarted))
 	response, err := m.inner.Generate(ctx, input, options...)
 	if err != nil {
 		return nil, m.failRequest(ctx, requestID, err, false)
@@ -66,6 +83,7 @@ func (m *recordingModel) Generate(ctx context.Context, input []*schema.Message, 
 	if response == nil {
 		return nil, m.failRequest(ctx, requestID, errors.New("model returned a nil message"), false)
 	}
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelResponseStarted))
 	if err := m.recordAssistantMessage(ctx, response, false, requestID); err != nil {
 		return nil, fmt.Errorf("record assistant message: %w", err)
 	}
@@ -85,6 +103,9 @@ func (m *recordingModel) Stream(ctx context.Context, input []*schema.Message, op
 	if err != nil {
 		return nil, err
 	}
+	if m.factory != nil && m.factory.tokenizer != nil {
+		m.emitLive(ctx, m.modelLifecycleEvent(EventContextTokenCountingStarted))
+	}
 	estimated := m.countRequestInput(input, options)
 	requestID := m.requestID()
 	if err := m.reserve(ctx, estimated, requestID, options); err != nil {
@@ -94,10 +115,16 @@ func (m *recordingModel) Stream(ctx context.Context, input []*schema.Message, op
 		m.releaseUnsent(ctx, requestID, err.Error())
 		return nil, fmt.Errorf("record streaming model request: %w", err)
 	}
+	if err := m.checkExperience(ctx); err != nil {
+		m.releaseUnsent(ctx, requestID, err.Error())
+		return nil, err
+	}
 	if err := m.markDispatched(ctx, requestID); err != nil {
 		m.releaseUnsent(ctx, requestID, err.Error())
 		return nil, err
 	}
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelRequestStarted))
+	ctx = modeltelemetry.CaptureStream(ctx)
 	upstream, err := m.inner.Stream(ctx, input, options...)
 	if err != nil {
 		return failedMessageStream(m.failRequest(ctx, requestID, err, true)), nil
@@ -106,6 +133,7 @@ func (m *recordingModel) Stream(ctx context.Context, input []*schema.Message, op
 		streamErr := errors.New("model returned a nil stream")
 		return failedMessageStream(m.failRequest(ctx, requestID, streamErr, true)), nil
 	}
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelResponseStarted))
 
 	reader, writer := schema.Pipe[*schema.Message](16)
 	go func() {
@@ -177,6 +205,21 @@ func (m *recordingModel) Stream(ctx context.Context, input []*schema.Message, op
 	return reader, nil
 }
 
+// emitLive delivers presentation-only state through the request context. The
+// lifecycle boundary must not be dropped: otherwise the TUI can remain in
+// "Preparing request" after the provider call has already started. A closed
+// or canceled consumer still releases the provider through ctx.
+func (m *recordingModel) emitLive(ctx context.Context, event Event) {
+	if m == nil || m.liveSink == nil {
+		return
+	}
+	_ = m.liveSink(ctx, event)
+}
+
+func (m *recordingModel) modelLifecycleEvent(eventType EventType) Event {
+	return Event{Type: eventType, TurnID: m.turnID, Purpose: m.purpose}
+}
+
 func cloneMessage(message *schema.Message) (*schema.Message, error) {
 	encoded, err := json.Marshal(message)
 	if err != nil {
@@ -223,33 +266,60 @@ func (m *recordingModel) recordModelRequest(ctx context.Context, input []*schema
 		"request_sequence":       m.requestSequence.Load(),
 		"purpose":                m.purpose,
 	}
+	if m.factory != nil && !m.factory.config.Execution.IsZero() {
+		payload["execution"] = m.factory.config.Execution
+	}
 	if common.MaxTokens != nil {
 		payload["output_token_limit"] = *common.MaxTokens
 	}
 	if streaming {
 		payload["stream"] = true
 	}
+	if m.purpose == "experience" {
+		// Retain the original auxiliary evidence, not only its token estimate.
+		payload["messages"] = input
+		payload["budget_session_id"] = m.usageSessionID()
+		payload["actor_scope"] = m.factory.config.ActorScope
+	}
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelRequestPersistenceStarted))
+	// Persist the source sequence before mirroring usage. A failed mirror must
+	// never allow the next retry to reuse this request identity.
 	_, err := m.events.Append(ctx, m.sessionID, session.AnySequence, session.PendingEvent{
 		Type:              session.EventModelRequested,
 		CorrelationID:     m.turnID,
 		RuntimeSnapshotID: m.runtimeSnapshotID,
 		Payload:           session.MustJSONPayload(payload),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return m.recordHostMaintenanceUsage(ctx, session.EventModelRequested, payload)
 }
 
 func (m *recordingModel) recordAssistantMessage(ctx context.Context, message *schema.Message, streaming bool, requestID string) error {
+	// The provider response is already complete when this method runs. Its
+	// transcript event and usage settlement must survive a turn deadline or
+	// cancellation so the caller can classify the finished turn correctly.
+	durable, cancel := durabilityContext(ctx)
+	defer cancel()
 	payload := map[string]any{
 		"turn_id":    m.turnID,
 		"content":    message.Content,
 		"tool_calls": message.ToolCalls,
 		"request_id": requestID,
+		"purpose":    m.purpose,
+	}
+	if m.factory != nil && !m.factory.config.Execution.IsZero() {
+		payload["execution"] = m.factory.config.Execution
+	}
+	if m.purpose == "experience" {
+		payload["message"] = message
 	}
 	if m.purpose == "" && m.receipt.RawDigest != "" {
 		m.receipt.Response = message
 		payload["receipt"] = m.receipt
 	}
-	if err := m.settleUsage(ctx, requestID, message); err != nil {
+	if err := m.settleUsage(durable, requestID, message); err != nil {
 		return err
 	}
 	if message.ResponseMeta == nil || message.ResponseMeta.Usage == nil {
@@ -273,21 +343,45 @@ func (m *recordingModel) recordAssistantMessage(ctx context.Context, message *sc
 	}
 	if streaming {
 		payload["stream"] = true
+		if observation := modeltelemetry.ReadStream(ctx); observation != nil {
+			payload["transport"] = observation
+		}
 	}
-	_, err := m.events.Append(ctx, m.sessionID, session.AnySequence, session.PendingEvent{
+	if m.purpose == "experience" {
+		payload["budget_session_id"] = m.usageSessionID()
+		payload["actor_scope"] = m.factory.config.ActorScope
+	}
+	_, err := m.events.Append(durable, m.sessionID, session.AnySequence, session.PendingEvent{
 		Type:              session.EventAssistantMessage,
 		CorrelationID:     m.turnID,
 		RuntimeSnapshotID: m.runtimeSnapshotID,
 		Payload:           session.MustJSONPayload(payload),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return m.recordHostMaintenanceUsage(durable, session.EventAssistantMessage, payload)
 }
 
 func (m *recordingModel) reserve(ctx context.Context, estimated int, requestID string, options []model.Option) error {
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelBudgetReservationStarted))
 	output := 0
 	common := model.GetCommonOptions(nil, options...)
 	if common.MaxTokens != nil {
 		output = *common.MaxTokens
+	}
+	var contract orchestration.ExecutionContract
+	if m.factory != nil {
+		contract = m.factory.config.ExecutionContract
+	}
+	if contract.MaxOutputTokens > 0 && (output == 0 || contract.MaxOutputTokens < output) {
+		output = contract.MaxOutputTokens
+	}
+	if contract.MaxInputTokens > 0 && estimated > contract.MaxInputTokens {
+		return &orchestration.ExecutionStop{Kind: orchestration.ExecutionBudget, Cause: fmt.Errorf("%w: execution input allowance exceeded", tokenusage.ErrBudgetExceeded)}
+	}
+	if contract.MaxTotalTokens > 0 && estimated+output > contract.MaxTotalTokens {
+		return &orchestration.ExecutionStop{Kind: orchestration.ExecutionBudget, Cause: fmt.Errorf("%w: execution total allowance exceeded", tokenusage.ErrBudgetExceeded)}
 	}
 	estimate := tokenusage.Snapshot{Input: estimated, Output: output, Total: estimated + output}
 	m.estimates.Store(requestID, estimate)
@@ -306,9 +400,18 @@ func (m *recordingModel) reserve(ctx context.Context, estimated int, requestID s
 			cost, _ = pricing.CostMicros(m.factory.config.Provider, m.factory.config.Model, estimate)
 		}
 	}
+	if contract.MaxCostMicros > 0 && cost > contract.MaxCostMicros {
+		m.estimates.Delete(requestID)
+		return &orchestration.ExecutionStop{Kind: orchestration.ExecutionBudget, Cause: fmt.Errorf("%w: execution cost allowance exceeded", tokenusage.ErrBudgetExceeded)}
+	}
 	reservation, err := ledger.Reserve(ctx, tokenusage.ReservationRequest{
 		TeamID: m.factory.config.ActorScope.TeamID, AgentID: m.factory.config.ActorScope.AgentID,
 		RunID: m.factory.config.ActorScope.RunID, TurnID: m.turnID, RequestID: requestID,
+		ContractHash: m.factory.config.Execution.ContractHash,
+		ExecutionBudget: tokenusage.BudgetLimits{
+			MaxInputTokens: contract.MaxInputTokens, MaxOutputTokens: contract.MaxOutputTokens,
+			MaxTotalTokens: contract.MaxTotalTokens, MaxCostMicros: contract.MaxCostMicros,
+		},
 		InputTokens: estimated, OutputTokens: output, TotalTokens: estimated + output, CostMicros: cost,
 		ModelProfile: m.factory.config.ModelProfile, Provider: m.factory.config.Provider, Model: m.factory.config.Model,
 	})
@@ -349,6 +452,9 @@ func (m *recordingModel) recordModelFailure(ctx context.Context, requestID strin
 	payload := map[string]any{"turn_id": m.turnID, "request_id": requestID, "purpose": m.purpose, "error": cause.Error()}
 	if streaming {
 		payload["stream"] = true
+		if observation := modeltelemetry.ReadStream(ctx); observation != nil {
+			payload["transport"] = observation
+		}
 	}
 	_, err := m.events.Append(recordContext, m.sessionID, session.AnySequence, session.PendingEvent{
 		Type:              session.EventModelFailed,

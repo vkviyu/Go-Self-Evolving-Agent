@@ -34,7 +34,7 @@ func isBackgroundInput(content string) bool {
 // scheduleBackgroundCheck starts the next idle check. Exactly one check chain
 // runs: every check schedules its successor once it has finished.
 func (model *Model) scheduleBackgroundCheck() tea.Cmd {
-	if model.background == nil {
+	if model.ctx == nil || model.ctx.Err() != nil || model.background == nil {
 		return nil
 	}
 	return tea.Tick(backgroundCheckInterval, func(time.Time) tea.Msg { return backgroundTickMsg{} })
@@ -59,6 +59,9 @@ func (model *Model) wakeAllowed() bool {
 
 // checkBackground counts the available Agent messages when a wake is allowed.
 func (model *Model) checkBackground() tea.Cmd {
+	if model.ctx == nil || model.ctx.Err() != nil {
+		return nil
+	}
 	if !model.wakeAllowed() {
 		return model.scheduleBackgroundCheck()
 	}

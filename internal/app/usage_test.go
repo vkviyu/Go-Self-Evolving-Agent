@@ -15,8 +15,8 @@ import (
 func TestReadSessionUsageOwnsDatabaseAndIncludesOnlyItsTeam(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
-	a, err := Open(ctx, cfg)
+	cfg := testConfig(t, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestReadSessionUsageOwnsDatabaseAndIncludesOnlyItsTeam(t *testing.T) {
 func TestOfflineUsageFailureReleasesOwnership(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
+	cfg := testConfig(t, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
 	if _, err := ReadSessionUsage(ctx, cfg, session.ID("missing")); !errors.Is(err, orchestration.ErrNotFound) {
 		t.Fatalf("missing root error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestOfflineUsageFailureReleasesOwnership(t *testing.T) {
 	if _, err := ReadSessionUsage(canceled, cfg, "missing"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled read error = %v", err)
 	}
-	a, err := Open(ctx, cfg)
+	a, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatalf("failed offline reads retained ownership: %v", err)
 	}

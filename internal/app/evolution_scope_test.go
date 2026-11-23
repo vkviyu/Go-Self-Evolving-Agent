@@ -13,7 +13,7 @@ import (
 
 func TestStrategyCallerRequiresMatchingDurableRootAndFactory(t *testing.T) {
 	ctx := context.Background()
-	a, err := Open(ctx, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, ctx, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

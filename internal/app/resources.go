@@ -94,7 +94,7 @@ func (a *App) Artifacts() *artifact.Store {
 // Approver decides snapshot apply plans unless auto merge is configured;
 // without one, snapshot merges stay queued for a session that can ask.
 func (a *App) NewMergeExecutor(artifacts workspacecoord.ArtifactReader, approver policy.Approver) (*workspacecoord.MergeExecutor, error) {
-	if a == nil || a.database == nil || a.coordinator == nil {
+	if a == nil || a.repositories == nil || a.coordinator == nil {
 		return nil, errors.New("application workspace coordination is unavailable")
 	}
 	if artifacts == nil {
@@ -110,12 +110,12 @@ func (a *App) NewMergeExecutor(artifacts workspacecoord.ArtifactReader, approver
 // configured auto-merge setting and otherwise ask approver. A configured
 // post-merge check gates the tasks of every applied merge.
 func (a *App) newMergeExecutor(artifacts workspacecoord.ArtifactReader, approver policy.Approver) (*workspacecoord.MergeExecutor, error) {
-	executor, err := workspacecoord.NewMergeExecutor(a.database.Orchestration(), a.coordinator, a.coordinator.Worktrees, artifacts, a.database.Orchestration())
+	executor, err := workspacecoord.NewMergeExecutor(a.repositories, a.coordinator, a.coordinator.Worktrees, artifacts, a.repositories)
 	if err != nil {
 		return nil, err
 	}
 	executor.AutoMerge = a.config.Agents.AutoMerge
-	executor.Approver = mergeApprover(approver, a.database.Orchestration())
+	executor.Approver = mergeApprover(approver, a.repositories)
 	if command := a.config.Agents.PostMergeCheck; command != "" && a.workspace != nil {
 		executor.Verifier = postMergeCheck{workspace: a.workspace, command: command, timeout: a.config.Agents.PostMergeCheckTimeout}
 	}

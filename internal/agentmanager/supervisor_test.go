@@ -12,7 +12,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	appTool "github.com/vkviyu/go-self-evolving-agent/internal/tool"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacedomain"
@@ -70,13 +70,13 @@ func (runner *testRunner) Run(ctx context.Context, request RunRequest) (orchestr
 	return orchestration.AgentResult{Status: orchestration.ResultCanceled, Error: ctx.Err().Error()}, ctx.Err()
 }
 
-func newSupervisorTest(t *testing.T, runner Runner, maxLive, maxDepth, maxChildren int) (*Supervisor, *sqlitestore.OrchestrationStore, orchestration.RootThread) {
+func newSupervisorTest(t *testing.T, runner Runner, maxLive, maxDepth, maxChildren int) (*Supervisor, *testfixture.OrchestrationStore, orchestration.RootThread) {
 	return newSupervisorTestWithRunning(t, runner, 1, maxLive, maxDepth, maxChildren)
 }
 
-func newSupervisorTestWithRunning(t *testing.T, runner Runner, maxRunning, maxLive, maxDepth, maxChildren int) (*Supervisor, *sqlitestore.OrchestrationStore, orchestration.RootThread) {
+func newSupervisorTestWithRunning(t *testing.T, runner Runner, maxRunning, maxLive, maxDepth, maxChildren int) (*Supervisor, *testfixture.OrchestrationStore, orchestration.RootThread) {
 	t.Helper()
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestSupervisorDoesNotCompleteTaskForBlockedOrPartialGoal(t *testing.T) {
 }
 
 func TestSupervisorRecoveryDispatchesDurableReadyTask(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +536,7 @@ func TestSupervisorDispatchesDependentTaskAfterCompletion(t *testing.T) {
 }
 
 func TestTaskVerifyToolRequiresReviewerProfile(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1151,7 +1151,7 @@ func TestTaskControlToolBindingsUseActorScope(t *testing.T) {
 }
 
 func TestSupervisorRecoversDurableRunningChild(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1195,7 +1195,7 @@ func TestSupervisorRecoversDurableRunningChild(t *testing.T) {
 }
 
 func TestSupervisorPersistsSeededContextAtSpawn(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1232,7 +1232,7 @@ func TestSupervisorPersistsSeededContextAtSpawn(t *testing.T) {
 }
 
 func TestSupervisorReconcilesDurableWaitSet(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1293,7 +1293,7 @@ func TestSupervisorReconcilesDurableWaitSet(t *testing.T) {
 }
 
 func TestAgentWaitToolCreatesDurableSuspension(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

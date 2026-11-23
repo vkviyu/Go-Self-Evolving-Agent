@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
@@ -83,15 +84,125 @@ func runAction(t *testing.T, model *Model, command tea.Cmd) {
 func TestAgentsPanelShowsLiveActivityTokensAndSummary(t *testing.T) {
 	model, _ := newPanelModel(t)
 	panel := ansi.Strip(model.renderActivityPanel(model.width - 2))
-	for _, expected := range []string{"agents 1 running 1 queued", "merges 1 pending", "agent-root (root)  idle", "tool read_file", "12k tok", "› agent agent-root"} {
+	for _, expected := range []string{"Child agents 2 · 1 running · 1 queued", "merges 1 pending", "Ctrl+G", "agent-root (root)  idle", "tool read_file", "12k tok", "› agent agent-root"} {
 		if !strings.Contains(panel, expected) {
 			t.Fatalf("panel missing %q:\n%s", expected, panel)
 		}
 	}
 	model.toggleActivity()
-	status := ansi.Strip(model.renderStatus(model.width - 2))
-	if !strings.Contains(status, "agents 1 running 1 queued") {
-		t.Fatalf("status bar lacks the Agent summary: %q", status)
+	panel = ansi.Strip(model.renderActivityPanel(model.width - 2))
+	if !strings.Contains(panel, "● main") || !strings.Contains(panel, "↳ agent-child") || strings.Contains(panel, "merge merge-1") {
+		t.Fatalf("collapsed panel lacks the quick Agent switcher: %q", panel)
+	}
+}
+
+func TestMouseSwitchesRunningAgentsWithoutChangingRootInput(t *testing.T) {
+	model, _ := newPanelModel(t)
+	model.toggleActivity()
+	model.activity.Agents[2].SessionID = "session-other"
+	model.transcripts = fakeTranscriptReader{sessions: map[session.ID][]*schema.Message{
+		"session-child": {schema.AssistantMessage("first child", nil)},
+		"session-other": {schema.AssistantMessage("second child", nil)},
+	}}
+	model.blocks = []transcriptBlock{{kind: blockUser, content: "root question"}}
+	model.busy = true
+	model.input.SetValue("保留输入草稿")
+	model.resize(84, 24)
+	click := func(panelRow int) tea.Cmd {
+		_, command := model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: model.headerHeight() + 1 + panelRow})
+		return command
+	}
+	runAction(t, model, click(2))
+	if model.viewer == nil || model.viewer.agentID != "agent-child" || !strings.Contains(ansi.Strip(model.transcriptContent), "first child") {
+		t.Fatalf("first Agent not opened: %q", model.transcriptContent)
+	}
+	runAction(t, model, click(3))
+	if model.viewer == nil || model.viewer.agentID != "agent-queued" || !strings.Contains(ansi.Strip(model.transcriptContent), "second child") {
+		t.Fatalf("second Agent not opened: %q", model.transcriptContent)
+	}
+	click(1)
+	if model.viewer != nil || !model.busy || model.input.Value() != "保留输入草稿" || !strings.Contains(ansi.Strip(model.transcriptContent), "root question") {
+		t.Fatal("clicking main changed the active root turn, input, or transcript")
+	}
+}
+
+func TestMouseOpensAgentFromScrolledFullPanel(t *testing.T) {
+	model, _ := newPanelModel(t)
+	for index := range 10 {
+		agent := model.activity.Agents[1]
+		agent.ID = orchestration.AgentID("agent-extra-" + string(rune('a'+index)))
+		model.activity.Agents = append(model.activity.Agents, agent)
+	}
+	model.resize(90, 16)
+	const y = 4
+	for range 11 {
+		model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 2, Y: y})
+	}
+	selected, ok := model.selectedAgent()
+	if !ok || selected.ID != "agent-extra-i" {
+		t.Fatalf("wheel did not scroll the Agents list: %v", selected.ID)
+	}
+	for index, row := range model.activityPanelRows(model.width - 2) {
+		if row.selectable && row.index == model.panelSelected {
+			_, command := model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: model.headerHeight() + 1 + index})
+			runAction(t, model, command)
+			if model.viewer == nil || model.viewer.agentID != selected.ID {
+				t.Fatal("mouse hit the wrong Agent after scrolling")
+			}
+			return
+		}
+	}
+	t.Fatal("selected Agent is outside the visible panel rows")
+}
+
+func TestAgentsOverviewShowsFinishedChildrenAndOpensDuringTurn(t *testing.T) {
+	model, _ := newPanelModel(t)
+	model.toggleActivity()
+	model.activity.Agents[1].State = orchestration.AgentFailed
+	model.activity.Agents[1].Activity = "failed"
+	model.activity.Agents[1].Result = &orchestration.AgentResult{Status: orchestration.ResultFailed, Error: "model connection lost"}
+	model.activity.Agents[2].State = orchestration.AgentCanceled
+	model.activity.Agents[2].InitialPrompt = "Review chapter two\nand list errors"
+	model.busy = true
+	model.resize(80, 24)
+	view := ansi.Strip(model.View())
+	if !strings.Contains(view, "Child agents 2 · 1 failed · 1 canceled") {
+		t.Fatalf("finished Agents disappeared from the overview:\n%s", view)
+	}
+	model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: model.headerHeight() + 1, X: 2})
+	if !model.showActivity || !model.busy {
+		t.Fatal("activity click did not open the panel during the turn")
+	}
+	panel := ansi.Strip(model.renderActivityPanel(model.width - 2))
+	for _, expected := range []string{"model connection lost", "Review chapter two and list errors"} {
+		if !strings.Contains(panel, expected) {
+			t.Fatalf("panel missing %q:\n%s", expected, panel)
+		}
+	}
+	model.toggleActivity()
+	model.input.SetValue("/agents")
+	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.showActivity || !model.busy || model.input.Value() != "" {
+		t.Fatal("/agents did not open the panel without sending another turn")
+	}
+	model.toggleActivity()
+	model.showSessionInfo = true
+	model.input.SetValue(strings.Repeat("draft ", 20))
+	model.resize(24, 8)
+	if view := ansi.Strip(model.View()); !strings.Contains(view, "Agents 2") || !strings.Contains(view, "Ctrl+G") || lipgloss.Height(view) != 8 {
+		t.Fatalf("small terminal lost the count or the frame layout:\n%s", view)
+	}
+}
+
+func TestAgentRefreshKeepsSelectedIdentityAcrossStateChange(t *testing.T) {
+	model, _ := newPanelModel(t)
+	model.panelSelected = 1
+	next := model.activity
+	next.Agents[1].State = orchestration.AgentCompleted
+	model.Update(activityRefreshMsg{snapshot: next})
+	selected, ok := model.selectedAgent()
+	if !ok || selected.ID != "agent-child" || selected.State != orchestration.AgentCompleted || model.panelSelected != 2 {
+		t.Fatalf("selected agent = %+v index=%d", selected, model.panelSelected)
 	}
 }
 

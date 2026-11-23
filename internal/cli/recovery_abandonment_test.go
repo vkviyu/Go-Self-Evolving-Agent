@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
 )
 
 type unreadAbandonmentInput struct{ t *testing.T }
@@ -33,7 +31,7 @@ func TestAbandonmentFlagsRequireExplicitTargetReasonAndConsent(t *testing.T) {
 		{"--session", "root", "--confirm-abandon"},
 		{"--session", "root", "--abandon-reason", "reviewed"},
 	}
-	for _, extra := range [][]string{{"--abandon-goal", "goal"}, {"--resume-turn", "target"}, {"--list-recoveries"}, {"--prompt-file", "-"}, {"--evaluation-mode", "--workspace", "/isolated"}} {
+	for _, extra := range [][]string{{"--resume-turn", "target"}, {"--list-recoveries"}, {"--prompt-file", "-"}, {"--evaluation-mode", "--workspace", "/isolated"}} {
 		invalid = append(invalid, append(append([]string{}, valid...), extra...))
 	}
 	for _, args := range invalid {
@@ -44,16 +42,13 @@ func TestAbandonmentFlagsRequireExplicitTargetReasonAndConsent(t *testing.T) {
 }
 
 func TestOfflineAbandonmentNeverStartsProviderSupervisorOrReadsPrompt(t *testing.T) {
-	t.Setenv(config.HomeEnvironment, t.TempDir())
 	for _, activeChild := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "dependent-child"}[activeChild], func(t *testing.T) {
+			cliATEEnvironment(t)
 			ctx := context.Background()
 			directory := t.TempDir()
-			path := filepath.Join(directory, "sessions.db")
-			database, err := sqlitestore.Open(ctx, path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			cfg := cliCommandConfig(t, directory, t.TempDir())
+			database := openCLIApp(t, cfg)
 			root, _, err := database.Orchestration().EnsureRootThread(ctx, orchestration.RootThreadSeed{SessionID: "root"})
 			if err != nil {
 				t.Fatal(err)
@@ -62,19 +57,16 @@ func TestOfflineAbandonmentNeverStartsProviderSupervisorOrReadsPrompt(t *testing
 			if activeChild {
 				child = createRecoveryChild(t, database, root)
 			}
-			if _, err := database.SessionEvents().Append(ctx, "root", session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "target", Payload: []byte(`{}`)}); err != nil {
+			if _, err := database.Events().Append(ctx, "root", session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "target", Payload: []byte(`{}`)}); err != nil {
 				t.Fatal(err)
 			}
 			if err := database.Close(); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"chat", "--data-dir", directory, "--workspace", t.TempDir(), "--session", "root", "--abandon-turn", "target", "--abandon-reason", "reviewed", "--confirm-abandon"}
+			args := []string{"chat", "--data-dir", directory, "--workspace", cfg.WorkspaceDirectory, "--session", "root", "--abandon-turn", "target", "--abandon-reason", "reviewed", "--confirm-abandon"}
 			var stdout, stderr bytes.Buffer
 			exit := runWithDependencies(ctx, args, unreadAbandonmentInput{t}, &stdout, &stderr, dependencies{})
-			reopened, err := sqlitestore.Open(ctx, path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			reopened := openCLIApp(t, cfg)
 			defer reopened.Close()
 			if activeChild {
 				if exit == 0 || !strings.Contains(stderr.String(), "dependent work") {
@@ -84,7 +76,7 @@ func TestOfflineAbandonmentNeverStartsProviderSupervisorOrReadsPrompt(t *testing
 				if err != nil || unchanged.State != child.State || unchanged.Version != child.Version {
 					t.Fatalf("offline command started child recovery: %+v %v", unchanged, err)
 				}
-				if err := session.CheckRecovery(ctx, reopened.SessionEvents(), "root", "target"); err != nil {
+				if err := session.CheckRecovery(ctx, reopened.Events(), "root", "target"); err != nil {
 					t.Fatal("blocked request abandoned root", err)
 				}
 				return

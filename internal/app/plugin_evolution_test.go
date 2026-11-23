@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"testing"
 	"time"
 
@@ -17,8 +18,9 @@ func TestGeneratedPluginBuildVerifyApproveAndReopen(t *testing.T) {
 	if testing.Short() {
 		t.Skip("isolated Go to WASM evolution integration")
 	}
+	t.Setenv(pluginbuild.EnvGoRoot, runtime.GOROOT())
 	ctx := context.Background()
-	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
+	cfg := testConfig(t, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
 	application, err := Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

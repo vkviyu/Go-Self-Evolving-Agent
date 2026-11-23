@@ -36,7 +36,7 @@ requested terminal state is achieved. Do not inspect /tests or verifier files;
 they are evaluator-owned and unavailable during the agent phase."""
 
 REMOTE_ROOT = "/opt/gsea"
-REMOTE_BINARY = f"{REMOTE_ROOT}/local-agent"
+REMOTE_BINARY = f"{REMOTE_ROOT}/gsea"
 REMOTE_PROMPT = f"{REMOTE_ROOT}/task.txt"
 REMOTE_DATA = "/tmp/gsea-data"
 
@@ -152,7 +152,6 @@ class GSEAHarborAgent(BaseAgent):
             self.request_timeout,
             "--max-iterations",
             str(self.max_iterations),
-            "--goal-mode=false",
             "--system",
             SYSTEM_PROMPT,
         ]

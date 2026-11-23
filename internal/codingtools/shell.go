@@ -61,15 +61,9 @@ func (workspace *Workspace) shellUnlocked(ctx context.Context, raw json.RawMessa
 	if err != nil {
 		return nil, err
 	}
-	timeout := defaultShellTimeout
-	if args.TimeoutMS > 0 {
-		if args.TimeoutMS > 300000 {
-			return nil, errors.New("timeout_ms exceeds five minutes")
-		}
-		timeout = time.Duration(args.TimeoutMS) * time.Millisecond
+	if args.TimeoutMS < 0 || args.TimeoutMS > 300000 {
+		return nil, errors.New("timeout_ms must be between 1 and 300000 when supplied")
 	}
-	commandContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	before, err := snapshotWorkspace(ctx, operationRoot)
 	if err != nil {
 		return nil, fmt.Errorf("capture workspace before shell execution: %w", err)
@@ -98,6 +92,12 @@ func (workspace *Workspace) shellUnlocked(ctx context.Context, raw json.RawMessa
 		}
 		defer token.Close()
 		inherited = []*os.File{token}
+	}
+	commandContext := ctx
+	if args.TimeoutMS > 0 {
+		var cancel context.CancelFunc
+		commandContext, cancel = context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
+		defer cancel()
 	}
 	err = runner.Run(commandContext, sandbox.Request{
 		Command:          args.Command,

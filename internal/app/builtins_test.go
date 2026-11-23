@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
@@ -41,14 +40,16 @@ func TestBuildPolicyRequiresApprovalForInvocationTools(t *testing.T) {
 // Every first-party tool the production assembly registers must be named by
 // an explicit rule; falling through to the default denies it silently.
 func TestBuildPolicyNamesEveryRegisteredTool(t *testing.T) {
-	application, err := Open(context.Background(), config.Config{
+	application, err := testOpen(t, context.Background(), config.Config{
 		HomeDirectory: t.TempDir(), DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir(), CoordinationDirectory: t.TempDir(),
-		Goal: agentgoal.Config{Enabled: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = application.Close() })
+	if _, _, err := application.EnsureRootThread(t.Context(), "builtin-policy"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := application.NewSupervisor(agentmanager.Config{}); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestBuildPolicyNamesEveryRegisteredTool(t *testing.T) {
 			t.Errorf("registered tool %s has no policy rule", descriptor.Name)
 		}
 	}
-	for _, required := range []string{"task_verify", "agent_spawn", "merge_run", "goal_start"} {
+	for _, required := range []string{"task_verify", "agent_spawn", "merge_run"} {
 		if !names[required] {
 			t.Errorf("tool %s is not registered", required)
 		}

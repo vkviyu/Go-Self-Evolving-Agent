@@ -9,23 +9,22 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/model"
-	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/modelgateway"
+	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/retention"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 )
 
 func TestMaintenanceAndPluginCLIStayOffline(t *testing.T) {
-	t.Setenv(config.HomeEnvironment, t.TempDir())
+	cliATEEnvironment(t)
 	ctx := context.Background()
 	data, workspace := t.TempDir(), t.TempDir()
-	db, err := sqlitestore.Open(ctx, filepath.Join(data, "sessions.db"))
-	if err != nil {
+	db := openCLIApp(t, cliCommandConfig(t, data, workspace))
+	if _, _, err := db.Orchestration().EnsureRootThread(ctx, orchestration.RootThreadSeed{SessionID: "finished"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.SessionEvents().Append(ctx, "finished", session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "turn", Payload: []byte(`{}`)}, session.PendingEvent{Type: session.EventTurnCompleted, CorrelationID: "turn", Payload: []byte(`{}`)}); err != nil {
+	if _, err := db.Events().Append(ctx, "finished", session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "turn", Payload: []byte(`{}`)}, session.PendingEvent{Type: session.EventTurnCompleted, CorrelationID: "turn", Payload: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -67,7 +66,7 @@ func TestMaintenanceAndPluginCLIStayOffline(t *testing.T) {
 }
 
 func TestStrategyCLIUsesSharedChatConfigAndExplicitModelConsent(t *testing.T) {
-	t.Setenv(config.HomeEnvironment, t.TempDir())
+	cliATEEnvironment(t)
 	ctx := context.Background()
 	data, workspace := t.TempDir(), t.TempDir()
 	writeJSON := func(name string, value any) string {

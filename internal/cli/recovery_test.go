@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/conversation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
 )
 
 type headlessRecoveryFake struct {
@@ -72,20 +70,17 @@ func TestRecoveryFlagsRequireSelectionAndRejectNewWork(t *testing.T) {
 }
 
 func TestListRecoveriesDoesNotStartSupervisorOrProvider(t *testing.T) {
-	t.Setenv(config.HomeEnvironment, t.TempDir())
+	cliATEEnvironment(t)
 	ctx := context.Background()
 	directory := t.TempDir()
-	path := filepath.Join(directory, "sessions.db")
-	database, err := sqlitestore.Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cfg := cliCommandConfig(t, directory, t.TempDir())
+	database := openCLIApp(t, cfg)
 	root, _, err := database.Orchestration().EnsureRootThread(ctx, orchestration.RootThreadSeed{SessionID: "list-session"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	child := createRecoveryChild(t, database, root)
-	_, err = database.SessionEvents().Append(ctx, root.SessionID, session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "interrupted", Payload: session.MustJSONPayload(map[string]any{})})
+	_, err = database.Events().Append(ctx, root.SessionID, session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "interrupted", Payload: session.MustJSONPayload(map[string]any{})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +88,7 @@ func TestListRecoveriesDoesNotStartSupervisorOrProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	exit := runWithDependencies(ctx, []string{"chat", "--data-dir", directory, "--workspace", t.TempDir(), "--session", "list-session", "--list-recoveries"}, strings.NewReader("must not run"), &stdout, &stderr, dependencies{})
+	exit := runWithDependencies(ctx, []string{"chat", "--data-dir", directory, "--workspace", cfg.WorkspaceDirectory, "--session", "list-session", "--list-recoveries"}, unreadAbandonmentInput{t}, &stdout, &stderr, dependencies{})
 	if exit != 0 {
 		t.Fatalf("list executed model: exit=%d err=%s", exit, stderr.String())
 	}
@@ -101,11 +96,7 @@ func TestListRecoveriesDoesNotStartSupervisorOrProvider(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil || len(items) != 1 || items[0].TurnID != "interrupted" || items[0].Phase != "unavailable" {
 		t.Fatalf("output=%s err=%v", stdout.String(), err)
 	}
-	reopened, err := sqlitestore.Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = reopened.Close() })
+	reopened := openCLIApp(t, cfg)
 	unchanged, err := reopened.Orchestration().GetAgent(ctx, child.ID)
 	if err != nil || unchanged.State != orchestration.AgentRunning || unchanged.Version != child.Version {
 		t.Fatalf("listing recovered child: %#v %v", unchanged, err)

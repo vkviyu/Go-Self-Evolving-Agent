@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	contextArtifactBytes   = 24 << 10
+	// InlineToolResultBytes is the encoded result size that can enter model
+	// context directly. The artifact reader uses the same bound for its pages.
+	InlineToolResultBytes  = 24 << 10
 	contextArtifactPreview = 2 << 10
 )
 
@@ -27,7 +29,7 @@ func (f *Factory) externalizeToolResults(ctx context.Context, messages []*schema
 	copy(prepared, messages)
 	artifacts := make([]contextArtifact, 0)
 	for index, message := range messages {
-		if message == nil || message.Role != schema.Tool || len(message.Content) <= contextArtifactBytes {
+		if message == nil || message.Role != schema.Tool || len(message.Content) <= InlineToolResultBytes {
 			continue
 		}
 		reference, err := f.artifacts.Put(ctx, []byte(message.Content))
@@ -41,7 +43,7 @@ func (f *Factory) externalizeToolResults(ctx context.Context, messages []*schema
 			"content_bytes": len(message.Content),
 			"preview_head":  message.Content[:headEnd],
 			"preview_tail":  message.Content[tailStart:],
-			"retrieval":     "Use artifact_read with this reference and an offset to retrieve omitted content.",
+			"retrieval":     "Use artifact_read with this reference. Follow next_offset for additional pages.",
 		})
 		if err != nil {
 			return nil, nil, err

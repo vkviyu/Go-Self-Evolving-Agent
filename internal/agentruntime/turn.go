@@ -9,7 +9,6 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
@@ -29,10 +28,6 @@ type Turn struct {
 	baselineConfigID  string
 	strategyFailure   func(context.Context, error) error
 	runID             orchestration.RunID
-	goalMode          bool
-	goalActivation    agentgoal.Activation
-	admissionToken    string
-	admissionBind     func(context.Context, string, string) error
 	checkpointID      string
 	checkpoints       session.CheckpointStore
 	started           atomic.Bool
@@ -43,29 +38,23 @@ type Turn struct {
 
 // Result contains the final assistant response emitted by the loop.
 type Result struct {
-	TurnID            string
-	RuntimeSnapshotID string
-	Final             *schema.Message
-	Streamed          bool
-	GoalID            string
-	GoalState         agentgoal.State
-	GoalDecision      agentgoal.Decision
-	GoalStopReason    agentgoal.StopReason
-	GoalRounds        int
-	GoalReason        string
-	ContextUsage      *ContextUsage
+	TurnID                string
+	RuntimeSnapshotID     string
+	Final                 *schema.Message
+	Streamed              bool
+	ContextUsage          *ContextUsage
+	ExperienceMaintenance *ExperienceMaintenance
 }
 
 // Run executes an Eino loop using the supplied conversation messages. The
 // final message must be a new user message; earlier messages are model context.
 func (t *Turn) Run(ctx context.Context, messages []*schema.Message, sink EventSink) (Result, error) {
-	return t.RunWithAdmission(ctx, messages, sink, nil)
+	return t.RunWithBefore(ctx, messages, sink, nil)
 }
 
-// RunWithAdmission records the turn and its user input before invoking an
-// admission callback. This makes Goal round registration a recoverable part of
-// the same durable turn rather than a gap before persistence.
-func (t *Turn) RunWithAdmission(ctx context.Context, messages []*schema.Message, sink EventSink, before func(string) error) (Result, error) {
+// RunWithBefore records the turn and its user input before invoking the host
+// callback that performs any additional durable preparation.
+func (t *Turn) RunWithBefore(ctx context.Context, messages []*schema.Message, sink EventSink, before func(string) error) (Result, error) {
 	if err := t.begin(ctx); err != nil {
 		return Result{}, err
 	}
@@ -73,6 +62,10 @@ func (t *Turn) RunWithAdmission(ctx context.Context, messages []*schema.Message,
 		return Result{}, errors.New("Agent turn requires a final user message")
 	}
 	user := messages[len(messages)-1]
+	ctx = WithLiveSink(ctx, sink)
+	if t.recordedModel != nil {
+		t.recordedModel.openingInput = user.Content
+	}
 	return t.start(ctx, messages, sink, "", session.PendingEvent{
 		Type:              session.EventUserMessage,
 		CorrelationID:     t.turnID,
@@ -82,13 +75,6 @@ func (t *Turn) RunWithAdmission(ctx context.Context, messages []*schema.Message,
 			"content": user.Content,
 		}),
 	}, before)
-}
-
-// SetAdmission binds this Turn to a host-issued durable Goal admission. The
-// callback is deliberately owned by Conversation/its durable store so the
-// runtime does not depend on a particular Goal database implementation.
-func (t *Turn) SetAdmission(token string, bind func(context.Context, string, string) error) {
-	t.admissionToken, t.admissionBind = token, bind
 }
 
 // RunBackground executes a wake turn whose input is a block of Agent messages
@@ -137,10 +123,6 @@ func cancelOnDone(ctx context.Context) (adk.AgentRunOption, func() bool) {
 
 // start records the turn start with its opening input and runs Eino.
 func (t *Turn) start(ctx context.Context, messages []*schema.Message, sink EventSink, inputKind string, opening session.PendingEvent, before func(string) error) (Result, error) {
-	userContent := ""
-	if len(messages) > 0 && messages[len(messages)-1] != nil {
-		userContent = messages[len(messages)-1].Content
-	}
 	started := map[string]any{
 		"turn_id": t.turnID, "model_profile": t.modelProfile,
 		"provider": t.provider, "model": t.model,
@@ -148,13 +130,16 @@ func (t *Turn) start(ctx context.Context, messages []*schema.Message, sink Event
 		"loop_spec_id":             t.strategyID,
 		"base_execution_config_id": t.baselineConfigID,
 		"run_id":                   t.runID,
-		"goal_mode":                t.goalMode,
-		"goal_activation":          t.goalActivation,
-		"admission_token":          t.admissionToken,
 		"journal":                  turnJournal{Version: 1, Input: messages, Prepared: true},
+	}
+	if t.recordedModel != nil && t.recordedModel.factory != nil && !t.recordedModel.factory.config.Execution.IsZero() {
+		started["execution"] = t.recordedModel.factory.config.Execution
 	}
 	if inputKind != "" {
 		started["input"] = inputKind
+	}
+	if err := emitEvent(ctx, sink, Event{Type: EventTurnPersistenceStarted, TurnID: t.turnID}); err != nil {
+		return Result{}, err
 	}
 	if _, err := t.events.Append(ctx, t.sessionID, session.AnySequence,
 		session.PendingEvent{
@@ -167,22 +152,23 @@ func (t *Turn) start(ctx context.Context, messages []*schema.Message, sink Event
 	); err != nil {
 		return Result{}, fmt.Errorf("record Agent turn start: %w", err)
 	}
-	if t.admissionToken != "" {
-		if t.admissionBind == nil {
-			return Result{}, t.fail(ctx, errors.New("durable Goal admission has no binding handler"))
-		}
-		if err := t.admissionBind(ctx, t.turnID, userContent); err != nil {
-			return Result{}, t.fail(ctx, fmt.Errorf("bind Goal admission to turn: %w", err))
-		}
-	}
 	if before != nil {
 		if err := before(t.turnID); err != nil {
 			return Result{}, t.fail(ctx, fmt.Errorf("turn admission: %w", err))
 		}
 	}
-
 	cancelOption, stopCancelWatch := cancelOnDone(ctx)
 	defer stopCancelWatch()
+	ctx = WithLiveSink(ctx, sink)
+	if t.recordedModel != nil {
+		t.recordedModel.liveSink = sink
+		defer func() {
+			t.recordedModel.liveSink = nil
+		}()
+	}
+	if err := emitEvent(ctx, sink, Event{Type: EventAgentLoopStarting, TurnID: t.turnID}); err != nil {
+		return Result{}, err
+	}
 	iterator := t.runner.Run(ctx, messages, cancelOption, adk.WithCheckPointID(t.checkpointID))
 	return t.consumeIterator(ctx, iterator, sink, false)
 }
@@ -205,7 +191,20 @@ func (t *Turn) Resume(ctx context.Context, sink EventSink) (Result, error) {
 	}
 	cancelOption, stopCancelWatch := cancelOnDone(ctx)
 	defer stopCancelWatch()
+	if t.recordedModel != nil {
+		t.recordedModel.liveSink = sink
+		defer func() {
+			t.recordedModel.liveSink = nil
+		}()
+	}
 	if t.journal != nil {
+		if t.journal.InputKind == "" && t.journal.Pending == nil && len(t.journal.Responses) == 0 {
+			// No prompt was prepared before the interruption. Build the opening
+			// request normally; a prepared prompt would be replayed verbatim.
+			if opening := t.journal.Input[len(t.journal.Input)-1]; opening != nil && opening.Role == schema.User {
+				t.recordedModel.openingInput = opening.Content
+			}
+		}
 		iterator := t.runner.Run(ctx, t.journal.Input, cancelOption, adk.WithCheckPointID(t.checkpointID))
 		return t.consumeIterator(ctx, iterator, sink, true)
 	}

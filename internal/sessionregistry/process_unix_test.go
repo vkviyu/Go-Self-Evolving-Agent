@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package sessionregistry
+package sessionregistry_test
 
 import (
 	"context"
@@ -8,16 +8,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/vkviyu/go-self-evolving-agent/internal/sessionregistry"
 )
 
 func TestReconcileOnlyProvenDeadProcesses(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
-	registry, err := Open(ctx, filepath.Join(root, "control.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registry.Close()
+	cfg := catalogConfig(t)
+	root := cfg.HomeDirectory
+	registry := openCatalog(t, cfg)
 	// Waiting reaps the child: kill(pid, 0) must no longer count it as alive.
 	child := exec.Command("/bin/sh", "-c", "exit 0")
 	if err := child.Start(); err != nil {
@@ -29,13 +28,13 @@ func TestReconcileOnlyProvenDeadProcesses(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		pid  int
-		want State
+		want sessionregistry.State
 	}{
-		{"dead", child.Process.Pid, StateStopped},
-		{"live", os.Getpid(), StateRunning},
-		{"unknown", 0, StateRunning},
+		{"dead", child.Process.Pid, sessionregistry.StateStopped},
+		{"live", os.Getpid(), sessionregistry.StateRunning},
+		{"unknown", 0, sessionregistry.StateRunning},
 	} {
-		item := Session{ID: test.name, Name: test.name, Workspace: root, Runtime: filepath.Join(root, test.name), State: StateRunning, PID: test.pid}
+		item := sessionregistry.Session{ID: test.name, Name: test.name, Workspace: root, Runtime: filepath.Join(root, test.name), State: sessionregistry.StateRunning, PID: test.pid}
 		if err := registry.Create(ctx, item); err != nil {
 			t.Fatal(err)
 		}

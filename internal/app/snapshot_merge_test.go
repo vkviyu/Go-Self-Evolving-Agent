@@ -29,7 +29,7 @@ func (approver *recordingApprover) Approve(_ context.Context, request policy.Req
 
 func TestOpenWiresSnapshotStoreWithLeaseBarrier(t *testing.T) {
 	data, workspace := t.TempDir(), t.TempDir()
-	application, err := Open(context.Background(), config.Config{
+	application, err := testOpen(t, context.Background(), config.Config{
 		HomeDirectory: t.TempDir(), DataDirectory: data, WorkspaceDirectory: workspace, CoordinationDirectory: t.TempDir(),
 		Agents: config.AgentsConfig{SnapshotCopyLimit: 4096},
 	})

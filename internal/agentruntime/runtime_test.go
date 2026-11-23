@@ -18,6 +18,65 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
+type blockedSequenceStore struct {
+	session.EventStore
+	entered chan Event
+	release chan struct{}
+	latest  Event
+	failure error
+}
+
+func (s *blockedSequenceStore) CurrentSequence(ctx context.Context, _ session.ID) (uint64, error) {
+	s.entered <- s.latest
+	select {
+	case <-s.release:
+		return 0, s.failure
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func TestNewTurnEmitsSessionSequenceStageBeforeBlockedRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	store := memorystore.New()
+	failure := errors.New("session sequence unavailable")
+	blocked := &blockedSequenceStore{
+		EventStore: store, entered: make(chan Event, 1), release: make(chan struct{}), failure: failure,
+	}
+	factory := profileFactory(t, store, lifecycleModel{})
+	factory.events = blocked
+	var live []Event
+	ctx = WithLiveSink(ctx, func(_ context.Context, event Event) error {
+		blocked.latest = event
+		live = append(live, event)
+		return errors.New("presentation unavailable")
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := factory.NewTurn(ctx, "blocked-session")
+		done <- err
+	}()
+	select {
+	case event := <-blocked.entered:
+		if event.Type != EventTurnSessionSequenceReadStarted || event.TurnID == "" {
+			t.Fatalf("stage at blocked CurrentSequence = %#v", event)
+		}
+	case err := <-done:
+		t.Fatalf("NewTurn returned before the sequence read: %v", err)
+	}
+	close(blocked.release)
+	if err := <-done; !errors.Is(err, failure) {
+		t.Fatalf("NewTurn error = %v, want underlying store failure", err)
+	}
+	if len(live) != 2 || live[0].Type != EventTurnSnapshotRetentionStarted || live[1].Type != EventTurnSessionSequenceReadStarted {
+		t.Fatalf("unexpected stages for a failed turn without strategy/mailbox: %#v", live)
+	}
+	if current, err := store.CurrentSequence(ctx, "blocked-session"); err != nil || current != 0 {
+		t.Fatalf("live stages changed durable history: sequence=%d err=%v", current, err)
+	}
+}
+
 func TestEinoAgentLoopUsesPolicyPipelineAndDurableEvents(t *testing.T) {
 	t.Parallel()
 

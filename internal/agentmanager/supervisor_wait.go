@@ -159,6 +159,11 @@ func (supervisor *Supervisor) Wait(ctx context.Context, command WaitCommand) (Wa
 		defer timer.Stop()
 	}
 	for {
+		// Capture the notification before reading state so a completion during
+		// the lookup wakes this iteration even when the wait has no deadline.
+		supervisor.mu.Lock()
+		wake := supervisor.wake
+		supervisor.mu.Unlock()
 		agents, err := supervisor.lookupAgents(ctx, command.AgentIDs)
 		if err != nil {
 			return WaitResult{}, err
@@ -166,9 +171,6 @@ func (supervisor *Supervisor) Wait(ctx context.Context, command WaitCommand) (Wa
 		if waitSatisfied(agents, command.Any) {
 			return WaitResult{Agents: agents, Satisfied: true}, nil
 		}
-		supervisor.mu.Lock()
-		wake := supervisor.wake
-		supervisor.mu.Unlock()
 		select {
 		case <-wake:
 		case <-ctx.Done():

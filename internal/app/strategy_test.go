@@ -49,7 +49,7 @@ func (m *evolutionModel) Stream(ctx context.Context, input []*schema.Message, op
 func TestStrategyAgentApprovalIsolationAndReopen(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
-	a, err := Open(ctx, cfg)
+	a, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestStrategyAgentApprovalIsolationAndReopen(t *testing.T) {
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(ctx, cfg)
+	reopened, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestStrategyAgentApprovalIsolationAndReopen(t *testing.T) {
 }
 
 func TestEvolutionWorkersCancelAndJoinBeforeClose(t *testing.T) {
-	a, err := Open(context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestEvolutionWorkersCancelAndJoinBeforeClose(t *testing.T) {
 func TestEvolutionEvidenceErrorsAreFatalToTheEinoAdapter(t *testing.T) {
 	for _, failure := range []error{pluginbuild.ErrEvidence, strategy.ErrEvidence} {
 		binding := tool.Binding{Descriptor: tool.Descriptor{Name: "evidence_fault", Revision: "v1", Description: "failure injection", RiskClass: tool.RiskExecute, InputSchema: []byte(`{"type":"object"}`)}, Executor: tool.InvokeFunc(func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, failure })}
-		a, err := OpenWithOptions(context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}, OpenOptions{ToolBindings: []tool.Binding{binding}})
+		a, err := testOpenWithOptions(t, context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}, OpenOptions{ToolBindings: []tool.Binding{binding}})
 		if err != nil {
 			t.Fatal(err)
 		}

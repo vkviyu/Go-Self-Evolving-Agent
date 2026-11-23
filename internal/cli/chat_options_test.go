@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/modelgateway"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
@@ -48,33 +47,6 @@ func TestChatOutputAllowanceDefersAutomaticResolution(t *testing.T) {
 	options, err := parseChatOptions([]string{"--max-running-agents", "2"}, defaults, &bytes.Buffer{})
 	if err != nil || options.maxRunningAgents != 2 {
 		t.Fatalf("running limit=%d err=%v", options.maxRunningAgents, err)
-	}
-}
-
-func TestChatGoalActivationOverride(t *testing.T) {
-	defaults := config.Config{
-		Model:  config.ModelConfig{Timeout: 30},
-		Agent:  config.AgentConfig{MaxIterations: 20, ContextWindowTokens: 32768, CompactionTriggerTokens: 24576},
-		Agents: config.AgentsConfig{MaxRunning: 4},
-		Goal:   agentgoal.Config{Enabled: true, Activation: agentgoal.ActivationAuto}.WithDefaults(),
-	}
-	options, err := parseChatOptions([]string{"--goal-activation", "always"}, defaults, &bytes.Buffer{})
-	if err != nil || options.goalMode.Activation != agentgoal.ActivationAlways {
-		t.Fatalf("activation=%q err=%v", options.goalMode.Activation, err)
-	}
-	options, err = parseChatOptions([]string{"--goal-mode=false", "--goal-activation", "always"}, defaults, &bytes.Buffer{})
-	if err != nil || options.goalMode.RequiresInitialGoal() {
-		t.Fatalf("disabled mode=%+v err=%v", options.goalMode, err)
-	}
-	if _, err := parseChatOptions([]string{"--goal-activation", "invalid"}, defaults, &bytes.Buffer{}); err == nil {
-		t.Fatal("invalid activation accepted")
-	}
-	options, err = parseChatOptions([]string{"--goal-assessment", "adaptive", "--goal-evaluation-timeout", "12s"}, defaults, &bytes.Buffer{})
-	if err != nil || options.goalMode.Assessment != agentgoal.AssessmentAdaptive || options.goalMode.EvaluationTimeout != 12*time.Second {
-		t.Fatalf("assessment options=%+v err=%v", options.goalMode, err)
-	}
-	if _, err := parseChatOptions([]string{"--goal-evaluation-timeout", "-1s"}, defaults, &bytes.Buffer{}); err == nil {
-		t.Fatal("negative assessment timeout accepted")
 	}
 }
 

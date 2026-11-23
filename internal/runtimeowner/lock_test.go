@@ -13,7 +13,42 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
+
+func TestOwnershipCloseReleasesInheritedDescription(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.db")
+	owner, err := Acquire(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	// Dup shares the same open file description, as a fork before exec does.
+	// Keep it open past Close to exercise release independently of child exit.
+	inherited, err := unix.Dup(int(owner.file.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(inherited)
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := Acquire(path)
+	if err != nil {
+		t.Fatalf("closed owner retained by inherited descriptor: %v", err)
+	}
+	defer next.Close()
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if third, err := Acquire(path); !errors.Is(err, ErrOwned) {
+		if third != nil {
+			_ = third.Close()
+		}
+		t.Fatalf("repeated close released the next owner's lock: %v", err)
+	}
+}
 
 func TestOwnershipExcludesOtherProcessAndReleasesOnClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.db")

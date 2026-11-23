@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
+	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
@@ -27,12 +28,11 @@ func (a *App) NewAgentFactory(chatModel model.BaseChatModel, config agentruntime
 	pipeline := a.pipeline
 	registry := a.registry
 	events := a.events
-	checkpoints := a.checkpoints
-	database := a.database
+	checkpoints := a.runtime.checkpoints
 	artifacts := a.artifacts
-	goalConfig := a.config.Goal
 	prices := a.config.Usage.Prices
 	workspace := a.workspace
+	experiences := a.experience
 	a.stateMu.Unlock()
 	if pipeline == nil || registry == nil || events == nil || checkpoints == nil {
 		return nil, errors.New("application Agent runtime is unavailable")
@@ -43,22 +43,20 @@ func (a *App) NewAgentFactory(chatModel model.BaseChatModel, config agentruntime
 	if len(approvers) == 1 {
 		pipeline = pipeline.WithApprover(approvers[0])
 	}
-	config.GoalMode = goalConfig
-	if config.GoalMode.Enabled {
-		if database == nil {
-			return nil, errors.New("application Goal runtime is unavailable")
-		}
-		config.GoalStore = database.Orchestration()
-		config.GoalBudget = database.Orchestration()
-	}
 	if config.ContextArtifacts == nil {
 		config.ContextArtifacts = artifacts
+	}
+	if config.InspectFileReferences == nil && workspace != nil {
+		config.InspectFileReferences = workspaceFileReferenceInspector(workspace, a.nativeScope)
 	}
 	// Child factories inherit the table and price their own provider/model.
 	if config.Pricing == nil && len(prices) > 0 {
 		config.Pricing = tokenusage.NewPriceTable(prices)
 	}
 	config.Strategies = a.strategies
+	if experiences != nil {
+		config.HostInstruction = strings.TrimSpace(config.HostInstruction + "\n\n" + experience.MemoryInstruction)
+	}
 	if workspace != nil && config.ActorScope.ParentAgentID == "" {
 		// Root context describes the actual tool boundary, not the process's
 		// current directory or an inferred repository root. Child profiles

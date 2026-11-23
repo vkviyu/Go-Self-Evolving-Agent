@@ -12,12 +12,12 @@ import (
 
 func TestAppOwnsDatabaseBeforeRecovery(t *testing.T) {
 	configuration := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
-	first, err := Open(context.Background(), configuration)
+	first, err := testOpen(t, context.Background(), configuration)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = first.Close() })
-	if second, err := Open(context.Background(), configuration); !errors.Is(err, runtimeowner.ErrOwned) {
+	if second, err := testOpen(t, context.Background(), configuration); !errors.Is(err, runtimeowner.ErrOwned) {
 		if second != nil {
 			_ = second.Close()
 		}
@@ -26,7 +26,7 @@ func TestAppOwnsDatabaseBeforeRecovery(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	second, err := Open(context.Background(), configuration)
+	second, err := testOpen(t, context.Background(), configuration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,11 +37,11 @@ func TestAppOwnsDatabaseBeforeRecovery(t *testing.T) {
 
 func TestFailedAppAssemblyReleasesOwnership(t *testing.T) {
 	configuration := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
-	if app, err := OpenWithOptions(context.Background(), configuration, OpenOptions{ToolBindings: []tool.Binding{{}}}); err == nil {
+	if app, err := testOpenWithOptions(t, context.Background(), configuration, OpenOptions{ToolBindings: []tool.Binding{{}}}); err == nil {
 		_ = app.Close()
 		t.Fatal("invalid tool binding accepted")
 	}
-	app, err := Open(context.Background(), configuration)
+	app, err := testOpen(t, context.Background(), configuration)
 	if err != nil {
 		t.Fatalf("failed initialization retained ownership: %v", err)
 	}

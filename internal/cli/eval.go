@@ -52,7 +52,7 @@ func runEval(ctx context.Context, arguments []string, stdout, stderr io.Writer, 
 }
 
 func printEvalUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "usage: local-agent eval <command>")
+	fmt.Fprintln(writer, "usage: gsea eval <command>")
 	fmt.Fprintln(writer, "commands:")
 	fmt.Fprintln(writer, "  doctor           inspect local benchmark runtimes and dependencies")
 	fmt.Fprintln(writer, "  run              run GSEA against a JSONL task manifest")
@@ -276,7 +276,19 @@ func evalAgentFunc(deps dependencies, baseArguments []string, runID string) eval
 			"--session", sessionID,
 		)
 		var transcript, diagnostics bytes.Buffer
-		err := runChatWithPrompt(ctx, arguments, bytes.NewReader(nil), &transcript, &diagnostics, deps, &task.ProblemStatement)
+		// Capture the selected profile and authority once. Usage must reopen
+		// the same native store even if configuration changes during the turn.
+		resolved, err := loadChatConfig(arguments)
+		var options chatOptions
+		if err == nil {
+			options, err = parseChatOptions(arguments, resolved, &diagnostics)
+		}
+		configErr := err
+		if configErr == nil {
+			resolved.DataDirectory = options.dataDirectory
+			resolved.WorkspaceDirectory = options.workspaceDirectory
+			err = runConfiguredChat(ctx, resolved, options, bytes.NewReader(nil), &transcript, &diagnostics, deps, &task.ProblemStatement)
+		}
 		transcriptPath := filepath.Join(runDirectory, "transcript.txt")
 		stderrPath := filepath.Join(runDirectory, "agent.stderr.txt")
 		writeErr := errors.Join(
@@ -289,7 +301,11 @@ func evalAgentFunc(deps dependencies, baseArguments []string, runID string) eval
 			Usage: parseHeadlessUsage(transcript.String()),
 		}
 		usageContext, cancelUsage := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		usage, usageErr := readEvaluationUsage(usageContext, dataDirectory, sessionID)
+		var usage evaluation.Usage
+		usageErr := configErr
+		if usageErr == nil {
+			usage, usageErr = readEvaluationUsage(usageContext, resolved, sessionID)
+		}
 		cancelUsage()
 		if usageErr == nil {
 			outcome.Usage = usage
@@ -306,8 +322,8 @@ func evalAgentFunc(deps dependencies, baseArguments []string, runID string) eval
 	}
 }
 
-func readEvaluationUsage(ctx context.Context, dataDirectory, sessionID string) (evaluation.Usage, error) {
-	report, err := app.ReadSessionUsage(ctx, config.Config{DataDirectory: dataDirectory}, session.ID(sessionID))
+func readEvaluationUsage(ctx context.Context, cfg config.Config, sessionID string) (evaluation.Usage, error) {
+	report, err := app.ReadSessionUsage(ctx, cfg, session.ID(sessionID))
 	if err != nil {
 		return evaluation.Usage{}, err
 	}

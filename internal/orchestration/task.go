@@ -22,21 +22,23 @@ var (
 
 // TaskSnapshot is the durable projection used by schedulers and control tools.
 type TaskSnapshot struct {
-	ID                  TaskID     `json:"task_id"`
-	TeamID              TeamID     `json:"team_id"`
-	ParentTaskID        TaskID     `json:"parent_task_id,omitempty"`
-	Title               string     `json:"title"`
-	Description         string     `json:"description"`
-	State               TaskState  `json:"state"`
-	Priority            int        `json:"priority"`
-	AssigneeAgentID     AgentID    `json:"assignee_agent_id,omitempty"`
-	RequiredProfile     string     `json:"required_profile,omitempty"`
-	VerificationProfile string     `json:"verification_profile,omitempty"`
-	ClaimExpiresAt      *time.Time `json:"claim_expires_at,omitempty"`
-	Attempt             int        `json:"attempt"`
-	Version             uint64     `json:"version"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	ID                  TaskID            `json:"task_id"`
+	TeamID              TeamID            `json:"team_id"`
+	ParentTaskID        TaskID            `json:"parent_task_id,omitempty"`
+	Title               string            `json:"title"`
+	Description         string            `json:"description"`
+	Contract            ExecutionContract `json:"contract,omitempty"`
+	ContractHash        string            `json:"contract_hash,omitempty"`
+	State               TaskState         `json:"state"`
+	Priority            int               `json:"priority"`
+	AssigneeAgentID     AgentID           `json:"assignee_agent_id,omitempty"`
+	RequiredProfile     string            `json:"required_profile,omitempty"`
+	VerificationProfile string            `json:"verification_profile,omitempty"`
+	ClaimExpiresAt      *time.Time        `json:"claim_expires_at,omitempty"`
+	Attempt             int               `json:"attempt"`
+	Version             uint64            `json:"version"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
 type TaskSpec struct {
@@ -45,6 +47,7 @@ type TaskSpec struct {
 	ParentTaskID        TaskID
 	Title               string
 	Description         string
+	Contract            ExecutionContract
 	Priority            int
 	RequiredProfile     string
 	VerificationProfile string
@@ -72,6 +75,7 @@ type TaskRefinementChild struct {
 	Key                 string
 	Title               string
 	Description         string
+	Contract            ExecutionContract
 	Priority            int
 	RequiredProfile     string
 	VerificationProfile string
@@ -120,7 +124,7 @@ func (spec TaskRefinementSpec) Validate() error {
 			return fmt.Errorf("%w: child keys must be unique non-empty values", ErrTaskRefinementInvalid)
 		}
 		seen[child.Key] = true
-		if err := (TaskSpec{TeamID: spec.TeamID, Title: child.Title, Description: child.Description}).Validate(); err != nil {
+		if err := (TaskSpec{TeamID: spec.TeamID, Title: child.Title, Description: child.Description, Contract: child.Contract}).Validate(); err != nil {
 			return err
 		}
 	}
@@ -170,6 +174,11 @@ func (spec TaskSpec) Validate() error {
 	}
 	if len(spec.Description) > 1024*1024 {
 		return fmt.Errorf("%w: task description exceeds 1 MiB", ErrInvalidEvent)
+	}
+	if !spec.Contract.IsZero() {
+		if err := spec.Contract.Validate(); err != nil {
+			return fmt.Errorf("task contract: %w", err)
+		}
 	}
 	return nil
 }

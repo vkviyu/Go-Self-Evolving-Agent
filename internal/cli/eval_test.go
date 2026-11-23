@@ -15,7 +15,6 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/evaluation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/modelgateway"
 )
@@ -174,13 +173,12 @@ func TestEvalRunExecutesAgentAndCapturesPatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	t.Setenv(config.HomeEnvironment, t.TempDir())
-	t.Setenv("GSEA_LSP_ENABLED", "false")
+	cliATEEnvironment(t)
 	fakeModel := &workspaceWriteChatModel{}
 	var stdout, stderr bytes.Buffer
 	err = runEval(context.Background(), []string{
 		"run", "--tasks", manifestPath, "--root", root, "--run-id", "cli-run", "--model-label", "fake-model",
-		"--", "--model", "fake-model", "--goal-mode=false",
+		"--", "--model", "fake-model",
 	}, &stdout, &stderr, dependencies{newModel: func(context.Context, modelgateway.Config) (model.ToolCallingChatModel, error) {
 		return fakeModel, nil
 	}, evalVerifier: func(_ context.Context, workspace, _ string, checks []evaluation.Check) ([]evaluation.CheckResult, error) {

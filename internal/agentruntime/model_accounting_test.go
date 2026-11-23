@@ -2,9 +2,7 @@ package agentruntime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/components/model"
@@ -21,6 +19,62 @@ type accountingLedger struct {
 	settlementCalls int
 	released        int
 	failSettle      error
+}
+
+type dispatchStageLedger struct {
+	tokenusage.DurableReservationLedger
+	onDispatch func() error
+}
+
+func (ledger dispatchStageLedger) Reserve(_ context.Context, request tokenusage.ReservationRequest) (tokenusage.Reservation, error) {
+	return tokenusage.Reservation{ID: request.RequestID}, nil
+}
+
+func (ledger dispatchStageLedger) ReleaseReservation(context.Context, string, string) error {
+	return nil
+}
+
+func (ledger dispatchStageLedger) MarkDispatched(context.Context, string) error {
+	return ledger.onDispatch()
+}
+
+func TestRecordingModelEmitsDispatchStageBeforeDurableMarker(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(map[bool]string{false: "generate", true: "stream"}[streaming], func(t *testing.T) {
+			store, provider := memorystore.New(), &inspectingProfileModel{}
+			factory := profileFactory(t, store, provider)
+			var latest Event
+			called := false
+			failure := errors.New("dispatch marker unavailable")
+			factory.config.UsageLedger = dispatchStageLedger{onDispatch: func() error {
+				called = true
+				if latest.Type != EventModelDispatchPersistenceStarted || latest.TurnID != "turn" {
+					t.Fatalf("stage on entering MarkDispatched = %#v", latest)
+				}
+				return failure
+			}}
+			recorded := &recordingModel{
+				factory: factory, inner: provider, events: store, sessionID: "dispatch-stage", turnID: "turn",
+				liveSink: func(_ context.Context, event Event) error {
+					latest = event
+					return nil
+				},
+			}
+			input := []*schema.Message{schema.UserMessage("hello")}
+			var err error
+			if streaming {
+				_, err = recorded.Stream(t.Context(), input)
+			} else {
+				_, err = recorded.Generate(t.Context(), input)
+			}
+			if !called || !errors.Is(err, failure) || len(provider.input) != 0 {
+				t.Fatalf("dispatch boundary: called=%v err=%v provider input=%v", called, err, provider.input)
+			}
+			if latest.Type != EventModelDispatchPersistenceStarted {
+				t.Fatalf("stage advanced after failed dispatch marker: %#v", latest)
+			}
+		})
+	}
 }
 
 func (ledger *accountingLedger) CanAdmit(context.Context, orchestration.TeamID) (bool, error) {
@@ -208,65 +262,5 @@ func TestProfileTokenBudgetsSurviveFactoryRecreation(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestCompactionAndRepeatedAssessmentUseSameLedgerWithUniqueRequests(t *testing.T) {
-	ctx := context.Background()
-	store, ledger := memorystore.New(), &accountingLedger{}
-	factory := profileFactory(t, store, &summaryModel{})
-	factory.config.UsageLedger = ledger
-	for range 2 {
-		if _, err := factory.summarize(ctx, "helpers", []*schema.Message{schema.UserMessage("summarize me")}, ContextHints{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	factory.model = &goalEvaluatorModel{responses: []string{`{"status":"complete","reason":"verified"}`, `{"status":"complete","reason":"verified"}`}}
-	evaluation := goalEvaluationFixture()
-	evaluation.Goal.SessionID = "helpers"
-	for range 2 {
-		evaluator := &modelGoalEvaluator{factory: factory}
-		if _, err := evaluator.Evaluate(ctx, evaluation); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(ledger.records) != 4 {
-		t.Fatalf("helper calls not accounted: %d", len(ledger.records))
-	}
-	seen := map[string]bool{}
-	for _, record := range ledger.records {
-		if seen[record.RequestID] || record.Usage.Total == 0 {
-			t.Fatalf("duplicate/free helper call: %#v", record)
-		}
-		seen[record.RequestID] = true
-	}
-	events, err := store.Load(ctx, "helpers", 0, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	purposes := map[string]int{}
-	for _, event := range events {
-		if event.Type != session.EventModelRequested {
-			continue
-		}
-		var payload struct {
-			Purpose string `json:"purpose"`
-		}
-		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			t.Fatal(err)
-		}
-		purposes[payload.Purpose]++
-	}
-	if purposes["compaction"] != 2 || purposes["goal_assessment"] != 2 {
-		t.Fatalf("helper purposes=%v", purposes)
-	}
-	history, err := factory.LoadHistory(ctx, "helpers")
-	if err != nil || len(history) != 0 {
-		t.Fatalf("helper messages leaked into conversation: %v %v", history, err)
-	}
-	for _, record := range ledger.records {
-		if !strings.Contains(record.RequestID, ":") {
-			t.Fatal("invalid request identity")
-		}
 	}
 }

@@ -20,7 +20,7 @@ type dependencies struct {
 
 var productionDependencies = dependencies{newModel: modelgateway.New}
 
-// Run executes the local-agent command tree and returns its process exit code.
+// Run executes the gsea command tree and returns its process exit code.
 // The executable package owns signal handling; this package owns command
 // parsing and application orchestration.
 func Run(ctx context.Context, arguments []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -42,7 +42,7 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent strategy: %v\n", err)
+			fmt.Fprintf(stderr, "gsea strategy: %v\n", err)
 			return 1
 		}
 		return 0
@@ -51,7 +51,7 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent plugins: %v\n", err)
+			fmt.Fprintf(stderr, "gsea plugins: %v\n", err)
 			return 1
 		}
 		return 0
@@ -60,7 +60,7 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent maintenance: %v\n", err)
+			fmt.Fprintf(stderr, "gsea maintenance: %v\n", err)
 			return 1
 		}
 		return 0
@@ -69,7 +69,19 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent chat: %v\n", err)
+			fmt.Fprintf(stderr, "gsea chat: %v\n", err)
+			if errors.Is(err, context.Canceled) {
+				return 130
+			}
+			return 1
+		}
+		return 0
+	case "resume":
+		if err := runResume(ctx, arguments[1:], stdin, stdout, stderr, deps); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return 0
+			}
+			fmt.Fprintf(stderr, "gsea resume: %v\n", err)
 			if errors.Is(err, context.Canceled) {
 				return 130
 			}
@@ -81,7 +93,7 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent doctor: %v\n", err)
+			fmt.Fprintf(stderr, "gsea doctor: %v\n", err)
 			return 1
 		}
 		return 0
@@ -90,7 +102,7 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent control: %v\n", err)
+			fmt.Fprintf(stderr, "gsea control: %v\n", err)
 			if errors.Is(err, context.Canceled) {
 				return 130
 			}
@@ -102,7 +114,7 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent eval: %v\n", err)
+			fmt.Fprintf(stderr, "gsea eval: %v\n", err)
 			if errors.Is(err, context.Canceled) {
 				return 130
 			}
@@ -114,7 +126,7 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
-			fmt.Fprintf(stderr, "local-agent session: %v\n", err)
+			fmt.Fprintf(stderr, "gsea session: %v\n", err)
 			return 1
 		}
 		return 0
@@ -129,9 +141,10 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "usage: local-agent <command>")
+	fmt.Fprintln(writer, "usage: gsea <command>")
 	fmt.Fprintln(writer, "commands:")
 	fmt.Fprintln(writer, "  chat     start or resume a local Agent conversation")
+	fmt.Fprintln(writer, "  resume   browse or reopen saved conversations in the current workspace")
 	fmt.Fprintln(writer, "  doctor   verify the local runtime without contacting a model")
 	fmt.Fprintln(writer, "  control  query or control durable Agent activity using JSONL")
 	fmt.Fprintln(writer, "  eval     run and export language-neutral coding Agent evaluations")

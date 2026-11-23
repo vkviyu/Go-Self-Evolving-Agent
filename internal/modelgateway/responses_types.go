@@ -3,7 +3,6 @@ package modelgateway
 import (
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -13,7 +12,6 @@ type responsesModelConfig struct {
 	Model           string
 	BaseURL         string
 	ReasoningEffort string
-	Timeout         time.Duration
 	HTTPClient      *http.Client
 }
 
@@ -22,7 +20,6 @@ type responsesModel struct {
 	model           string
 	endpoint        string
 	reasoningEffort string
-	timeout         time.Duration
 	httpClient      *http.Client
 	tools           []*schema.ToolInfo
 }
@@ -96,6 +93,9 @@ type responsesFunctionTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters"`
+	// Always emit false: Responses may normalize omitted strict into strict
+	// mode, making optional parameters required. Do not add omitempty.
+	Strict bool `json:"strict"`
 }
 
 type responsesResponse struct {

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	pluginwasm "github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
@@ -52,9 +51,17 @@ type (
 		// Agent configures the root Agent; Agents bounds delegated child Agents.
 		Agent  AgentConfig
 		Agents AgentsConfig
-		Goal   agentgoal.Config
 		LSP    lsp.Config
 		Usage  UsageConfig
+		ATE    ATEConfig
+	}
+
+	// ATEConfig controls the native ATE subprocess used for bounded storage batches.
+	// Its zero value deliberately leaves ATE disabled for programmatic hosts.
+	ATEConfig struct {
+		Enabled           bool
+		Binary, Directory string
+		Timeout           time.Duration
 	}
 
 	// UsageConfig prices model usage and bounds the usage of each session
@@ -124,6 +131,11 @@ func Default() (Config, error) {
 
 // Resolve validates paths and creates the private application directory.
 func (c Config) Resolve() (Config, error) {
+	var ateErr error
+	c.ATE, ateErr = resolveATE(c)
+	if ateErr != nil {
+		return Config{}, ateErr
+	}
 	if c.DataDirectory == "" {
 		c.DataDirectory = c.HomeDirectory
 	}
@@ -162,8 +174,14 @@ func (c Config) Resolve() (Config, error) {
 	return c, nil
 }
 
-// SessionDatabasePath is the only SQLite database owned by the first runtime
-// slice. Other projections can be introduced without leaking paths to callers.
+// RuntimeDatabasePath stores only local execution resources linked to ATE.
+// The legacy history database is preserved separately during the cutover.
+func (c Config) RuntimeDatabasePath() string {
+	return filepath.Join(c.DataDirectory, "runtime-v3.db")
+}
+
+// SessionDatabasePath identifies the legacy history format for explicit import
+// and legacy adapter tests. New runtime assembly uses RuntimeDatabasePath.
 func (c Config) SessionDatabasePath() string {
 	return filepath.Join(c.DataDirectory, "sessions.db")
 }

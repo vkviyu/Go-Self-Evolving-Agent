@@ -19,25 +19,44 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/sdk/pluginabi"
 )
 
-type Compiler struct{}
+// GoVersion is the exact release required for generated plugin builds.
+const GoVersion = "1.27.0"
+
+// EnvGoRoot is the host setting for the directory of the selected toolchain.
+const EnvGoRoot = "GSEA_GO_ROOT"
+
+// ErrToolchainUnavailable identifies a missing or incompatible installation.
+var ErrToolchainUnavailable = errors.New("plugin Go toolchain is unavailable")
+
+// Compiler runs the trusted toolchain selected by the application host.
+type Compiler struct {
+	GoRoot string
+}
 
 func digest(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
 
 // Compile accepts source only, not a project directory. All files in the
 // temporary build root are created from validated bytes and the embedded SDK.
-func (Compiler) Compile(ctx context.Context, source string) (artifact []byte, evidence BuildEvidence, result error) {
+func (compiler Compiler) Compile(ctx context.Context, source string) (artifact []byte, evidence BuildEvidence, err error) {
 	evidence.SourceSHA256 = digest([]byte(source))
 	if err := ValidateSource(source); err != nil {
 		return nil, evidence, err
 	}
 	buildCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	goRoot, err := filepath.EvalSymlinks(runtime.GOROOT())
+	if !filepath.IsAbs(compiler.GoRoot) {
+		return nil, evidence, toolchainUnavailable(errors.New("no absolute toolchain directory selected"))
+	}
+	goRoot, err := filepath.EvalSymlinks(compiler.GoRoot)
 	if err != nil {
-		return nil, evidence, fmt.Errorf("resolve configured host toolchain: %w", err)
+		return nil, evidence, toolchainUnavailable(fmt.Errorf("resolve the selected directory: %w", err))
 	}
 	goPath := filepath.Join(goRoot, "bin", "go")
-	env := []string{"PATH=" + filepath.Dir(goPath) + ":/usr/bin:/bin", "GOROOT=" + goRoot, "GOTOOLCHAIN=local", "GOENV=off", "GOWORK=off", "GOPROXY=off", "GOSUMDB=off", "CGO_ENABLED=0", "GOOS=wasip1", "GOARCH=wasm", "GOMAXPROCS=2", "GOMEMLIMIT=256MiB"}
+	evidence.ToolchainHashScope = toolchainHashScope
+	evidence.ToolchainSHA256, err = fingerprintToolchain(buildCtx, goRoot)
+	if err != nil {
+		return nil, evidence, toolchainUnavailable(fmt.Errorf("fingerprint the selected toolchain: %w", err))
+	}
 	directory, err := os.MkdirTemp("", "gsea-candidate-")
 	if err != nil {
 		return nil, evidence, err
@@ -48,24 +67,27 @@ func (Compiler) Compile(ctx context.Context, source string) (artifact []byte, ev
 		return nil, evidence, err
 	}
 	evidence.Sandbox = runner.Name()
-	evidence.ToolchainHashScope = toolchainHashScope
 	evidence.MemoryLimitMode = "GOMEMLIMIT-soft-hint; no-hard-process-memory-limit"
-	evidence.ToolchainSHA256, err = fingerprintToolchain(buildCtx, goRoot)
-	if err != nil {
-		return nil, evidence, fmt.Errorf("fingerprint configured host toolchain: %w", err)
+	request := sandbox.Request{
+		WorkingDirectory: directory, WorkspaceRoot: directory,
+		ReadOnlyPaths: []string{goRoot},
+		Environment: []string{
+			"PATH=" + filepath.Dir(goPath) + ":/usr/bin:/bin", "GOROOT=" + goRoot,
+			"GOTOOLCHAIN=local", "GOENV=off", "GOWORK=off", "GOPROXY=off", "GOSUMDB=off",
+			"CGO_ENABLED=0", "GOOS=wasip1", "GOARCH=wasm", "GOMAXPROCS=2", "GOMEMLIMIT=256MiB",
+		},
 	}
 	var versionOutput, versionErrors boundedBuildLog
-	err = runner.Run(buildCtx, sandbox.Request{
-		Command: "exec " + shellQuote(goPath) + " version", WorkingDirectory: directory,
-		WorkspaceRoot: directory, Environment: env,
-	}, &versionOutput, &versionErrors)
+	request.Command = "exec " + shellQuote(goPath) + " version"
+	request.ReadOnly = true
+	err = runner.Run(buildCtx, request, &versionOutput, &versionErrors)
 	if err != nil {
 		evidence.Log = versionErrors.String()
-		return nil, evidence, fmt.Errorf("isolated compiler version probe failed: %w", err)
+		return nil, evidence, toolchainUnavailable(fmt.Errorf("isolated compiler version probe failed: %w", err))
 	}
 	evidence.Toolchain = strings.TrimSpace(versionOutput.String())
-	if !strings.HasPrefix(evidence.Toolchain, "go version go1.27.0 ") {
-		return nil, evidence, fmt.Errorf("candidate compiler requires Go 1.27.0: %s", evidence.Toolchain)
+	if want := "go version go" + GoVersion + " " + runtime.GOOS + "/" + runtime.GOARCH; evidence.Toolchain != want {
+		return nil, evidence, toolchainUnavailable(fmt.Errorf("expected %q, found %q", want, evidence.Toolchain))
 	}
 	if err := os.Mkdir(filepath.Join(directory, "pluginabi"), 0700); err != nil {
 		return nil, evidence, err
@@ -84,7 +106,7 @@ func (Compiler) Compile(ctx context.Context, source string) (artifact []byte, ev
 	}
 	evidence.SDKSHA256 = hex.EncodeToString(sdkHash.Sum(nil))
 	files := map[string]string{
-		"go.mod":       "module local-agent-candidate\n\ngo 1.27.0\n",
+		"go.mod":       "module local-agent-candidate\n\ngo " + GoVersion + "\n",
 		"candidate.go": source,
 		"main.go":      "package main\nimport \"local-agent-candidate/pluginabi\"\nfunc init(){ pluginabi.Register(Invoke) }\nfunc main(){}\n",
 	}
@@ -94,8 +116,9 @@ func (Compiler) Compile(ctx context.Context, source string) (artifact []byte, ev
 		}
 	}
 	var log boundedBuildLog
-	command := "ulimit -t 90 && ulimit -f 131072 && exec " + shellQuote(goPath) + " build -mod=readonly -trimpath -buildvcs=false -buildmode=c-shared -o candidate.wasm ."
-	err = runner.Run(buildCtx, sandbox.Request{Command: command, WorkingDirectory: directory, WorkspaceRoot: directory, Environment: env}, &log, &log)
+	request.Command = "ulimit -t 90 && ulimit -f 131072 && exec " + shellQuote(goPath) + " build -mod=readonly -trimpath -buildvcs=false -buildmode=c-shared -o candidate.wasm ."
+	request.ReadOnly = false
+	err = runner.Run(buildCtx, request, &log, &log)
 	evidence.Log = log.String()
 	if err != nil {
 		return nil, evidence, fmt.Errorf("isolated candidate compilation failed: %w", err)
@@ -121,6 +144,10 @@ func (Compiler) Compile(ctx context.Context, source string) (artifact []byte, ev
 	}
 	evidence.ArtifactSHA256, evidence.Success = digest(artifact), true
 	return artifact, evidence, nil
+}
+
+func toolchainUnavailable(err error) error {
+	return fmt.Errorf("%w (%w). Set %s to the absolute path of a Go %s installation", ErrToolchainUnavailable, err, EnvGoRoot, GoVersion)
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }

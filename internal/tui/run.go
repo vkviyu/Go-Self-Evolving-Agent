@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
+	"github.com/vkviyu/go-self-evolving-agent/internal/ateprocess"
+	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
@@ -33,6 +37,10 @@ type Conversation interface {
 type ContextConversation interface {
 	ContextUsage() agentruntime.ContextUsage
 	Compress(context.Context) (bool, agentruntime.ContextUsage, error)
+}
+
+type ContextEventConversation interface {
+	CompressWithSink(context.Context, agentruntime.EventSink) (bool, agentruntime.ContextUsage, error)
 }
 
 type pendingContextConversation interface {
@@ -58,6 +66,33 @@ type TranscriptReader interface {
 	LoadTranscript(context.Context, session.ID) ([]*schema.Message, error)
 }
 
+// StartupPhase describes local runtime assembly, before any user turn runs.
+type StartupPhase uint8
+
+const (
+	StartupModelInitialization StartupPhase = iota + 1
+	StartupRootOwner
+	StartupRuntimeFactory
+	StartupSupervisor
+	StartupSessionMailbox
+	StartupMaintenance
+)
+
+// StartupState carries ordered setup progress and one terminal attachment.
+// Ready or Err terminates startup; producers must then close the channel.
+// Storage contains metadata only, never native protocol text.
+type StartupState struct {
+	Phase       StartupPhase
+	At          time.Time
+	Storage     *ateprocess.Progress
+	Ready       bool
+	Err         error
+	TeamID      orchestration.TeamID
+	Activity    agentmanager.TeamSnapshotReader
+	Agents      AgentControl
+	Transcripts TranscriptReader
+}
+
 // Config contains display metadata and the conversation application service.
 type Config struct {
 	Conversation Conversation
@@ -79,6 +114,8 @@ type Config struct {
 	// Transcripts opens a child Agent's transcript from the /agents panel.
 	Transcripts  TranscriptReader
 	ResumeTurnID string
+	Memory       experience.MemoryBrowser
+	Startup      <-chan StartupState
 }
 
 // Run takes exclusive control of the terminal until the user exits.
@@ -93,6 +130,10 @@ func Run(ctx context.Context, input io.Reader, output io.Writer, config Config) 
 	if err != nil {
 		return err
 	}
+	// A previous program may have left the terminal inside a hyperlink.
+	if _, err := io.WriteString(output, ansi.ResetHyperlink()); err != nil {
+		return fmt.Errorf("reset terminal hyperlink state: %w", err)
+	}
 	program := tea.NewProgram(
 		model,
 		tea.WithContext(ctx),
@@ -100,6 +141,7 @@ func Run(ctx context.Context, input io.Reader, output io.Writer, config Config) 
 		tea.WithOutput(wrapCursorWriter(output)),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
+		tea.WithoutSignalHandler(),
 	)
 	if _, err := program.Run(); err != nil {
 		if ctx.Err() != nil {

@@ -15,7 +15,6 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	pluginwasm "github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
@@ -46,10 +45,17 @@ type (
 		Model              fileModelConfig  `toml:"model"`
 		Agent              fileAgentConfig  `toml:"agent"`
 		Agents             fileAgentsConfig `toml:"agents"`
-		Goal               fileGoalConfig   `toml:"goal"`
 		LSP                fileLSPConfig    `toml:"lsp"`
 		WASM               fileWASMConfig   `toml:"wasm"`
 		Usage              fileUsageConfig  `toml:"usage"`
+		ATE                fileATEConfig    `toml:"ate"`
+	}
+
+	fileATEConfig struct {
+		Enabled   *bool   `toml:"enabled"`
+		Binary    *string `toml:"binary"`
+		Directory *string `toml:"directory"`
+		Timeout   *string `toml:"timeout"`
 	}
 
 	fileModelConfig struct {
@@ -84,15 +90,6 @@ type (
 		// PostMergeCheck is a shell command run in main after each merge.
 		PostMergeCheck        *string `toml:"post_merge_check"`
 		PostMergeCheckTimeout *string `toml:"post_merge_check_timeout"`
-	}
-
-	fileGoalConfig struct {
-		Enabled           *bool   `toml:"enabled"`
-		Activation        *string `toml:"activation"`
-		Assessment        *string `toml:"assessment"`
-		MaxRounds         *int    `toml:"max_rounds"`
-		MaxWallTime       *string `toml:"max_wall_time"`
-		EvaluationTimeout *string `toml:"evaluation_timeout"`
 	}
 
 	fileLSPConfig struct {
@@ -243,8 +240,12 @@ func Load(options LoadOptions) (Config, error) {
 	if err := applyEnvironment(&config); err != nil {
 		return Config{}, err
 	}
+	config.ATE, err = resolveATE(config)
+	if err != nil {
+		return Config{}, err
+	}
 
-	// Check the final merged timeout, iteration, token, child Agent, LSP, Goal and WASM settings.
+	// Check the final merged timeout, iteration, token, child Agent, LSP and WASM settings.
 	// Zero token limits are allowed and defer to automatic model capacity resolution.
 	// This does not create resources or verify model/provider availability.
 	if err := validate(config); err != nil {
@@ -316,6 +317,7 @@ func builtInConfig(home string) Config {
 	return Config{
 		HomeDirectory: home,
 		DataDirectory: home,
+		ATE:           ATEConfig{Enabled: true, Binary: "ate", Timeout: 30 * time.Second},
 		Model: ModelConfig{
 			Provider:          "ollama",
 			WireAPI:           "chat-completions",
@@ -336,10 +338,6 @@ func builtInConfig(home string) Config {
 			MaxRunning: 4, MaxLive: 16, MaxDepth: 3, MaxChildren: 4,
 			DefaultWorkspace: AgentsWorkspaceAuto, SnapshotCopyLimit: DefaultSnapshotCopyLimit,
 			AutoContinue: true, PostMergeCheckTimeout: 10 * time.Minute,
-		},
-		Goal: agentgoal.Config{
-			Enabled: true, Activation: agentgoal.ActivationAuto, Assessment: agentgoal.AssessmentAdaptive,
-			MaxRounds: 4, MaxWallTime: 30 * time.Minute, EvaluationTimeout: 30 * time.Second,
 		},
 		LSP: lsp.Config{
 			Enabled:               true,
@@ -407,6 +405,16 @@ func loadConfigFile(path string, target *Config, strict, required bool) error {
 // It parses durations and leaves other checks to validate; errors do not roll back
 // assignments already applied to target.
 func applyFileConfig(target *Config, source fileConfig) error {
+	setIfPresent(&target.ATE.Enabled, source.ATE.Enabled)
+	setIfPresent(&target.ATE.Binary, source.ATE.Binary)
+	setIfPresent(&target.ATE.Directory, source.ATE.Directory)
+	if source.ATE.Timeout != nil {
+		duration, err := parseATETimeout(*source.ATE.Timeout)
+		if err != nil {
+			return err
+		}
+		target.ATE.Timeout = duration
+	}
 	if source.DataDirectory != nil {
 		target.DataDirectory = strings.TrimSpace(*source.DataDirectory)
 	}
@@ -506,32 +514,6 @@ func applyFileConfig(target *Config, source fileConfig) error {
 		}
 		target.Agents.PostMergeCheckTimeout = timeout
 	}
-	if source.Goal.Enabled != nil {
-		target.Goal.Enabled = *source.Goal.Enabled
-	}
-	if source.Goal.Activation != nil {
-		target.Goal.Activation = agentgoal.Activation(strings.TrimSpace(*source.Goal.Activation))
-	}
-	if source.Goal.Assessment != nil {
-		target.Goal.Assessment = agentgoal.AssessmentStrategy(strings.TrimSpace(*source.Goal.Assessment))
-	}
-	if source.Goal.MaxRounds != nil {
-		target.Goal.MaxRounds = *source.Goal.MaxRounds
-	}
-	if source.Goal.EvaluationTimeout != nil {
-		duration, err := time.ParseDuration(strings.TrimSpace(*source.Goal.EvaluationTimeout))
-		if err != nil || duration <= 0 {
-			return errors.New("goal.evaluation_timeout must be a positive duration")
-		}
-		target.Goal.EvaluationTimeout = duration
-	}
-	if source.Goal.MaxWallTime != nil {
-		duration, err := time.ParseDuration(strings.TrimSpace(*source.Goal.MaxWallTime))
-		if err != nil || duration <= 0 {
-			return errors.New("goal.max_wall_time must be a positive duration")
-		}
-		target.Goal.MaxWallTime = duration
-	}
 	if source.LSP.Enabled != nil {
 		target.LSP.Enabled = *source.LSP.Enabled
 	}
@@ -611,6 +593,9 @@ func setIfPresent[T any](destination *T, value *T) {
 // take precedence over provider-specific variables. Zero token limits select
 // automatic resolution; errors do not roll back prior assignments.
 func applyEnvironment(target *Config) error {
+	if err := applyATEEnvironment(&target.ATE); err != nil {
+		return err
+	}
 	setString := func(name string, destination *string) {
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 			*destination = value
@@ -633,40 +618,6 @@ func applyEnvironment(target *Config) error {
 			return errors.New("GSEA_LSP_ENABLED must be a boolean")
 		}
 		target.LSP.Enabled = parsed
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_GOAL_ENABLED")); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return errors.New("GSEA_GOAL_ENABLED must be a boolean")
-		}
-		target.Goal.Enabled = parsed
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_GOAL_ASSESSMENT")); value != "" {
-		target.Goal.Assessment = agentgoal.AssessmentStrategy(value)
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_GOAL_ACTIVATION")); value != "" {
-		target.Goal.Activation = agentgoal.Activation(value)
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_GOAL_EVALUATION_TIMEOUT")); value != "" {
-		duration, err := time.ParseDuration(value)
-		if err != nil || duration <= 0 {
-			return errors.New("GSEA_GOAL_EVALUATION_TIMEOUT must be a positive duration")
-		}
-		target.Goal.EvaluationTimeout = duration
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_GOAL_MAX_ROUNDS")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed <= 0 {
-			return errors.New("GSEA_GOAL_MAX_ROUNDS must be a positive integer")
-		}
-		target.Goal.MaxRounds = parsed
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_GOAL_MAX_WALL_TIME")); value != "" {
-		duration, err := time.ParseDuration(value)
-		if err != nil || duration <= 0 {
-			return errors.New("GSEA_GOAL_MAX_WALL_TIME must be a positive duration")
-		}
-		target.Goal.MaxWallTime = duration
 	}
 	if value := strings.TrimSpace(os.Getenv("GSEA_LSP_DIAGNOSTIC_TIMEOUT")); value != "" {
 		duration, err := time.ParseDuration(value)
@@ -845,11 +796,14 @@ func validateProfileName(profile string) error {
 	return nil
 }
 
-// validate checks merged timeout, iteration, token, child Agent, LSP, Goal, WASM and usage settings.
+// validate checks merged timeout, iteration, token, child Agent, LSP, WASM and usage settings.
 // Zero token limits select automatic resolution; an explicit context window must
 // exceed the compaction trigger. It does not create resources, inspect directories
 // or verify model names and provider availability.
 func validate(config Config) error {
+	if _, err := resolveATE(config); err != nil {
+		return err
+	}
 	if config.Model.Timeout <= 0 {
 		return errors.New("model timeout must be positive")
 	}
@@ -885,9 +839,6 @@ func validate(config Config) error {
 		return errors.New("agents.post_merge_check_timeout must be positive")
 	}
 	if err := config.LSP.Validate(); err != nil {
-		return err
-	}
-	if err := config.Goal.Validate(); err != nil {
 		return err
 	}
 	if config.WASM.MemoryLimitPages == 0 || config.WASM.MaxBlobBytes == 0 || config.WASM.MaxCallBytes == 0 || config.WASM.DefaultTimeout <= 0 {

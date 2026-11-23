@@ -9,14 +9,14 @@ import (
 	"testing"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/app"
-	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
 func TestControlSnapshotUsesVersionedJSONL(t *testing.T) {
+	cliATEEnvironment(t)
 	workspace := t.TempDir()
 	dataDirectory := t.TempDir()
-	application, err := app.Open(context.Background(), config.Config{DataDirectory: dataDirectory, WorkspaceDirectory: workspace})
+	application, err := app.Open(context.Background(), cliCommandConfig(t, dataDirectory, workspace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,11 +55,10 @@ func TestControlSnapshotUsesVersionedJSONL(t *testing.T) {
 }
 
 func TestControlEventsPagesOneTeamWithNextCursor(t *testing.T) {
-	t.Setenv(config.HomeEnvironment, t.TempDir())
-	t.Setenv(config.ProfileEnvironment, "")
+	cliATEEnvironment(t)
 	ctx := context.Background()
 	workspace, dataDirectory := t.TempDir(), t.TempDir()
-	application, err := app.Open(ctx, config.Config{DataDirectory: dataDirectory, WorkspaceDirectory: workspace})
+	application, err := app.Open(ctx, cliCommandConfig(t, dataDirectory, workspace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +128,10 @@ func TestControlEventsPagesOneTeamWithNextCursor(t *testing.T) {
 }
 
 func TestControlTeamCancelUntilTheSessionReopens(t *testing.T) {
-	t.Setenv(config.HomeEnvironment, t.TempDir())
-	t.Setenv(config.ProfileEnvironment, "")
+	cliATEEnvironment(t)
 	ctx := context.Background()
 	workspace, dataDirectory := t.TempDir(), t.TempDir()
-	cfg := config.Config{DataDirectory: dataDirectory, WorkspaceDirectory: workspace}
+	cfg := cliCommandConfig(t, dataDirectory, workspace)
 	application, err := app.Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -31,6 +31,7 @@ type Tool struct {
 	turnID            string
 	runtimeSnapshotID string
 	actor             orchestration.ActorScope
+	execution         orchestration.ExecutionBinding
 }
 
 var _ einotool.InvokableTool = (*Tool)(nil)
@@ -44,7 +45,7 @@ func NewTools(
 	runtimeSnapshotID string,
 	turnID string,
 ) ([]einotool.BaseTool, error) {
-	return NewToolsWithActor(pipeline, registry, sessionID, runtimeSnapshotID, turnID, orchestration.ActorScope{})
+	return NewToolsWithExecution(pipeline, registry, sessionID, runtimeSnapshotID, turnID, orchestration.ActorScope{}, orchestration.ExecutionBinding{})
 }
 
 // NewToolsWithActor adapts a registry snapshot and attaches the durable actor
@@ -56,6 +57,20 @@ func NewToolsWithActor(
 	runtimeSnapshotID string,
 	turnID string,
 	actor orchestration.ActorScope,
+) ([]einotool.BaseTool, error) {
+	return NewToolsWithExecution(pipeline, registry, sessionID, runtimeSnapshotID, turnID, actor, orchestration.ExecutionBinding{})
+}
+
+// NewToolsWithExecution attaches both actor identity and the immutable
+// execution scope to every Eino tool invocation.
+func NewToolsWithExecution(
+	pipeline *appTool.Pipeline,
+	registry *appTool.Snapshot,
+	sessionID session.ID,
+	runtimeSnapshotID string,
+	turnID string,
+	actor orchestration.ActorScope,
+	execution orchestration.ExecutionBinding,
 ) ([]einotool.BaseTool, error) {
 	if pipeline == nil || registry == nil {
 		return nil, errors.New("Eino tools require a pipeline and registry snapshot")
@@ -71,6 +86,9 @@ func NewToolsWithActor(
 			return nil, fmt.Errorf("Eino tools require a valid actor scope: %w", err)
 		}
 	}
+	if err := execution.Validate(); err != nil {
+		return nil, fmt.Errorf("Eino tools require a valid execution binding: %w", err)
+	}
 	descriptors := registry.Descriptors()
 	tools := make([]einotool.BaseTool, 0, len(descriptors))
 	for _, descriptor := range descriptors {
@@ -82,6 +100,7 @@ func NewToolsWithActor(
 			turnID:            turnID,
 			runtimeSnapshotID: runtimeSnapshotID,
 			actor:             actor,
+			execution:         execution,
 		})
 	}
 	return tools, nil
@@ -113,6 +132,7 @@ func (t *Tool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...ei
 	ctx = orchestration.WithActorScope(ctx, t.actor)
 	result, err := t.pipeline.Execute(ctx, appTool.Call{
 		Actor:             t.actor,
+		Execution:         t.execution,
 		SessionID:         t.sessionID,
 		TurnID:            t.turnID,
 		RuntimeSnapshotID: t.runtimeSnapshotID,

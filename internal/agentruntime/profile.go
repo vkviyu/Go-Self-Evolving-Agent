@@ -107,9 +107,6 @@ func (f *Factory) WithProfile(ctx context.Context, scope orchestration.ActorScop
 	}
 	applyContextLimits(&child.config, limits)
 	child.pipeline = f.pipeline.WithExecutionGuard(&profileToolGuard{profile: stable, scope: scope, sessionID: sessionID, events: f.events})
-	if child.goalMode.Enabled {
-		child.goalEval, err = child.GoalEvaluator(child.goalMode.Assessment)
-	}
 	return child, err
 }
 
@@ -175,7 +172,7 @@ func (f *Factory) executionConfigID() string {
 		Name, Description, Instruction, ModelProfile, Provider, Model, Profile string
 		Iterations, Output, Context, Trigger                                   int
 	}{
-		f.config.Name, f.config.Description, f.config.Instruction, f.config.ModelProfile, f.config.Provider, f.config.Model, profileID,
+		f.config.Name, f.config.Description, f.runtimeInstruction(), f.config.ModelProfile, f.config.Provider, f.config.Model, profileID,
 		f.config.MaxIterations, f.config.MaxOutputTokens, f.config.ContextWindowTokens, f.config.CompactionTriggerTokens,
 	}
 	encoded, _ := json.Marshal(value)
@@ -280,16 +277,18 @@ func (m *recordingModel) profileOptions(ctx context.Context, input []*schema.Mes
 func (m *recordingModel) profileTokenUsage(ctx context.Context) (int, int, error) {
 	type spend struct{ input, output int }
 	requests := map[string]spend{}
-	err := session.VisitEvents(ctx, m.events, m.sessionID, func(event session.Event) error {
-		if event.Type != session.EventModelRequested && event.Type != session.EventAssistantMessage {
+	err := session.VisitEvents(ctx, m.events, m.usageSessionID(), func(event session.Event) error {
+		if event.Type != session.EventModelRequested && event.Type != session.EventAssistantMessage && event.Type != eventExperienceUsage {
 			return nil
 		}
 		var payload struct {
-			RequestID    string `json:"request_id"`
-			Input        int    `json:"estimated_input_tokens"`
-			Limit        int    `json:"output_token_limit"`
-			ActualInput  *int   `json:"prompt_tokens"`
-			ActualOutput *int   `json:"completion_tokens"`
+			RequestID       string            `json:"request_id"`
+			Input           int               `json:"estimated_input_tokens"`
+			Limit           int               `json:"output_token_limit"`
+			ActualInput     *int              `json:"prompt_tokens"`
+			ActualOutput    *int              `json:"completion_tokens"`
+			Phase           session.EventType `json:"phase"`
+			BudgetSessionID session.ID        `json:"budget_session_id"`
 		}
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return err
@@ -297,7 +296,10 @@ func (m *recordingModel) profileTokenUsage(ctx context.Context) (int, int, error
 		if payload.RequestID == "" {
 			return nil
 		}
-		if event.Type == session.EventModelRequested {
+		if payload.BudgetSessionID != "" && payload.BudgetSessionID != m.usageSessionID() {
+			return nil // A host paid for this session's maintenance.
+		}
+		if event.Type == session.EventModelRequested || payload.Phase == session.EventModelRequested {
 			requests[payload.RequestID] = spend{payload.Input, payload.Limit}
 		} else if payload.ActualInput != nil && payload.ActualOutput != nil {
 			requests[payload.RequestID] = spend{*payload.ActualInput, *payload.ActualOutput}

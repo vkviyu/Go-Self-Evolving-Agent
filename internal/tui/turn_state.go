@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -11,30 +10,90 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
+	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
+	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
 func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 	switch event.Type {
-	case agentruntime.EventGoalPhase:
-		if event.GoalPhase == nil {
-			return
+	case agentruntime.EventMemoryReferenceLookupStarted:
+		model.stage = "Reading referenced memory"
+	case agentruntime.EventTurnStarting:
+		model.stage = "Starting request"
+	case agentruntime.EventConversationLockWaiting:
+		model.stage = "Waiting for previous request"
+	case agentruntime.EventConversationHistoryLoading:
+		model.stage = "Loading conversation history"
+	case agentruntime.EventTurnBuilding:
+		model.stage = "Building request"
+	case agentruntime.EventTurnStrategySelectionStarted:
+		model.stage = "Loading Agent strategy"
+	case agentruntime.EventTurnBackgroundReconciliationStarted:
+		model.stage = "Reconciling Agent messages"
+	case agentruntime.EventTurnSnapshotRetentionStarted:
+		model.stage = "Saving tool snapshot"
+	case agentruntime.EventTurnSessionSequenceReadStarted:
+		model.stage = "Reading session state"
+	case agentruntime.EventTurnSessionCreationStarted:
+		model.stage = "Creating session"
+	case agentruntime.EventTurnAgentConstructionStarted:
+		model.stage = "Building Agent and tools"
+	case agentruntime.EventTurnPersistenceStarted:
+		model.stage = "Persisting turn"
+	case agentruntime.EventAgentLoopStarting:
+		model.stage = "Starting Agent loop"
+	case agentruntime.EventModelPreparationStarted:
+		model.stage = model.modelPreparationStage(event)
+	case agentruntime.EventExperiencePreparationStarted:
+		model.stage = "Preparing memory"
+	case agentruntime.EventContextTokenCountingStarted:
+		model.stage = "Counting context tokens"
+	case agentruntime.EventFileReferenceInspectionStarted:
+		model.stage = "Reading referenced files"
+	case agentruntime.EventTurnPreparedPersistenceStarted:
+		model.stage = "Saving prepared context"
+	case agentruntime.EventExperienceSynchronizationStarted:
+		model.stage = "Checking memory authorization"
+	case agentruntime.EventContextCompactionStarted:
+		model.stage = "Compacting context"
+	case agentruntime.EventModelBudgetReservationStarted:
+		model.stage = "Reserving model budget"
+	case agentruntime.EventModelRequestPersistenceStarted:
+		model.stage = "Persisting request"
+	case agentruntime.EventModelDispatchPersistenceStarted:
+		model.stage = "Recording model dispatch"
+	case agentruntime.EventModelRequestStarted:
+		model.stage = model.modelRequestStage(event)
+	case agentruntime.EventModelResponseStarted:
+		model.stage = model.modelResponseStage(event)
+	case agentruntime.EventToolProposed:
+		model.stage = toolStage("Preparing tool call", event)
+	case agentruntime.EventToolPolicyChecking:
+		model.stage = toolStage("Checking tool policy", event)
+	case agentruntime.EventToolPolicyDecided:
+		model.stage = toolStage("Tool policy checked", event)
+	case agentruntime.EventToolApprovalRequested:
+		model.stage = toolStage("Approval required", event)
+	case agentruntime.EventToolApprovalWaiting:
+		model.stage = toolStage("Waiting for approval", event)
+	case agentruntime.EventToolApprovalResolved:
+		if event.Approved {
+			model.stage = toolStage("Approval granted", event)
+		} else {
+			model.stage = toolStage("Approval denied", event)
 		}
-		phase := event.GoalPhase
-		switch phase.Stage {
-		case "executing":
-			model.stage = fmt.Sprintf("Executing task · round %d/%d", phase.Round, phase.MaxRounds)
-		case "verifying":
-			model.stage = fmt.Sprintf("Verifying outcome · round %d/%d", phase.Round, phase.MaxRounds)
-		case "retrying":
-			model.stage = fmt.Sprintf("Continuing task · round %d/%d", phase.Round, phase.MaxRounds)
-		case "stopped":
-			model.stage = "Task " + phase.State
-			if phase.State != "completed" {
-				model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "Task " + phase.State + ": " + phase.Reason})
-			}
-		}
+	case agentruntime.EventToolExecutionStarted:
+		model.stage = toolStage("Running", event)
+	case agentruntime.EventToolExecutionSucceeded:
+		model.stage = toolStage("Tool completed", event)
+	case agentruntime.EventToolExecutionFailed:
+		model.stage = toolStage("Tool failed", event)
+	case agentruntime.EventToolOutcomeUnknown:
+		model.stage = toolStage("Tool outcome unknown; inspect state", event)
+	case agentruntime.EventTurnFinalizing:
+		model.stage = "Finalizing"
 	case agentruntime.EventAssistantReasoningDelta:
 		model.stage = "Reasoning"
 		if model.activeReasoning < 0 {
@@ -56,6 +115,55 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 	}
 }
 
+func toolStage(prefix string, event agentruntime.Event) string {
+	if name := strings.TrimSpace(render.PlainText(event.ToolName)); name != "" {
+		if prefix == "Running" {
+			return prefix + " " + name
+		}
+		return prefix + " · " + name
+	}
+	return prefix
+}
+
+func (model *Model) modelPreparationStage(event agentruntime.Event) string {
+	switch event.Purpose {
+	case "experience":
+		return "Preparing memory"
+	case "compaction":
+		return "Compacting context"
+	case "verification":
+		return "Preparing verification"
+	default:
+		return "Preparing context"
+	}
+}
+
+func (model *Model) modelRequestStage(event agentruntime.Event) string {
+	switch event.Purpose {
+	case "experience":
+		return "Preparing memory · requesting model"
+	case "compaction":
+		return "Compacting context · requesting model"
+	case "verification":
+		return "Verifying outcome · requesting model"
+	default:
+		return "Requesting model"
+	}
+}
+
+func (model *Model) modelResponseStage(event agentruntime.Event) string {
+	switch event.Purpose {
+	case "experience":
+		return "Preparing memory · receiving response"
+	case "compaction":
+		return "Compacting context · receiving response"
+	case "verification":
+		return "Verifying outcome · receiving response"
+	default:
+		return "Receiving response"
+	}
+}
+
 // applyApprovalRequest shows request, or queues it while another request is
 // awaiting a decision. Only root requests attach to the root's tool cards:
 // a delegated Agent may reuse a call ID that the root is also running.
@@ -66,7 +174,7 @@ func (model *Model) applyApprovalRequest(request approval.Request) {
 	}
 	model.approvalPending = &request
 	model.approvalChoice = approvalAllow
-	model.stage = "Approval required"
+	model.stage = "Waiting for approval"
 	if index, exists := model.activeTools[request.Policy.CallID]; exists && request.Source.AgentID == "" {
 		model.approvalBlock = index
 		model.blocks[index].pending = true
@@ -156,6 +264,9 @@ func (model *Model) applyAssistantMessage(message *schema.Message) {
 	model.lastAssistantMessage = model.activeAssistant
 	model.activeAssistant = -1
 	model.activeReasoning = -1
+	if len(message.ToolCalls) == 0 {
+		model.stage = "Responding"
+	}
 	for _, call := range message.ToolCalls {
 		model.stage = "Running " + render.PlainText(call.Function.Name)
 		model.blocks = append(model.blocks, transcriptBlock{
@@ -230,22 +341,37 @@ func (model *Model) finishTurn(message turnDoneMsg) (tea.Model, tea.Cmd) {
 		model.lastAssistantMessage = -1
 		model.activeReasoning = -1
 		model.activeTools = make(map[string]int)
-		model.refreshTranscript(false)
+		model.refreshRootTranscript(false)
 		return model, model.input.Focus()
 	}
 
 	if message.err != nil {
-		if errors.Is(message.err, context.Canceled) {
+		kind, paused := orchestration.ExecutionStopKindOf(message.err)
+		// Conversation implementations may return a fatal tool error directly,
+		// without passing through the runtime's Eino failure boundary.
+		var unknown *tool.OutcomeUnknownError
+		if errors.As(message.err, &unknown) && unknown != nil {
+			kind, paused = orchestration.ExecutionOutcomeUnknown, true
+		}
+		if errors.Is(message.err, context.Canceled) && kind != orchestration.ExecutionOutcomeUnknown {
 			model.stage = "Cancelled"
 		} else {
 			model.stage = "Failed"
-			model.blocks = append(model.blocks, transcriptBlock{kind: blockFailure, content: message.err.Error()})
+			detail := message.err.Error()
+			if paused {
+				model.stage = "Paused"
+				if kind == orchestration.ExecutionOutcomeUnknown {
+					detail += "\nInspect actual state before retrying. Pending persistence needs reconciliation."
+					detail += "\n/recoveries only inspects interrupted work; it does not reconcile saved ATE appends."
+					detail += "\nClose the runtime owning this session before reconciliation, then run: gsea session reconcile <session-id>."
+				} else if _, canInspect := model.conversation.(RecoveryConversation); canInspect {
+					detail += "\nUse /recoveries to inspect this session's interrupted work."
+				}
+			}
+			model.blocks = append(model.blocks, transcriptBlock{kind: blockFailure, content: detail})
 		}
 	} else {
 		model.stage = "Ready"
-		if message.result.GoalState != "" && message.result.GoalState != "completed" {
-			model.stage = "Task " + string(message.result.GoalState)
-		}
 		// A wake turn answers Agent messages; it is not a user turn.
 		if !wake {
 			model.completedTurns++
@@ -265,7 +391,7 @@ func (model *Model) finishTurn(message turnDoneMsg) (tea.Model, tea.Cmd) {
 	model.lastAssistantMessage = -1
 	model.activeReasoning = -1
 	model.activeTools = make(map[string]int)
-	model.refreshTranscript(false)
+	model.refreshRootTranscript(false)
 	return model, model.input.Focus()
 }
 
@@ -281,9 +407,10 @@ func (model *Model) finishCompression(message compressDoneMsg) (tea.Model, tea.C
 	}
 	model.turnCancel = nil
 	model.turnContext = nil
+	model.turnEvents = nil
 	if errors.Is(message.err, context.Canceled) {
 		model.stage = "Cancelled"
-		model.refreshTranscript(true)
+		model.refreshRootTranscript(true)
 		return model, model.input.Focus()
 	}
 	if message.err != nil {
@@ -298,7 +425,7 @@ func (model *Model) finishCompression(message compressDoneMsg) (tea.Model, tea.C
 		}
 		model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: content})
 	}
-	model.refreshTranscript(true)
+	model.refreshRootTranscript(true)
 	return model, model.input.Focus()
 }
 

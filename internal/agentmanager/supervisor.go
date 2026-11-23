@@ -102,6 +102,8 @@ func (seeder ContextSeederFunc) Seed(ctx context.Context, parent orchestration.A
 // RunRequest contains the durable child snapshot and its task prompt.
 type RunRequest struct {
 	Agent         orchestration.AgentSnapshot
+	Execution     orchestration.ExecutionBinding
+	Contract      orchestration.ExecutionContract
 	Prompt        string
 	Messages      []orchestration.Message
 	ResumeWaitSet orchestration.WaitSetID
@@ -160,25 +162,33 @@ type Config struct {
 	MaxDepth         int
 	MaxChildren      int
 	RunContext       context.Context
+	// DeferRecoveryDispatch prevents background monitoring, merges and worker
+	// admission until StartAvailableAsync or the StartAvailableAfter barrier.
+	// Synchronous recovery still reconciles storage using its caller's context.
+	DeferRecoveryDispatch bool
 }
 
 type Supervisor struct {
-	settlement    sync.Mutex
-	agents        orchestration.AgentRepository
-	tasks         orchestration.TaskRepository
-	profiles      *agentprofile.Registry
-	runner        Runner
-	seeder        ContextSeeder
-	mailbox       orchestration.MailboxRepository
-	waitSets      orchestration.WaitRepository
-	leases        orchestration.LeaseRepository
-	waitInterval  time.Duration
-	buckets       *scheduler.BucketSet
-	fairQueue     scheduler.WeightedRoundRobin
-	usageLedger   tokenusage.Ledger
-	workspace     *workspacecoord.Coordinator
-	mergeExecutor *workspacecoord.MergeExecutor
-	workspaceRoot string
+	// recoveryGate serializes recovery and startup release. A channel lets
+	// Close cancel startup even when synchronous recovery is still blocked.
+	recoveryGate          chan struct{}
+	settlement            sync.Mutex
+	agents                orchestration.AgentRepository
+	tasks                 orchestration.TaskRepository
+	profiles              *agentprofile.Registry
+	runner                Runner
+	seeder                ContextSeeder
+	mailbox               orchestration.MailboxRepository
+	waitSets              orchestration.WaitRepository
+	leases                orchestration.LeaseRepository
+	waitInterval          time.Duration
+	buckets               *scheduler.BucketSet
+	fairQueue             scheduler.RoundRobin
+	usageLedger           tokenusage.Ledger
+	workspace             *workspacecoord.Coordinator
+	mergeExecutor         *workspacecoord.MergeExecutor
+	workspaceRoot         string
+	deferRecoveryDispatch bool
 	// writerMode is the mode granted to writers without a pinned profile.
 	writerMode  orchestration.WorkspaceMode
 	maxLive     int
@@ -202,6 +212,8 @@ type Supervisor struct {
 	// mergeRuns holds Teams with a background merge pass; true asks the
 	// pass to run once more because new merges may have become ready.
 	mergeRuns map[orchestration.TeamID]bool
+	// pendingMerges retains requests made while startup dispatch is deferred.
+	pendingMerges map[orchestration.TeamID]struct{}
 	// liveActivity holds what each running child reported last.
 	liveActivity map[orchestration.AgentID]string
 	workers      sync.WaitGroup
@@ -245,24 +257,24 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 		waitSets, _ = config.Agents.(orchestration.WaitRepository)
 	}
 	supervisor := &Supervisor{
-		agents: config.Agents, tasks: config.Tasks, profiles: config.Profiles, runner: config.Runner, seeder: config.ContextSeeder, mailbox: config.Mailbox,
+		recoveryGate: make(chan struct{}, 1),
+		agents:       config.Agents, tasks: config.Tasks, profiles: config.Profiles, runner: config.Runner, seeder: config.ContextSeeder, mailbox: config.Mailbox,
 		waitSets: waitSets, leases: config.Leases,
 		maxLive: config.MaxLiveAgents, maxRunning: config.MaxRunningAgents, maxDepth: config.MaxDepth, maxChildren: config.MaxChildren,
 		waitInterval: config.WaitPollInterval,
 		buckets:      scheduler.NewBucketSet(config.ModelBucketDefaultLimit, config.ModelBucketLimits),
 		usageLedger:  config.UsageLedger,
-		workspace:    config.Workspace, mergeExecutor: config.MergeExecutor, workspaceRoot: config.WorkspaceRoot, writerMode: writer,
+		workspace:    config.Workspace, mergeExecutor: config.MergeExecutor, workspaceRoot: config.WorkspaceRoot, deferRecoveryDispatch: config.DeferRecoveryDispatch, writerMode: writer,
 		runningBuckets: make(map[orchestration.AgentID]string),
 		sharedWriters:  make(map[orchestration.AgentID]struct{}),
 		workspaceViews: make(map[orchestration.AgentID]orchestration.WorkspaceViewID),
 		mergeRuns:      make(map[orchestration.TeamID]bool),
+		pendingMerges:  make(map[orchestration.TeamID]struct{}),
 		liveActivity:   make(map[orchestration.AgentID]string),
 		ctx:            ctx, cancel: cancel, wake: make(chan struct{}), running: make(map[orchestration.AgentID]context.CancelFunc), teams: make(map[orchestration.TeamID]struct{}),
 	}
-	if waitSets != nil || config.Runner != nil {
-		supervisor.workers.Go(func() {
-			supervisor.monitorWaitSets()
-		})
+	if !config.DeferRecoveryDispatch {
+		supervisor.startMonitorLocked()
 	}
 	return supervisor, nil
 }
@@ -611,14 +623,23 @@ func (supervisor *Supervisor) interruptChildren(ctx context.Context, agent orche
 // Close cancels and joins owned workers exactly once. All callers observe the
 // same result, including a timeout: a second call is not proof of worker exit.
 func (supervisor *Supervisor) Close() error {
+	return supervisor.CloseContext(context.Background())
+}
+
+// CloseContext uses ctx for synchronous durable cleanup. Construction failures
+// inside a storage batch must retain that batch's process until cleanup ends.
+func (supervisor *Supervisor) CloseContext(ctx context.Context) error {
 	if supervisor == nil {
 		return nil
 	}
-	supervisor.closeOnce.Do(func() { supervisor.closeErr = supervisor.close() })
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	supervisor.closeOnce.Do(func() { supervisor.closeErr = supervisor.close(ctx) })
 	return supervisor.closeErr
 }
 
-func (supervisor *Supervisor) close() error {
+func (supervisor *Supervisor) close(ctx context.Context) error {
 	supervisor.mu.Lock()
 	supervisor.closed = true
 	teams := make([]orchestration.TeamID, 0, len(supervisor.teams))
@@ -630,7 +651,7 @@ func (supervisor *Supervisor) close() error {
 	}
 	supervisor.mu.Unlock()
 	supervisor.cancel()
-	supervisor.cancelDurableAgents(teams)
+	supervisor.cancelDurableAgents(ctx, teams)
 	workersDone := make(chan struct{})
 	go func() {
 		supervisor.workers.Wait()
@@ -650,7 +671,7 @@ func (supervisor *Supervisor) close() error {
 	// still alive. Recovery/reaping can release the stale lease once ownership
 	// is no longer live.
 	if workersStopped && supervisor.leases != nil {
-		if err := supervisor.releaseAllActiveLeases(teams); closeErr == nil && err != nil {
+		if err := supervisor.releaseAllActiveLeases(ctx, teams); closeErr == nil && err != nil {
 			closeErr = err
 		}
 	}
@@ -658,8 +679,8 @@ func (supervisor *Supervisor) close() error {
 	return closeErr
 }
 
-func (supervisor *Supervisor) releaseAllActiveLeases(teams []orchestration.TeamID) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (supervisor *Supervisor) releaseAllActiveLeases(ctx context.Context, teams []orchestration.TeamID) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for _, teamID := range teams {
 		leases, err := supervisor.leases.ListLeases(ctx, orchestration.LeaseQuery{TeamID: teamID, States: []orchestration.LeaseState{orchestration.LeaseActive}})
@@ -675,8 +696,8 @@ func (supervisor *Supervisor) releaseAllActiveLeases(teams []orchestration.TeamI
 	return nil
 }
 
-func (supervisor *Supervisor) cancelDurableAgents(teams []orchestration.TeamID) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (supervisor *Supervisor) cancelDurableAgents(ctx context.Context, teams []orchestration.TeamID) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for _, teamID := range teams {
 		agents, err := supervisor.agents.ListAgents(ctx, orchestration.AgentQuery{TeamID: teamID, States: activeAgentStates()})

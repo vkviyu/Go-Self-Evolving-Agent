@@ -35,7 +35,7 @@ type Limits struct {
 	MaxInputTokens     int
 	MaxOutputTokens    int
 	MaxToolCalls       int
-	MaxWallTime        time.Duration
+	MaxWallTime        time.Duration // Zero leaves the child without a wall-time limit.
 }
 
 type Profile struct {
@@ -77,8 +77,8 @@ func (profile Profile) Validate() error {
 	if profile.Limits.MaxChildren < 0 || profile.Limits.MaxInheritedTokens < 0 || profile.Limits.MaxInputTokens < 0 || profile.Limits.MaxOutputTokens < 0 {
 		return fmt.Errorf("Agent profile %q has negative token or child limit", profile.Name)
 	}
-	if profile.Limits.MaxWallTime <= 0 {
-		return fmt.Errorf("Agent profile %q requires a positive wall-time limit", profile.Name)
+	if profile.Limits.MaxWallTime < 0 {
+		return fmt.Errorf("Agent profile %q has a negative wall-time limit", profile.Name)
 	}
 	return nil
 }

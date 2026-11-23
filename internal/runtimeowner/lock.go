@@ -61,7 +61,12 @@ func (lock *Lock) Close() error {
 		return nil
 	}
 	// Never unlink a lock file: replacing its inode permits two live owners.
-	lock.once.Do(func() { lock.err = lock.file.Close() })
+	lock.once.Do(func() {
+		// A concurrent fork can briefly retain this open file description
+		// until exec closes inherited descriptors. Release ownership explicitly
+		// so a completed Close does not depend on that child reaching exec.
+		lock.err = errors.Join(unlock(lock.file), lock.file.Close())
+	})
 	return lock.err
 }
 

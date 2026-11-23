@@ -9,13 +9,29 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
+	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
+	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
 func TestGreetingTextReachesUIBeforeModelStreamCompletes(t *testing.T) {
 	chatModel := &greetingStreamModel{release: make(chan struct{})}
-	conversation := newGoalConversation(t, chatModel, agentgoal.Config{Enabled: true, Assessment: agentgoal.AssessmentHybrid}, nil)
+	store := memorystore.New()
+	registry := tool.NewRegistry()
+	engine, err := policy.DefaultDeny()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline, err := tool.NewPipeline(tool.PipelineConfig{Registry: registry, Policy: engine, Events: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory, err := agentruntime.NewFactory(agentruntime.Config{}, chatModel, registry, pipeline, store, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation := &Conversation{factory: factory, sessionID: "stream"}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var once sync.Once
@@ -30,7 +46,7 @@ func TestGreetingTextReachesUIBeforeModelStreamCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if visible != "你好！" || result.GoalID != "" {
+	if visible != "你好！" {
 		t.Fatalf("visible=%q result=%+v", visible, result)
 	}
 }

@@ -12,17 +12,17 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 )
 
 func managerProfile(name string) agentprofile.Profile {
 	return agentprofile.Profile{Name: name, Revision: name + "-v1", ModelProfile: "test", Instruction: "original instruction", ContextInheritance: agentprofile.InheritSummary, WorkspaceMode: agentprofile.WorkspaceSharedLease, CanSpawn: true, Limits: agentprofile.Limits{MaxIterations: 5, MaxToolCalls: 10, MaxChildren: 4, MaxInheritedTokens: 20, MaxWallTime: time.Minute}}
 }
 
-func profileSupervisor(t *testing.T, path string, parent agentprofile.Profile, runner Runner) (*Supervisor, *sqlitestore.Database, orchestration.RootThread) {
+func profileSupervisor(t *testing.T, path string, parent agentprofile.Profile, runner Runner) (*Supervisor, *testfixture.Database, orchestration.RootThread) {
 	t.Helper()
 	ctx := context.Background()
-	database, err := sqlitestore.Open(ctx, path)
+	database, err := testfixture.Open(t, ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,28 +165,40 @@ func TestSupervisorRunDeadlineUsesDurableCreationTime(t *testing.T) {
 		deadline time.Time
 		created  time.Time
 	}
-	started := make(chan observed, 1)
-	runner := RunnerFunc(func(ctx context.Context, request RunRequest) (orchestration.AgentResult, error) {
-		deadline, _ := ctx.Deadline()
-		started <- observed{deadline, request.Agent.CreatedAt}
-		<-ctx.Done()
-		return orchestration.AgentResult{}, ctx.Err()
-	})
-	supervisor, _, root := profileSupervisor(t, ":memory:", managerProfile("root"), runner)
-	child, err := supervisor.Spawn(context.Background(), childSpec(root, "deadline", "task"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case result := <-started:
-		if !result.deadline.Equal(result.created.Add(time.Minute)) {
-			t.Fatalf("deadline reset: %#v", result)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("child did not start")
-	}
-	if err := supervisor.Interrupt(context.Background(), child.ID); err != nil {
-		t.Fatal(err)
+	for _, duration := range []time.Duration{0, time.Minute} {
+		t.Run(duration.String(), func(t *testing.T) {
+			started := make(chan observed, 1)
+			runner := RunnerFunc(func(ctx context.Context, request RunRequest) (orchestration.AgentResult, error) {
+				deadline, _ := ctx.Deadline()
+				started <- observed{deadline, request.Agent.CreatedAt}
+				<-ctx.Done()
+				return orchestration.AgentResult{}, ctx.Err()
+			})
+			profile := managerProfile("root")
+			profile.Limits.MaxWallTime = duration
+			supervisor, _, root := profileSupervisor(t, ":memory:", profile, runner)
+			spec := childSpec(root, "deadline", "task")
+			spec.ProfileRevision = "" // Exercise inheritance of the root's durable profile.
+			child, err := supervisor.Spawn(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case result := <-started:
+				var expected time.Time
+				if duration > 0 {
+					expected = result.created.Add(duration)
+				}
+				if !result.deadline.Equal(expected) {
+					t.Fatalf("deadline=%v, want %v", result.deadline, expected)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("child did not start")
+			}
+			if err := supervisor.Interrupt(context.Background(), child.ID); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

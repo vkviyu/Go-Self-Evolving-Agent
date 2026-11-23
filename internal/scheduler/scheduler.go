@@ -71,11 +71,7 @@ type RoundRobin struct {
 	cursor int
 }
 
-// WeightedRoundRobin is the historical name; no configurable Team weights
-// exist in this scheduler. Kept as an alias for source compatibility.
-// Deprecated: use RoundRobin.
-type WeightedRoundRobin = RoundRobin
-
+// Order interleaves teams while preserving priority within each team.
 func (queue *RoundRobin) Order(items []Candidate) []Candidate {
 	if len(items) < 2 {
 		return append([]Candidate(nil), items...)

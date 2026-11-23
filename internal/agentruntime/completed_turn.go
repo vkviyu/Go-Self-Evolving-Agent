@@ -25,7 +25,18 @@ func (f *Factory) CompletedTurn(ctx context.Context, id session.ID, turnID strin
 	}
 	var result Result
 	err = session.VisitEvents(ctx, f.events, id, func(event session.Event) error {
-		if event.Type != session.EventTurnCompleted || event.CorrelationID != turnID {
+		if event.CorrelationID != turnID {
+			return nil
+		}
+		if event.Type == EventExperienceMaintenance && result.Final != nil {
+			var status ExperienceMaintenance
+			if err := json.Unmarshal(event.Payload, &status); err != nil {
+				return err
+			}
+			result.ExperienceMaintenance = &status
+			return nil
+		}
+		if event.Type != session.EventTurnCompleted {
 			return nil
 		}
 		var payload struct {

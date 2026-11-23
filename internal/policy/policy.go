@@ -27,6 +27,7 @@ var ErrApprovalUnavailable = errors.New("approval is required but no approver is
 // Request contains the stable identity and normalized resource being authorized.
 type Request struct {
 	Actor         orchestration.ActorScope
+	Execution     orchestration.ExecutionBinding
 	CallID        string
 	SessionID     string
 	ToolName      string

@@ -138,9 +138,9 @@ func TestExtractiveSummaryIsStructuredBoundedAndRetainsBeginningAndEnd(t *testin
 	if summaryFormatSource("legacy free text") != "" {
 		t.Fatal("legacy summary was misidentified as a new-format handoff")
 	}
-	anchored := anchorGoal(summary, ContextHints{GoalID: "g", GoalRound: 2, GoalText: "HOST_CONTRACT"})
-	if !strings.HasPrefix(anchored, "Active Goal (authoritative, id=g, round=2):\nHOST_CONTRACT\n") {
-		t.Fatal("host Goal anchor was replaced by model summary")
+	anchored := anchorContract(summary, ContextHints{ContractID: "g", Attempt: 2, ContractText: "HOST_CONTRACT"})
+	if !strings.HasPrefix(anchored, "Active execution contract (authoritative, id=g, attempt=2):\nHOST_CONTRACT\n") {
+		t.Fatal("host execution contract was replaced by model summary")
 	}
 }
 

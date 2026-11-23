@@ -13,45 +13,49 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
 func TestParallelStreamsIntoDownstreamBeforeSlowBranchCompletes(t *testing.T) {
 	t.Parallel()
 	harness := newFlowHarness(t, nil)
-	observed := make(chan struct {
-		key string
-		at  time.Time
-	}, 2)
+	observed := make(chan string, 2)
+	fastObserved := make(chan struct{})
 	definition := agentflow.Pipeline("streaming", "v1",
 		agentflow.Parallel("fanout",
 			agentflow.Map("fast", func(ctx context.Context, input agentflow.Value) (agentflow.Value, error) {
-				time.Sleep(10 * time.Millisecond)
 				return input, nil
 			}),
 			agentflow.Map("slow", func(ctx context.Context, input agentflow.Value) (agentflow.Value, error) {
-				time.Sleep(250 * time.Millisecond)
-				return input, nil
+				// This branch can complete only after downstream consumes
+				// the fast result. A join therefore cannot satisfy the test.
+				select {
+				case <-fastObserved:
+					return input, nil
+				case <-ctx.Done():
+					return agentflow.Value{}, ctx.Err()
+				}
 			}),
 		),
 		agentflow.Each("observe", 2, agentflow.Map("record", func(ctx context.Context, input agentflow.Value) (agentflow.Value, error) {
-			observed <- struct {
-				key string
-				at  time.Time
-			}{input.Key, time.Now()}
+			observed <- input.Key
+			if input.Key == "fast" {
+				close(fastObserved)
+			}
 			return input, nil
 		})),
 	)
 	input, _ := agentflow.NewValue(map[string]any{"task": "test"})
-	started := time.Now()
-	result, err := harness.runtime.Run(context.Background(), definition, harness.invocation("streaming-1", input))
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	result, err := harness.runtime.Run(ctx, definition, harness.invocation("streaming-1", input))
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := <-observed
-	if first.key != "fast" || first.at.Sub(started) >= 150*time.Millisecond {
-		t.Fatalf("first downstream result = %q after %s; parallel stage behaved like a join", first.key, first.at.Sub(started))
+	if first != "fast" {
+		t.Fatalf("first downstream result = %q; parallel stage behaved like a join", first)
 	}
 	if len(result.Outputs) != 2 {
 		t.Fatalf("outputs = %d, want 2", len(result.Outputs))
@@ -462,7 +466,7 @@ type flowHarness struct {
 
 func newFlowHarness(t *testing.T, rules []bindingRule) flowHarness {
 	t.Helper()
-	database, err := sqlitestore.Open(context.Background(), filepath.Join(t.TempDir(), "sessions.db"))
+	database, err := testfixture.Open(t, context.Background(), filepath.Join(t.TempDir(), "sessions.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

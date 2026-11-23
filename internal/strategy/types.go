@@ -1,5 +1,5 @@
 // Package strategy describes bounded LoopSpec evolution. A spec is data, not
-// executable code, and cannot change tools, models, permissions or Goal gates.
+// executable code, and cannot change tools, models, permissions or execution gates.
 package strategy
 
 import (

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -100,15 +101,20 @@ func TestEinoGeneratedToolRepairQuarantinePublishAndNextTurn(t *testing.T) {
 	if testing.Short() {
 		t.Skip("three real isolated Go builds")
 	}
+	t.Setenv(pluginbuild.EnvGoRoot, runtime.GOROOT())
 	ctx := context.Background()
-	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
-	a, err := Open(ctx, cfg)
+	cfg := testConfig(t, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
+	root, _, err := a.EnsureRootThread(ctx, "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
 	fake := &pluginLoopModel{}
-	factory, err := a.NewAgentFactory(fake, agentruntime.Config{}, approval.NewToolAllowlistApprover("plugin_propose", "plugin_publish", "extension_loop"))
+	factory, err := a.NewAgentFactory(fake, agentruntime.Config{ActorScope: root.ActorScope()}, approval.NewToolAllowlistApprover("plugin_propose", "plugin_publish", "extension_loop"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +165,7 @@ func TestEinoGeneratedToolRepairQuarantinePublishAndNextTurn(t *testing.T) {
 	if _, err := CollectPlugin(ctx, cfg, "extension_loop", "v3", collect.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(ctx, cfg)
+	reopened, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +175,9 @@ func TestEinoGeneratedToolRepairQuarantinePublishAndNextTurn(t *testing.T) {
 	}
 	if _, exists := reopened.Plugins().Artifact("extension_loop", "v2"); !exists {
 		t.Fatal("shared candidate lost during collection")
+	}
+	if _, active := reopened.Registry().Snapshot().Get("extension_loop"); active {
+		t.Fatal("retired revision became active after reopening")
 	}
 	if _, err := reopened.PromotePlugin(ctx, "extension_loop", "v3", published.TestReportID, true); err == nil {
 		t.Fatal("deleted revision republished from old report")

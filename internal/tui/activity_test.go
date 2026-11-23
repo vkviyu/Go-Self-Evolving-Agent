@@ -40,7 +40,7 @@ func TestActivityPanelLoadsAndRendersControlPlaneSnapshot(t *testing.T) {
 	model.activityLoading = false
 	model.resizeInput()
 	panel := ansi.Strip(model.renderActivityPanel(model.width - 2))
-	for _, expected := range []string{"agents 1", "agent-root", "task-build", "view-main", "merge-1", "conflicted"} {
+	for _, expected := range []string{"merges 1 pending", "agent-root", "task-build", "view-main", "merge-1", "conflicted"} {
 		if !strings.Contains(panel, expected) {
 			t.Fatalf("activity panel missing %q: %q", expected, panel)
 		}

@@ -3,23 +3,26 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentflow"
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/artifact"
 	"github.com/vkviyu/go-self-evolving-agent/internal/codingtools"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
+	"github.com/vkviyu/go-self-evolving-agent/internal/evolutionstore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
+	orchestrationate "github.com/vkviyu/go-self-evolving-agent/internal/orchestration/atestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
 	"github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
@@ -38,25 +41,58 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 	if err != nil {
 		return nil, fmt.Errorf("resolve application config: %w", err)
 	}
-	owner, err := runtimeowner.Acquire(resolved.SessionDatabasePath())
+	owner, err := runtimeowner.Acquire(resolved.RuntimeDatabasePath())
 	if err != nil {
 		return nil, err
 	}
-	database, err := sqlitestore.Open(ctx, resolved.SessionDatabasePath())
+	database, err := runtimestore.OpenRuntime(ctx, resolved.RuntimeDatabasePath())
 	if err != nil {
 		_ = owner.Close()
 		return nil, err
+	}
+	authority, err := openAuthority(ctx, resolved, database.ATERequests())
+	if err != nil {
+		_ = database.Close()
+		_ = owner.Close()
+		return nil, err
+	}
+	repositories, err := orchestrationate.New(authority.records, authority.sessions)
+	if err != nil {
+		_ = authority.process.Close()
+		_ = database.Close()
+		_ = owner.Close()
+		return nil, err
+	}
+	evolution, err := evolutionstore.New(authority.records)
+	if err != nil {
+		_ = authority.process.Close()
+		_ = database.Close()
+		_ = owner.Close()
+		return nil, err
+	}
+	runtime := runtimeStorage{
+		checkpoints: database.Checkpoints(),
+		snapshots:   database.RuntimeSnapshots().WithReferenceGuard(repositories.CheckSnapshotReference),
+		plugins:     database.Plugins(),
+		strategies:  evolution,
+		diagnostics: database.LSPDiagnostics(),
+		builds:      evolution,
+		reports:     evolution,
 	}
 	closeOnError := true
 	var wasmRuntime *wasm.Runtime
 	var diagnosticManager *lsp.Manager
 	var pluginManager *plugin.Manager
 	var domain *workspacedomain.Domain
+	temporalCleanup := func() { _ = authority.process.Close() }
 	evolutionContext, evolutionCancel := context.WithCancel(context.Background())
-	approvalBroker := approval.NewBroker(16, approval.WithSourceDescriber(approvalSource(database.Orchestration())))
+	approvalBroker := approval.NewBroker(16, approval.WithSourceDescriber(approvalSource(repositories)))
 	defer func() {
 		if closeOnError {
 			evolutionCancel()
+			if temporalCleanup != nil {
+				temporalCleanup()
+			}
 			if pluginManager != nil {
 				_ = pluginManager.Close(context.Background())
 			}
@@ -65,8 +101,7 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 			_ = owner.Close()
 		}
 	}()
-	events := database.SessionEvents()
-	checkpoints := database.Checkpoints()
+	events := authority.sessions
 	wasmRuntime, err = wasm.NewRuntime(ctx, resolved.WASM)
 	if err != nil {
 		return nil, err
@@ -83,27 +118,27 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 		RendezvousDirectory: resolved.CoordinationDirectory,
 		WorkspaceRoot:       workspace.Root(),
 		DataDirectory:       resolved.DataDirectory,
-		ValidateOwner:       leaseOwnerValidator(database.Orchestration()),
+		ValidateOwner:       leaseOwnerValidator(repositories),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("join workspace coordination domain: %w", err)
 	}
 	workspace.AttachLeaseRepository(domain.Leases())
 	workspace.AttachDescendantLiveness(domain)
-	workspace.AttachWorkspaceViewRepository(database.Orchestration())
+	workspace.AttachWorkspaceViewRepository(repositories)
 	if resolved.LSP.Enabled {
 		diagnosticManager, err = lsp.NewManager(resolved.LSP)
 		if err != nil {
 			return nil, fmt.Errorf("initialize language-server diagnostics: %w", err)
 		}
-		diagnosticManager.AttachProjectionStore(database.LSPDiagnostics())
+		diagnosticManager.AttachProjectionStore(runtime.diagnostics)
 		workspace.AttachLanguageDiagnostics(diagnosticManager)
 	}
 	worktrees, err := workspacecoord.NewWorktreeManager(workspace.Root())
 	if err != nil {
 		return nil, fmt.Errorf("initialize workspace worktree manager: %w", err)
 	}
-	coordinator, err := workspacecoord.NewCoordinator(database.Orchestration(), worktrees)
+	coordinator, err := workspacecoord.NewCoordinator(repositories, worktrees)
 	if err != nil {
 		return nil, fmt.Errorf("initialize workspace coordinator: %w", err)
 	}
@@ -116,7 +151,7 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 	}
 	workspace.AttachDiffArtifactStore(artifacts)
 	coordinator.Artifacts = artifacts
-	coordinator.Events = database.Orchestration()
+	coordinator.Events = repositories
 	// Snapshot views live in the private data directory, outside the
 	// workspace, so their work trees never appear in the main tree.
 	views := filepath.Join(resolved.DataDirectory, "views")
@@ -151,8 +186,11 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 		nativeScope:      nativeScope,
 		config:           resolved,
 		database:         database,
+		authority:        authority,
+		temporalProcess:  authority.process,
+		repositories:     repositories,
 		events:           events,
-		checkpoints:      checkpoints,
+		runtime:          runtime,
 		registry:         registry,
 		wasm:             wasmRuntime,
 		approval:         approvalBroker,
@@ -161,29 +199,34 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 		coordinator:      coordinator,
 		artifacts:        artifacts,
 		diagnostics:      diagnosticManager,
-		strategies:       database.Strategies(),
+		strategies:       runtime.strategies,
+	}
+	if err := application.openTemporal(ctx); err != nil {
+		return nil, err
+	}
+	if application.temporalProcess != nil {
+		temporalCleanup = func() { _ = application.temporalProcess.Close() }
 	}
 	bindings := buildBuiltinBindings(resolved, workspace, artifacts)
+	bindings = append(bindings, memoryToolBindings(application.experience)...)
 	bindings = append(bindings, pluginEvolutionBindings(application)...)
 	bindings = append(bindings, strategyEvolutionBindings(application)...)
 	bindings = append(bindings, options.ToolBindings...)
-	bindings = append(bindings, agentflow.ControlBindings(database.Orchestration())...)
-	if resolved.Goal.Enabled {
-		bindings = append(bindings, agentgoal.StartBinding(), agentgoal.Binding(database.Orchestration()))
-	}
+	bindings = append(bindings, agentflow.ControlBindings(application.repositories)...)
 	if _, err := registry.ActivateMany(scopeNativeBindings(nativeScope, bindings)...); err != nil {
 		return nil, fmt.Errorf("activate built-in tools: %w", err)
 	}
 	pipeline, err := tool.NewPipeline(tool.PipelineConfig{
-		Registry: registry,
-		Policy:   policyEngine,
-		Approver: approvalBroker,
-		Events:   events,
+		Registry:          registry,
+		Policy:            policyEngine,
+		Approver:          approvalBroker,
+		Events:            events,
+		DurabilityTimeout: resolved.ATE.Timeout + time.Second,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("construct tool pipeline: %w", err)
 	}
-	flowRuntime, err := agentflow.NewRuntime(agentflow.RuntimeConfig{Pipeline: pipeline, Registry: registry, Store: database.Orchestration()})
+	flowRuntime, err := agentflow.NewRuntime(agentflow.RuntimeConfig{Pipeline: pipeline, Registry: registry, Store: application.repositories})
 	if err != nil {
 		return nil, fmt.Errorf("construct Flow runtime: %w", err)
 	}
@@ -194,22 +237,22 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 	if _, err := registry.ActivateMany(scopeNativeBindings(nativeScope, agentflow.CatalogBindings(flowCatalog))...); err != nil {
 		return nil, fmt.Errorf("activate Flow catalog tools: %w", err)
 	}
-	pluginManager, err = plugin.OpenManager(ctx, wasmRuntime, registry, database.Plugins(), "agent_", "task_", "merge_", "goal_", "flow_", "plugin_", "strategy_")
+	pluginManager, err = plugin.OpenManager(ctx, wasmRuntime, registry, application.runtime.plugins, "agent_", "task_", "merge_", "flow_", "plugin_", "strategy_", "memory_")
 	if err != nil {
 		return nil, fmt.Errorf("restore durable plugins: %w", err)
 	}
-	if err := registry.ConfigurePersistence(database.RuntimeSnapshots(), pluginManager.ResolveBinding); err != nil {
+	if err := registry.ConfigurePersistence(application.runtime.snapshots, pluginManager.ResolveBinding); err != nil {
 		return nil, err
 	}
 	application.pipeline, application.plugins = pipeline, pluginManager
 	application.flows, application.flowCatalog = flowRuntime, flowCatalog
-	application.publication, err = plugin.NewPublicationService(pluginManager, registry, database, wasmRuntime.ResourceIdentity())
+	application.publication, err = plugin.NewPublicationService(pluginManager, registry, application.runtime.reports, wasmRuntime.ResourceIdentity())
 	if err != nil {
 		return nil, err
 	}
 	application.builds, err = pluginbuild.NewService(pluginbuild.ServiceConfig{
-		Store:    database,
-		Compiler: pluginbuild.Compiler{},
+		Store:    application.runtime.builds,
+		Compiler: pluginbuild.Compiler{GoRoot: os.Getenv(pluginbuild.EnvGoRoot)},
 		Stager:   pluginManager,
 		Verifier: application.publication,
 	})
@@ -225,9 +268,9 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 }
 
 // leaseOwnerValidator admits lease requests only from Agents registered in
-// this Session's Team. Agents live in the Session database, while leases live
+// this Session's Team. Agents come from the configured repositories; leases live
 // in the shared workspace coordination database.
-func leaseOwnerValidator(agents *sqlitestore.OrchestrationStore) workspacedomain.OwnerValidator {
+func leaseOwnerValidator(agents agentLookup) workspacedomain.OwnerValidator {
 	return func(ctx context.Context, teamID orchestration.TeamID, agentID orchestration.AgentID) error {
 		agent, err := agents.GetAgent(ctx, agentID)
 		if err != nil {
@@ -243,7 +286,7 @@ func leaseOwnerValidator(agents *sqlitestore.OrchestrationStore) workspacedomain
 // approvalSource names the delegated Agent behind an approval request by its
 // profile and task, so prompts stay attributable while children run in
 // parallel. Lookup failures fall back to the identifiers in the actor scope.
-func approvalSource(store *sqlitestore.OrchestrationStore) approval.SourceDescriber {
+func approvalSource(store approvalLookup) approval.SourceDescriber {
 	return func(ctx context.Context, actor orchestration.ActorScope) approval.Source {
 		if actor.ParentAgentID == "" || actor.AgentID == "" {
 			return approval.Source{}

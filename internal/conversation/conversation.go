@@ -1,5 +1,5 @@
 // Package conversation owns session serialization and durable history views.
-// Interfaces submit turns here; Eino owns execution and Goal protocols own acceptance.
+// Interfaces submit turns here; Eino owns the model/tool execution loop.
 package conversation
 
 import (

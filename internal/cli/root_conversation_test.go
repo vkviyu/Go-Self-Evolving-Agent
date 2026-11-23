@@ -13,10 +13,11 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
+	"github.com/vkviyu/go-self-evolving-agent/internal/app"
+	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/conversation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
@@ -144,7 +145,7 @@ func TestRootConversationSettlesTurnsCommittedBeforeCrash(t *testing.T) {
 	}
 }
 
-func newRootMailboxConversation(t *testing.T, chatModel model.ToolCallingChatModel) (*conversation.Conversation, *sqlitestore.OrchestrationStore, orchestration.RootThread, orchestration.AgentSnapshot) {
+func newRootMailboxConversation(t *testing.T, chatModel model.ToolCallingChatModel) (*conversation.Conversation, app.OrchestrationRepository, orchestration.RootThread, orchestration.AgentSnapshot) {
 	t.Helper()
 	fixture := newRootMailboxFixture(t, chatModel)
 	return fixture.chat, fixture.store, fixture.root, fixture.child
@@ -154,7 +155,7 @@ func newRootMailboxConversation(t *testing.T, chatModel model.ToolCallingChatMod
 // conversation as a restarted process would.
 type rootMailboxFixture struct {
 	chat    *conversation.Conversation
-	store   *sqlitestore.OrchestrationStore
+	store   app.OrchestrationRepository
 	root    orchestration.RootThread
 	child   orchestration.AgentSnapshot
 	factory *agentruntime.Factory
@@ -162,11 +163,7 @@ type rootMailboxFixture struct {
 
 func newRootMailboxFixture(t *testing.T, chatModel model.ToolCallingChatModel) rootMailboxFixture {
 	t.Helper()
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
+	database := openCLIApp(t, cliATEConfig(t, config.Config{}))
 	store := database.Orchestration()
 	root, _, err := store.EnsureRootThread(context.Background(), orchestration.RootThreadSeed{SessionID: "root-mailbox-test"})
 	if err != nil {
@@ -188,11 +185,11 @@ func newRootMailboxFixture(t *testing.T, chatModel model.ToolCallingChatModel) r
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipeline, err := tool.NewPipeline(tool.PipelineConfig{Registry: registry, Policy: policyEngine, Events: database.SessionEvents()})
+	pipeline, err := tool.NewPipeline(tool.PipelineConfig{Registry: registry, Policy: policyEngine, Events: database.Events()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := agentruntime.NewFactory(agentruntime.Config{ActorScope: root.ActorScope()}, chatModel, registry, pipeline, database.SessionEvents(), database.Checkpoints())
+	factory, err := agentruntime.NewFactory(agentruntime.Config{ActorScope: root.ActorScope()}, chatModel, registry, pipeline, database.Events(), database.Checkpoints())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +200,7 @@ func newRootMailboxFixture(t *testing.T, chatModel model.ToolCallingChatModel) r
 	return rootMailboxFixture{chat: rootChat, store: store, root: root, child: child, factory: factory}
 }
 
-func enqueueRootResult(t *testing.T, store *sqlitestore.OrchestrationStore, root orchestration.RootThread, child orchestration.AgentSnapshot, summary string) {
+func enqueueRootResult(t *testing.T, store orchestration.MailboxRepository, root orchestration.RootThread, child orchestration.AgentSnapshot, summary string) {
 	t.Helper()
 	body, err := json.Marshal(orchestration.AgentResult{Status: orchestration.ResultSucceeded, Summary: summary})
 	if err != nil {

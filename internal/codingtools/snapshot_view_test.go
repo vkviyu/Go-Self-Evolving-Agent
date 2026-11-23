@@ -10,7 +10,7 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
@@ -31,7 +31,7 @@ func TestWorkspaceRoutesSnapshotViewOutsideTheRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workRoot, "a.txt"), []byte("snapshot\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	database, err := sqlitestore.Open(ctx, ":memory:")
+	database, err := testfixture.Open(t, ctx, ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +64,10 @@ func TestWorkspaceRoutesSnapshotViewOutsideTheRoot(t *testing.T) {
 	}
 	if err := workspace.AttachSnapshotViewsDirectory(viewsDirectory); err != nil {
 		t.Fatal(err)
+	}
+	metadata, err := workspace.InspectFileReferences(actorContext, "review @a.txt", nil)
+	if err != nil || len(metadata) != 1 || metadata[0].SizeBytes != int64(len("snapshot\n")) {
+		t.Fatalf("snapshot file metadata = %#v, error = %v", metadata, err)
 	}
 	result, err := workspace.read(actorContext, json.RawMessage(`{"path":"a.txt"}`))
 	if err != nil {

@@ -8,11 +8,11 @@
 
 采用“稳定分组目录 + 三级信息披露 + 按需加载定义”。模型负责理解需求并选择导航路径，宿主负责目录真实性、预算、版本、持久化和执行权限。不引入外部知识库，不把关键词匹配作为主路由，也不为此另写 Agent Loop。
 
-| 层级 | 模型看到的内容 | 不包含什么 |
-| --- | --- | --- |
-| L1，组目录 | 每组的用途简介、组内工具名称 | 非常驻工具的参数 Schema、逐工具长说明 |
-| L2，组详情 | 该组工具名称、每个工具的简短用途说明 | 参数 Schema、实现代码 |
-| L3，工具定义 | 选中工具的完整可调用定义：名称、完整说明、输入 Schema | 源码、凭证、执行授权 |
+| 层级         | 模型看到的内容                                        | 不包含什么                            |
+| ------------ | ----------------------------------------------------- | ------------------------------------- |
+| L1，组目录   | 每组的用途简介、组内工具名称                          | 非常驻工具的参数 Schema、逐工具长说明 |
+| L2，组详情   | 该组工具名称、每个工具的简短用途说明                  | 参数 Schema、实现代码                 |
+| L3，工具定义 | 选中工具的完整可调用定义：名称、完整说明、输入 Schema | 源码、凭证、执行授权                  |
 
 必须遵守以下决定：
 
@@ -55,15 +55,15 @@
 
 以下是设计时核实、2026-10-26 复核的代码事实，不是新增功能完成声明。
 
-| 当前实现 | 本方案的变化 |
-| --- | --- |
-| `NewTurn` 固定 Registry Snapshot；恢复解析原快照 | 保持；额外固定目录版本与派生视图 |
-| Eino Adapter 为快照内工具建立 handler，`Info()` 提供完整 Schema；`buildTurn` 按 Profile 与 Goal 开关整体剔除工具（handler 与定义一起去掉） | handler 仍来自固定快照；模型侧只投影常驻和已加载定义 |
-| `ChatModelAgent` / `Runner` 承担 ReAct Loop；当前未注册任何 Eino middleware | 保持；使用 Eino 官方 middleware 扩展点 |
-| Goal 工具已有按阶段调整模型可见列表的逻辑：`recordingModel.goalToolOptions` 在出站请求上追加 `model.WithTools(filtered)`，不改 Eino state | 纳入统一可见列表投影，保留现有同批次 Goal 调用语义 |
-| 所有执行走 Pipeline、Policy、审批和事件存储 | 导航工具同样走管线；额外检查模型调用的请求曝光凭据 |
-| 每次模型请求已有上下文估算、压缩、预算与使用记录 | 统计实际目录覆盖层和实际可见 Schema，而不是全部注册工具 |
-| Runtime Snapshot 与插件 revision 已有恢复引用 | 保留整个执行快照；目录与加载状态增加各自恢复引用 |
+| 当前实现                                                                                                                                   | 本方案的变化                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `NewTurn` 固定 Registry Snapshot；恢复解析原快照                                                                                           | 保持；额外固定目录版本与派生视图                        |
+| Eino Adapter 为快照内工具建立 handler，`Info()` 提供完整 Schema；`buildTurn` 按 Profile 与 Goal 开关整体剔除工具（handler 与定义一起去掉） | handler 仍来自固定快照；模型侧只投影常驻和已加载定义    |
+| `ChatModelAgent` / `Runner` 承担 ReAct Loop；当前未注册任何 Eino middleware                                                                | 保持；使用 Eino 官方 middleware 扩展点                  |
+| Turn 的工具定义来自固定 Registry Snapshot，模型请求不再根据 Goal 阶段动态增删工具                                      | 纳入统一可见列表投影，保留固定快照与 Policy/Approval 语义 |
+| 所有执行走 Pipeline、Policy、审批和事件存储                                                                                                | 导航工具同样走管线；额外检查模型调用的请求曝光凭据      |
+| 每次模型请求已有上下文估算、压缩、预算与使用记录                                                                                           | 统计实际目录覆盖层和实际可见 Schema，而不是全部注册工具 |
+| Runtime Snapshot 与插件 revision 已有恢复引用                                                                                              | 保留整个执行快照；目录与加载状态增加各自恢复引用        |
 
 主要对接位置：
 
@@ -266,11 +266,11 @@ GroupID 由宿主分配短而稳定的 ID，模型只能引用已有 ID 或提�
 
 以下名称为计划的原生工具名。实施时先检查名称冲突，再由宿主保留；插件不得抢占。不能静默重命名现有冲突工具。现状：模型生成的插件只能使用 `extension_*`，但宿主 `plugins stage` 的可信 Manifest 只受 `plugin.OpenManager` 保留前缀（`app/open.go`：`agent_ task_ merge_ goal_ flow_ plugin_ strategy_`）约束，其中尚无 `tools_`；实施时需把 `tools_` 加入保留前缀，并检查已持久化插件中是否已有同前缀名称。
 
-| 工具 | 参数要点 | 效果 |
-| --- | --- | --- |
-| `tools_groups` | `cursor?` | 将下一请求的目录焦点切换到 L1 某页 |
-| `tools_group` | `group_id`, `cursor?`, `mode: summaries/expand` | 切到 L2；或在小组阈值内原子展开全组定义 |
-| `tools_load` | `tool_ids[]`, `expected_revisions?` | 直接加载当前 V 中的确切工具定义 |
+| 工具           | 参数要点                                        | 效果                                    |
+| -------------- | ----------------------------------------------- | --------------------------------------- |
+| `tools_groups` | `cursor?`                                       | 将下一请求的目录焦点切换到 L1 某页      |
+| `tools_group`  | `group_id`, `cursor?`, `mode: summaries/expand` | 切到 L2；或在小组阈值内原子展开全组定义 |
+| `tools_load`   | `tool_ids[]`, `expected_revisions?`             | 直接加载当前 V 中的确切工具定义         |
 
 导航 API 参数只接受 ID 与分页选项，不接受任意 Schema、权限、实现路径或工具描述覆盖。
 
@@ -296,12 +296,14 @@ GroupID 由宿主分配短而稳定的 ID，模型只能引用已有 ID 或提�
   "view_id": "view-demo",
   "base_exposure_revision": 2,
   "exposure_revision": 3,
-  "focus": {"level": 2, "group_id": "data_transform"},
-  "loaded": [{
-    "tool_id": "csv_normalize",
-    "revision": "rev-demo",
-    "binding_fingerprint": "sha256:example-binding"
-  }],
+  "focus": { "level": 2, "group_id": "data_transform" },
+  "loaded": [
+    {
+      "tool_id": "csv_normalize",
+      "revision": "rev-demo",
+      "binding_fingerprint": "sha256:example-binding"
+    }
+  ],
   "available_from": "next_model_request",
   "already_loaded": [],
   "next_cursor": null
@@ -320,17 +322,17 @@ cursor 是宿主生成的有界不透明游标，绑定 View ID、page-plan hash
 
 主要错误码：
 
-| 错误 | 处理 |
-| --- | --- |
-| `unknown_group` / `invalid_cursor` | 保留原 E，允许返回目录 |
-| `tool_not_visible` | 未知与不可发现工具统一响应，避免泄露 |
-| `stale_tool_revision` | 不加载，不改绑最新版本 |
-| `group_too_large` | 提示改用 L2 或逐个加载，不部分展开 |
-| `discovery_budget_exhausted` | 保留已加载集合，提示具体受限维度 |
-| `tool_not_loaded` | 可恢复前置条件；仅对可发现工具提示 `tools_load` |
-| `discovery_loop_limit` | 停止重复导航，返回已知信息与受限原因 |
-| `navigation_focus_conflict` | 同一来源请求已有不同焦点切换，保留先前页，下一请求再浏览 |
-| `exposure_evidence_missing` | 不执行；作为恢复/协议错误报告 |
+| 错误                               | 处理                                                     |
+| ---------------------------------- | -------------------------------------------------------- |
+| `unknown_group` / `invalid_cursor` | 保留原 E，允许返回目录                                   |
+| `tool_not_visible`                 | 未知与不可发现工具统一响应，避免泄露                     |
+| `stale_tool_revision`              | 不加载，不改绑最新版本                                   |
+| `group_too_large`                  | 提示改用 L2 或逐个加载，不部分展开                       |
+| `discovery_budget_exhausted`       | 保留已加载集合，提示具体受限维度                         |
+| `tool_not_loaded`                  | 可恢复前置条件；仅对可发现工具提示 `tools_load`          |
+| `discovery_loop_limit`             | 停止重复导航，返回已知信息与受限原因                     |
+| `navigation_focus_conflict`        | 同一来源请求已有不同焦点切换，保留先前页，下一请求再浏览 |
+| `exposure_evidence_missing`        | 不执行；作为恢复/协议错误报告                            |
 
 业务层可恢复错误不制造副作用。目录损坏、持久化失败、来源凭据不一致等不能伪装成“工具不存在”。
 
@@ -405,14 +407,14 @@ assistant 响应事件保留 `request_id → tool_call_id[]` 关联。由明确�
 
 ### 10.4 崩溃矩阵
 
-| 发生位置 | 恢复行为 |
-| --- | --- |
-| 计划已计算，成功事件未提交 | E 不变；导航是无外部副作用的纯计划，可安全重新计算 |
-| `tool.succeeded` 已提交，内存投影未更新 | 重放已提交事件恢复 E；不重复加载 |
-| E 已重建，Eino checkpoint 落后 | 覆盖 checkpoint 的 ToolInfos，以耐久 E 为准 |
-| 请求已记录，响应未完整落盘 | 沿现有请求恢复/不确定结果协议处理，不猜造 tool-call 来源 |
-| 已有 assistant 调用，曝光凭据缺失 | 不执行；报告协议错误，不套用最新 E |
-| 原 R/C/V 无法解析 | 明确恢复失败；不替换最新目录或插件 revision |
+| 发生位置                                | 恢复行为                                                 |
+| --------------------------------------- | -------------------------------------------------------- |
+| 计划已计算，成功事件未提交              | E 不变；导航是无外部副作用的纯计划，可安全重新计算       |
+| `tool.succeeded` 已提交，内存投影未更新 | 重放已提交事件恢复 E；不重复加载                         |
+| E 已重建，Eino checkpoint 落后          | 覆盖 checkpoint 的 ToolInfos，以耐久 E 为准              |
+| 请求已记录，响应未完整落盘              | 沿现有请求恢复/不确定结果协议处理，不猜造 tool-call 来源 |
+| 已有 assistant 调用，曝光凭据缺失       | 不执行；报告协议错误，不套用最新 E                       |
+| 原 R/C/V 无法解析                       | 明确恢复失败；不替换最新目录或插件 revision              |
 
 现有成功事件写入失败可能形成 `OutcomeUnknown`。即使导航计划本身可重算，也不能绕开 Pipeline 的失败协议，向用户伪报完成。
 
@@ -466,20 +468,20 @@ Turn 后评估下一请求压力，沿现有 pending compaction 机制；不额�
 
 下表是**待实现和实测校准的宿主默认策略**，不是当前配置或商业 Agent 常数。默认以自动策略为主，专家可在受控配置中覆盖，模型不可覆盖。
 
-| 参数 | 建议起点 |
-| --- | --- |
-| 组用途 / 逐工具简介 | 各不超过 160 个 Unicode 字符；另有限量编码字节 |
-| 目录元数据 / 分组数量 | 每个规范化版本最多 2 MiB、最多 64 组；与 WASM 目录限额分开 |
-| 单工具分组数量 | 最多 3 组；再多应复审组设计 |
-| L1 每页 | 最多 8 组片段、32 个成员名称，同时受目录 Token 限制 |
-| L2 每页 | 最多 12 个工具，同时受目录 Token 限制 |
-| 单次 `tools_load` | 最多 4 个工具，原子校验/加载 |
-| 小组整体展开 | 最多 4 个唯一 deferred 工具，且完整 Schema 总量可容纳 |
-| 目录覆盖层目标上限 | `min(4096 tokens, 可用输入预算的 10%)`，低预算需保留最小可用页 |
-| 总可见 Schema 目标上限 | `min(16384 tokens, 可用输入预算的 20%)`，含导航与 resident |
-| 本 Turn deferred 加载数量上限 | 24；还需满足总 Schema Token 上限 |
-| Turn 导航调用上限 | 12；仍计入原工具调用/迭代总预算 |
-| 连续无进展重复导航 | 3 次后返回 `discovery_loop_limit` |
+| 参数                          | 建议起点                                                       |
+| ----------------------------- | -------------------------------------------------------------- |
+| 组用途 / 逐工具简介           | 各不超过 160 个 Unicode 字符；另有限量编码字节                 |
+| 目录元数据 / 分组数量         | 每个规范化版本最多 2 MiB、最多 64 组；与 WASM 目录限额分开     |
+| 单工具分组数量                | 最多 3 组；再多应复审组设计                                    |
+| L1 每页                       | 最多 8 组片段、32 个成员名称，同时受目录 Token 限制            |
+| L2 每页                       | 最多 12 个工具，同时受目录 Token 限制                          |
+| 单次 `tools_load`             | 最多 4 个工具，原子校验/加载                                   |
+| 小组整体展开                  | 最多 4 个唯一 deferred 工具，且完整 Schema 总量可容纳          |
+| 目录覆盖层目标上限            | `min(4096 tokens, 可用输入预算的 10%)`，低预算需保留最小可用页 |
+| 总可见 Schema 目标上限        | `min(16384 tokens, 可用输入预算的 20%)`，含导航与 resident     |
+| 本 Turn deferred 加载数量上限 | 24；还需满足总 Schema Token 上限                               |
+| Turn 导航调用上限             | 12；仍计入原工具调用/迭代总预算                                |
+| 连续无进展重复导航            | 3 次后返回 `discovery_loop_limit`                              |
 
 百分比的分母是扣除输出预留与安全量后的输入预算，不是 R 的大小。首次 resident 超出目标时不能裁剪安全协议工具；应报告配置不兼容，或采用另一个已版本化、经过测试的宿主策略。不能以“自动”为理由发送超限请求。
 
@@ -557,8 +559,8 @@ internal/agentruntime
   Eino exposure middleware / request manifest / model-origin guard
   request-only rendering / compaction integration / grouping model adapter
 
-internal/session/sqlitestore
-  append-only migration / catalog store / exposure projections
+internal/orchestration/atestore
+  exposure records and catalog updates in ATE
 
 internal/app
   composition / publication integration / maintenance lifecycle / defaults
@@ -570,14 +572,14 @@ internal/app
 
 示意端口职责：
 
-| 端口 | 责任 |
-| --- | --- |
-| `CatalogStore` | 读不可变版本、以 base ID CAS 提交版本、维护引用 |
-| `ViewBuilder` | 根据精确 R/C/Profile/策略纯派生 V |
-| `ExposureProjector` | 从可信事件重建 E；重复事件幂等 |
-| `DiscoveryPlanner` | 计算分页、加载预算、next exposure delta；不提前提交 |
-| `GroupingProposer` | 接收限量元数据，返回草案；不发布、不授权 |
-| `RequestExposureRecorder` | 固定请求实际定义与来源关系，供执行验证 |
+| 端口                      | 责任                                                |
+| ------------------------- | --------------------------------------------------- |
+| `CatalogStore`            | 读不可变版本、以 base ID CAS 提交版本、维护引用     |
+| `ViewBuilder`             | 根据精确 R/C/Profile/策略纯派生 V                   |
+| `ExposureProjector`       | 从可信事件重建 E；重复事件幂等                      |
+| `DiscoveryPlanner`        | 计算分页、加载预算、next exposure delta；不提前提交 |
+| `GroupingProposer`        | 接收限量元数据，返回草案；不发布、不授权            |
+| `RequestExposureRecorder` | 固定请求实际定义与来源关系，供执行验证              |
 
 避免“一站式 DiscoveryManager”同时拥有模型调用、数据库、Eino、插件编译与审批。修改依赖时同步更新架构 guard 的精确白名单，不放开整个 internal 层。
 
@@ -587,15 +589,15 @@ internal/app
 
 建议逻辑记录如下；可复用现有 blob/事件存储，不要求每项都建一张表：
 
-| 记录 | 关键约束 |
-| --- | --- |
-| catalog revisions | ID 唯一、规范内容 hash、格式版本、不可变 |
-| active catalog pointer | CAS base ID；一次只指向一个已提交版本 |
-| catalog drafts/audit | 提案来源、校验报告、模型账单、维护确认；不参与目录内容 hash |
-| turn discovery binding | Turn 唯一；R/C/V/协议版本/策略 hash 固定 |
-| exposure events/projection | 有序 revision、可信事件来源、base revision、幂等 call ID |
-| request exposure manifest | request ID 唯一；精确工具顺序/hash、目录 hash、曝光 revision |
-| references | 明确 consumer kind/id，支持 plan/receipt 与恢复关闭 |
+| 记录                       | 关键约束                                                     |
+| -------------------------- | ------------------------------------------------------------ |
+| catalog revisions          | ID 唯一、规范内容 hash、格式版本、不可变                     |
+| active catalog pointer     | CAS base ID；一次只指向一个已提交版本                        |
+| catalog drafts/audit       | 提案来源、校验报告、模型账单、维护确认；不参与目录内容 hash  |
+| turn discovery binding     | Turn 唯一；R/C/V/协议版本/策略 hash 固定                     |
+| exposure events/projection | 有序 revision、可信事件来源、base revision、幂等 call ID     |
+| request exposure manifest  | request ID 唯一；精确工具顺序/hash、目录 hash、曝光 revision |
+| references                 | 明确 consumer kind/id，支持 plan/receipt 与恢复关闭          |
 
 按现有 SQLite append-only migration 规则新增迁移；不能改写已发布 migration 或假定固定“下一个编号”。内存 store 与 SQLite store 的语义必须一致。
 
@@ -646,14 +648,14 @@ ctx 18k/128k  tools 9/68  schema 3.2k  catalog 0.8k
 
 这是一份后续实施计划，本轮仅交付设计文档。
 
-| 阶段 | 工作 | 进入下一阶段的条件 |
-| --- | --- | --- |
-| D1：领域与耐久目录 | ToolRef/Group/Catalog、校验、CAS、fallback、确定性 V、迁移 | 身份/并发/权限过滤/旧数据测试通过 |
-| D2：导航与曝光状态 | 三个原生工具、分页、纯计划、可信成功事件投影、预算与幂等 | 崩溃矩阵和伪造结果测试通过，尚不默认启用 |
-| D3：Eino 与请求集成 | 精确 ToolInfos、request-only 目录、来源 manifest、前置 guard | 真实 Eino 流式/非流式、Goal/Flow/恢复不回归 |
-| D4：统计与体验 | 实际 ctx/tools 统计、缓存观测、导航错误提示、小组快捷展开 | 统计能与最终 prepared request 对账 |
-| D5：分组维护闭环 | 模型草案、维护预览、发布准备集成、CAS、失败保底 | 无每轮分类、无锁内模型调用、维护生命周期可关闭 |
-| D6：发布与稳定性 | Profile/Multi-Agent、引用/GC、旧 Turn 兼容、文档与默认策略 | 验收矩阵通过，再对新 Turn 默认启用 |
+| 阶段                | 工作                                                         | 进入下一阶段的条件                             |
+| ------------------- | ------------------------------------------------------------ | ---------------------------------------------- |
+| D1：领域与耐久目录  | ToolRef/Group/Catalog、校验、CAS、fallback、确定性 V、迁移   | 身份/并发/权限过滤/旧数据测试通过              |
+| D2：导航与曝光状态  | 三个原生工具、分页、纯计划、可信成功事件投影、预算与幂等     | 崩溃矩阵和伪造结果测试通过，尚不默认启用       |
+| D3：Eino 与请求集成 | 精确 ToolInfos、request-only 目录、来源 manifest、前置 guard | 真实 Eino 流式/非流式、Goal/Flow/恢复不回归    |
+| D4：统计与体验      | 实际 ctx/tools 统计、缓存观测、导航错误提示、小组快捷展开    | 统计能与最终 prepared request 对账             |
+| D5：分组维护闭环    | 模型草案、维护预览、发布准备集成、CAS、失败保底              | 无每轮分类、无锁内模型调用、维护生命周期可关闭 |
+| D6：发布与稳定性    | Profile/Multi-Agent、引用/GC、旧 Turn 兼容、文档与默认策略   | 验收矩阵通过，再对新 Turn 默认启用             |
 
 每阶段保持可单独评审与回滚，不同时重写整个 Agent Runtime。测试不通过时保留原 eager 默认；不拿真实用户任务验证未完成的耐久协议。
 
@@ -713,19 +715,19 @@ ctx 18k/128k  tools 9/68  schema 3.2k  catalog 0.8k
 
 ## 20. 关键风险与取舍记录
 
-| 风险/选择 | 决定与后果 |
-| --- | --- |
-| L1 成员名称仍很长 | 保留用户契约；预算内全显，超预算明确分页，不承诺常数成本 |
-| 分类错误 | 多组引用、未分类入口、返回/跨组和已知名称直接加载，不建立唯一检索闸门 |
-| 模型维护简介不可信 | 仅作数据；宿主结构与绑定校验，不授予权限；语义质量另验 |
-| 目录与插件无法一起提交 | 独立 CAS + 确定性 fallback，不伪装原子提交 |
-| 已加载集合持续膨胀 | 第一版 Turn 内单调有界，超限拒绝；卸载/LRU 另立协议 |
-| 新增导航轮次 | resident、直接加载、小组展开缓解；按端到端成本实测 |
-| prompt cache 失效 | 稳定版本与顺序降低无意义变化，但不保证后端命中 |
-| Eino 状态与事件不一致 | Eino 状态可重建；durable 成功事件与请求证据为准 |
-| 新旧 Turn 语义混用 | Turn 固定协议版本，默认开关只影响新 Turn |
-| 目录元数据驱动错误 GC | 二进制/元数据引用分开审计，不按已加载子集释放 R |
-| 模型把分组当权限 | discoverability、exposure、authorization 三者分离并分别测试 |
+| 风险/选择              | 决定与后果                                                            |
+| ---------------------- | --------------------------------------------------------------------- |
+| L1 成员名称仍很长      | 保留用户契约；预算内全显，超预算明确分页，不承诺常数成本              |
+| 分类错误               | 多组引用、未分类入口、返回/跨组和已知名称直接加载，不建立唯一检索闸门 |
+| 模型维护简介不可信     | 仅作数据；宿主结构与绑定校验，不授予权限；语义质量另验                |
+| 目录与插件无法一起提交 | 独立 CAS + 确定性 fallback，不伪装原子提交                            |
+| 已加载集合持续膨胀     | 第一版 Turn 内单调有界，超限拒绝；卸载/LRU 另立协议                   |
+| 新增导航轮次           | resident、直接加载、小组展开缓解；按端到端成本实测                    |
+| prompt cache 失效      | 稳定版本与顺序降低无意义变化，但不保证后端命中                        |
+| Eino 状态与事件不一致  | Eino 状态可重建；durable 成功事件与请求证据为准                       |
+| 新旧 Turn 语义混用     | Turn 固定协议版本，默认开关只影响新 Turn                              |
+| 目录元数据驱动错误 GC  | 二进制/元数据引用分开审计，不按已加载子集释放 R                       |
+| 模型把分组当权限       | discoverability、exposure、authorization 三者分离并分别测试           |
 
 ## 21. 完成定义
 

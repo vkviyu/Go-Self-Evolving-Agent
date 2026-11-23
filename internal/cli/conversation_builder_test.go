@@ -8,8 +8,6 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
@@ -52,27 +50,5 @@ func TestSuspendedWaitSpecCopiesTargets(t *testing.T) {
 	}
 	if spec.TeamID != waitSet.TeamID || spec.ResumeToken != waitSet.ResumeToken || spec.Deadline != waitSet.Deadline {
 		t.Fatalf("wait spec lost durable fields: %#v", spec)
-	}
-}
-
-func TestProjectChildResultPreservesGoalOutcome(t *testing.T) {
-	t.Parallel()
-	blocked := projectChildResult(agentruntime.Result{
-		GoalID: "goal-1", GoalState: agentgoal.StateBlocked, GoalDecision: agentgoal.DecisionBlocked,
-		GoalStopReason: agentgoal.StopSemanticBlocked, GoalRounds: 2, GoalReason: "credentials are unavailable",
-	}, "partial investigation")
-	if blocked.Status != orchestration.ResultBlocked || len(blocked.Blockers) != 1 || blocked.Blockers[0] != "credentials are unavailable" || !json.Valid(blocked.Payload) {
-		t.Fatalf("blocked projection = %#v", blocked)
-	}
-	exhausted := projectChildResult(agentruntime.Result{
-		GoalID: "goal-2", GoalState: agentgoal.StateExhausted, GoalDecision: agentgoal.DecisionContinue,
-		GoalStopReason: agentgoal.StopMaxRounds, GoalRounds: 4,
-	}, "best available result")
-	if exhausted.Status != orchestration.ResultPartial || len(exhausted.Risks) != 1 {
-		t.Fatalf("exhausted projection = %#v", exhausted)
-	}
-	legacy := projectChildResult(agentruntime.Result{}, "done")
-	if legacy.Status != orchestration.ResultSucceeded || len(legacy.Payload) != 0 {
-		t.Fatalf("non-Goal projection = %#v", legacy)
 	}
 }

@@ -60,12 +60,12 @@ class GSEATerminalBenchAgent(BaseAgent):
         if not api_key:
             raise RuntimeError(f"required API key environment is unset: {self.api_key_env}")
 
-        container_binary = "/opt/gsea/local-agent"
+        container_binary = "/opt/gsea/gsea"
         container_prompt = "/opt/gsea/task.txt"
         session.copy_to_container(
             self.binary_path,
             container_dir="/opt/gsea",
-            container_filename="local-agent",
+            container_filename="gsea",
         )
         chmod = session.container.exec_run(["chmod", "0755", container_binary])
         if chmod.exit_code != 0:
@@ -115,7 +115,6 @@ class GSEATerminalBenchAgent(BaseAgent):
             self.request_timeout,
             "--max-iterations",
             str(self.max_iterations),
-            "--goal-mode=false",
             "--system",
             SYSTEM_PROMPT,
         ]

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,10 +12,10 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
+	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
@@ -36,14 +35,10 @@ func (fake *childRecoveryModel) Stream(ctx context.Context, input []*schema.Mess
 	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
 }
 
-func childRecoveryFactory(t *testing.T, path string, fake *childRecoveryModel, writes *atomic.Int32) (*sqlitestore.Database, *agentruntime.Factory, orchestration.RootThread) {
+func childRecoveryFactory(t *testing.T, cfg config.Config, fake *childRecoveryModel, writes *atomic.Int32) (*cliAppFixture, *agentruntime.Factory, orchestration.RootThread) {
 	t.Helper()
 	ctx := context.Background()
-	database, err := sqlitestore.Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
+	database := openCLIApp(t, cfg)
 	root, _, err := database.Orchestration().EnsureRootThread(ctx, orchestration.RootThreadSeed{SessionID: "root"})
 	if err != nil {
 		t.Fatal(err)
@@ -60,18 +55,18 @@ func childRecoveryFactory(t *testing.T, path string, fake *childRecoveryModel, w
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipeline, err := tool.NewPipeline(tool.PipelineConfig{Registry: registry, Policy: engine, Events: database.SessionEvents()})
+	pipeline, err := tool.NewPipeline(tool.PipelineConfig{Registry: registry, Policy: engine, Events: database.Events()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := agentruntime.NewFactory(agentruntime.Config{ActorScope: root.ActorScope(), ModelProfile: "primary", MaxIterations: 5}, fake, registry, pipeline, database.SessionEvents(), database.Checkpoints())
+	factory, err := agentruntime.NewFactory(agentruntime.Config{ActorScope: root.ActorScope(), ModelProfile: "primary", MaxIterations: 5}, fake, registry, pipeline, database.Events(), database.Checkpoints())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return database, factory, root
 }
 
-func createRecoveryChild(t *testing.T, database *sqlitestore.Database, root orchestration.RootThread) orchestration.AgentSnapshot {
+func createRecoveryChild(t *testing.T, database *cliAppFixture, root orchestration.RootThread) orchestration.AgentSnapshot {
 	t.Helper()
 	profile := agentprofile.Profile{Name: "worker", Revision: "worker-v1", Instruction: "Execute only the authorized task", ModelProfile: "primary", WorkspaceMode: agentprofile.WorkspaceSharedLease, ContextInheritance: agentprofile.InheritNone, Limits: agentprofile.Limits{MaxIterations: 5, MaxToolCalls: 5, MaxWallTime: time.Minute}}
 	encoded, err := agentprofile.Encode(profile)
@@ -95,9 +90,9 @@ func createRecoveryChild(t *testing.T, database *sqlitestore.Database, root orch
 
 func TestSupervisorRecoveryUsesOriginalRunWithoutRepeatingWrite(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "child.db")
+	cfg := cliATEConfig(t, config.Config{})
 	fake, writes := &childRecoveryModel{}, &atomic.Int32{}
-	database, factory, root := childRecoveryFactory(t, path, fake, writes)
+	database, factory, root := childRecoveryFactory(t, cfg, fake, writes)
 	child := createRecoveryChild(t, database, root)
 	result, err := newChildRunner(factory).Run(ctx, agentmanager.RunRequest{Agent: child, Prompt: child.InitialPrompt})
 	if err != nil || result.Summary != "saved child result" || writes.Load() != 1 {
@@ -107,7 +102,7 @@ func TestSupervisorRecoveryUsesOriginalRunWithoutRepeatingWrite(t *testing.T) {
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, restored, _ := childRecoveryFactory(t, path, fake, writes)
+	reopened, restored, _ := childRecoveryFactory(t, cfg, fake, writes)
 	supervisor, err := agentmanager.NewSupervisor(agentmanager.Config{Agents: reopened.Orchestration(), Runner: newChildRunner(restored)})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +129,7 @@ func TestChildRecoveryNeverFallsBackToFreshExecution(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
 			fake, writes := &childRecoveryModel{}, &atomic.Int32{}
-			database, factory, root := childRecoveryFactory(t, ":memory:", fake, writes)
+			database, factory, root := childRecoveryFactory(t, cliATEConfig(t, config.Config{}), fake, writes)
 			child := createRecoveryChild(t, database, root)
 			if scenario != "no-turn" {
 				runID := child.CurrentRunID
@@ -144,7 +139,7 @@ func TestChildRecoveryNeverFallsBackToFreshExecution(t *testing.T) {
 				if scenario == "different-run" {
 					runID, _ = orchestration.NewRunID()
 				}
-				_, err := database.SessionEvents().Append(ctx, child.SessionID, session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "old-turn", Payload: session.MustJSONPayload(map[string]any{"run_id": runID})})
+				_, err := database.Events().Append(ctx, child.SessionID, session.AnySequence, session.PendingEvent{Type: session.EventTurnStarted, CorrelationID: "old-turn", Payload: session.MustJSONPayload(map[string]any{"run_id": runID})})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -17,16 +17,13 @@ const (
 	contextLevelCritical contextPolicyLevel = "critical"
 )
 
-// ContextHints are authoritative anchors supplied by the Outer Loop. They are
-// repeated in a compacted summary so an active Goal cannot disappear behind a
-// summary boundary.
+// ContextHints are authoritative anchors supplied by the execution layer.
+// They are repeated in a compacted summary so an active plan contract cannot
+// disappear behind a summary boundary.
 type ContextHints struct {
-	GoalID    string
-	GoalText  string
-	GoalRound int
-	// AdmissionToken binds an Always Goal to the exact Turn that carries its
-	// first round. It is metadata only and is never included in the prompt.
-	AdmissionToken string
+	ContractID   string
+	ContractText string
+	Attempt      int
 }
 
 // PrepareMessages applies the configured context policy before a new turn. A
@@ -48,13 +45,21 @@ func (f *Factory) PrepareMessagesWithHints(ctx context.Context, sessionID sessio
 // only a context-reducing boundary. The interactive /compress command shares
 // the exact same durable event format as automatic compaction.
 func (f *Factory) Compact(ctx context.Context, sessionID session.ID, messages []*schema.Message) ([]*schema.Message, bool, error) {
+	return f.CompactWithSink(ctx, sessionID, messages, nil)
+}
+
+func (f *Factory) CompactWithSink(ctx context.Context, sessionID session.ID, messages []*schema.Message, sink EventSink) ([]*schema.Message, bool, error) {
 	if len(messages) == 0 {
 		return nil, false, errors.New("context requires at least one message")
 	}
-	return f.applyContextPolicy(ctx, sessionID, messages, ContextHints{}, true)
+	return f.applyContextPolicyWithSink(ctx, sessionID, messages, ContextHints{}, true, sink)
 }
 
 func (f *Factory) applyContextPolicy(ctx context.Context, sessionID session.ID, messages []*schema.Message, hints ContextHints, force bool) ([]*schema.Message, bool, error) {
+	return f.applyContextPolicyWithSink(ctx, sessionID, messages, hints, force, nil)
+}
+
+func (f *Factory) applyContextPolicyWithSink(ctx context.Context, sessionID session.ID, messages []*schema.Message, hints ContextHints, force bool, sink EventSink) ([]*schema.Message, bool, error) {
 	tokensBefore := f.tokenizer.CountMessages(messages)
 	managed, artifacts, err := f.externalizeToolResults(ctx, messages)
 	if err != nil {
@@ -72,6 +77,9 @@ func (f *Factory) applyContextPolicy(ctx context.Context, sessionID session.ID, 
 		}
 		return managed, true, nil
 	}
+	if force && sink != nil {
+		_ = sink(ctx, Event{Type: EventContextCompactionStarted, Purpose: "compaction"})
+	}
 	// PrepareMessages includes the new, not-yet-durable user input. Compact
 	// operates on committed history only. Never persist that pending input as
 	// retained history or it will appear twice after the turn starts.
@@ -79,7 +87,7 @@ func (f *Factory) applyContextPolicy(ctx context.Context, sessionID session.ID, 
 	if !force && managed[len(managed)-1].Role == schema.User {
 		pending = 1
 	}
-	prepared, compacted, fallback, err := f.compactWithResult(ctx, sessionID, managed, plan.retainTokens, level, hints, pending)
+	prepared, compacted, fallback, err := f.compactWithResultWithSink(ctx, sessionID, managed, plan.retainTokens, level, hints, pending, sink)
 	if err != nil {
 		return nil, false, err
 	}

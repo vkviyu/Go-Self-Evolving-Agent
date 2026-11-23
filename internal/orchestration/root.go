@@ -8,16 +8,23 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
-type RootThread struct {
-	TeamID          TeamID
-	AgentID         AgentID
-	ThreadID        ThreadID
-	SessionID       session.ID
-	TeamState       TeamState
-	AgentState      AgentState
-	ProfileRevision string
-	CreatedAt       time.Time
-}
+type (
+	RootThread struct {
+		TeamID          TeamID
+		AgentID         AgentID
+		ThreadID        ThreadID
+		SessionID       session.ID
+		TeamState       TeamState
+		AgentState      AgentState
+		ProfileRevision string
+		CreatedAt       time.Time
+	}
+
+	RootThreadRepository interface {
+		EnsureRootThread(ctx context.Context, seed RootThreadSeed) (root RootThread, created bool, err error)
+		RootThreadBySession(ctx context.Context, sessionID session.ID) (RootThread, error)
+	}
+)
 
 func (root RootThread) ActorScope() ActorScope {
 	return ActorScope{
@@ -36,9 +43,4 @@ type RootThreadSeed struct {
 	ProfileRevision string
 	ProfileSnapshot json.RawMessage
 	IdempotencyKey  string
-}
-
-type RootThreadRepository interface {
-	EnsureRootThread(ctx context.Context, seed RootThreadSeed) (root RootThread, created bool, err error)
-	RootThreadBySession(ctx context.Context, sessionID session.ID) (RootThread, error)
 }

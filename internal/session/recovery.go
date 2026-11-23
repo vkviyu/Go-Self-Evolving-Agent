@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,21 +13,37 @@ var (
 	ErrRecoveryAbandoned  = errors.New("recovery was explicitly abandoned")
 	ErrRecoveryDependency = errors.New("recovery still has dependent work")
 	ErrRecoveryArchived   = errors.New("recovery was explicitly archived; history remains readable")
+	ErrRecoveryToolCycle  = errors.New("turn stopped after repeated tool calls returned the same results; start a new turn to change approach")
 )
+
+const TurnFailureToolCycle = "repeated_tool_cycle"
+
+// TurnFailureCode reads the optional structured failure code from a turn event.
+func (event Event) TurnFailureCode() (string, error) {
+	if event.Type != EventTurnFailed {
+		return "", nil
+	}
+	var payload struct {
+		Code string `json:"failure_code"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return "", fmt.Errorf("read turn failure code: %w", err)
+	}
+	return payload.Code, nil
+}
 
 // AbandonRequest closes recovery, not its already-performed side effects.
 // It is accepted only by the offline owner, never by a model-callable tool.
 type AbandonRequest struct {
 	SessionID       ID
 	TurnID          string
-	GoalID          string
 	Reason          string
 	EffectsReviewed bool
 }
 
 func (request AbandonRequest) Validate() error {
-	if request.SessionID == "" || (request.TurnID == "") == (request.GoalID == "") {
-		return errors.New("abandon requires a session and exactly one turn or goal")
+	if request.SessionID == "" || request.TurnID == "" {
+		return errors.New("abandon requires a session and turn")
 	}
 	if !request.EffectsReviewed {
 		return errors.New("abandon requires explicit acknowledgement that prior effects were inspected and are not undone")
@@ -34,7 +51,7 @@ func (request AbandonRequest) Validate() error {
 	if strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 2048 {
 		return errors.New("abandon reason is required and must not exceed 2048 bytes")
 	}
-	if len(request.SessionID) > 4096 || len(request.TurnID) > 4096 || len(request.GoalID) > 4096 {
+	if len(request.SessionID) > 4096 || len(request.TurnID) > 4096 {
 		return errors.New("abandon identity is too long")
 	}
 	return nil
@@ -42,7 +59,6 @@ func (request AbandonRequest) Validate() error {
 
 type Abandonment struct {
 	SessionID          ID        `json:"session_id"`
-	GoalID             string    `json:"goal_id,omitempty"`
 	TurnIDs            []string  `json:"turn_ids"`
 	Reason             string    `json:"reason"`
 	ReleasedReferences int       `json:"released_references"`
@@ -53,12 +69,22 @@ type Abandonment struct {
 // CheckRecovery refuses a tombstoned turn even when its checkpoint and old
 // snapshot are still available. Evidence remains readable through EventStore.
 func CheckRecovery(ctx context.Context, events EventStore, id ID, turnID string) error {
+	loopStopped := false
 	check := func(event Event) error {
-		if event.CorrelationID == turnID && event.Type == EventTurnArchived {
-			return fmt.Errorf("%w: %s", ErrRecoveryArchived, turnID)
+		if event.CorrelationID != turnID {
+			return nil
 		}
-		if event.CorrelationID == turnID && event.Type == EventTurnAbandoned {
+		switch event.Type {
+		case EventTurnArchived:
+			return fmt.Errorf("%w: %s", ErrRecoveryArchived, turnID)
+		case EventTurnAbandoned:
 			return fmt.Errorf("%w: %s", ErrRecoveryAbandoned, turnID)
+		case EventTurnFailed:
+			code, err := event.TurnFailureCode()
+			if err != nil {
+				return err
+			}
+			loopStopped = loopStopped || code == TurnFailureToolCycle
 		}
 		return nil
 	}
@@ -72,7 +98,11 @@ func CheckRecovery(ctx context.Context, events EventStore, id ID, turnID string)
 				return err
 			}
 		}
-		return nil
+	} else if err := VisitEvents(ctx, events, id, check); err != nil {
+		return err
 	}
-	return VisitEvents(ctx, events, id, check)
+	if loopStopped {
+		return fmt.Errorf("%w (%s)", ErrRecoveryToolCycle, turnID)
+	}
+	return nil
 }

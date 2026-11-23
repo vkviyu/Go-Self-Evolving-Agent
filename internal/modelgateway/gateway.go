@@ -85,6 +85,14 @@ func newWithLookup(ctx context.Context, config Config, lookup environmentLookup)
 	if config.Timeout <= 0 {
 		config.Timeout = defaultTimeout
 	}
+	httpClient := modelTimingHTTPClient(config.HTTPClient, config.Timeout)
+	withTiming := func(chatModel model.ToolCallingChatModel) model.ToolCallingChatModel {
+		return &requestTimingModel{
+			ToolCallingChatModel: chatModel,
+			timeout:              config.Timeout,
+			preserveReadErrors:   config.Provider == ProviderOllama,
+		}
+	}
 
 	switch config.Provider {
 	case ProviderOpenAI:
@@ -103,31 +111,28 @@ func newWithLookup(ctx context.Context, config Config, lookup environmentLookup)
 		}
 		switch config.WireAPI {
 		case WireAPIChatCompletions:
-			httpClient := cacheUsageHTTPClient(config.HTTPClient, config.Timeout)
 			chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 				APIKey:     apiKey,
 				Model:      config.Model,
 				BaseURL:    config.BaseURL,
-				Timeout:    config.Timeout,
-				HTTPClient: httpClient,
+				HTTPClient: cacheUsageHTTPClient(httpClient),
 			})
 			if err != nil {
 				return nil, fmt.Errorf("construct OpenAI-compatible model: %w", err)
 			}
-			return chatModel, nil
+			return withTiming(chatModel), nil
 		case WireAPIResponses:
 			responsesModel, err := newResponsesModel(responsesModelConfig{
 				APIKey:          apiKey,
 				Model:           config.Model,
 				BaseURL:         config.BaseURL,
 				ReasoningEffort: config.ReasoningEffort,
-				Timeout:         config.Timeout,
-				HTTPClient:      config.HTTPClient,
+				HTTPClient:      httpClient,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("construct OpenAI Responses model: %w", err)
 			}
-			return responsesModel, nil
+			return withTiming(responsesModel), nil
 		default:
 			return nil, fmt.Errorf("unsupported OpenAI wire API %q (supported: %s, %s)", config.WireAPI, WireAPIChatCompletions, WireAPIResponses)
 		}
@@ -142,13 +147,12 @@ func newWithLookup(ctx context.Context, config Config, lookup environmentLookup)
 		chatModel, err := ollama.NewChatModel(ctx, &ollama.ChatModelConfig{
 			Model:      config.Model,
 			BaseURL:    config.BaseURL,
-			Timeout:    config.Timeout,
-			HTTPClient: config.HTTPClient,
+			HTTPClient: httpClient,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("construct Ollama model: %w", err)
 		}
-		return chatModel, nil
+		return withTiming(chatModel), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q (supported: %s, %s)", config.Provider, ProviderOpenAI, ProviderOllama)

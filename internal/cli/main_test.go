@@ -26,9 +26,20 @@ func runIsolated(m *testing.M) int {
 		return 1
 	}
 	defer os.RemoveAll(root)
+	binary, err := buildCLIATE(root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	cliATE.binary = binary
 	for key, value := range map[string]string{
 		config.HomeEnvironment:         filepath.Join(root, "home"),
 		config.CoordinationEnvironment: filepath.Join(root, "coordination"),
+		config.ProfileEnvironment:      "",
+		"GSEA_ATE_ENABLED":             "true",
+		"GSEA_ATE_BINARY":              binary,
+		"GSEA_ATE_DIRECTORY":           "",
+		"GSEA_LSP_ENABLED":             "false",
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			fmt.Fprintln(os.Stderr, err)

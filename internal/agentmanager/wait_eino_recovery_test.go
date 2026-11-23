@@ -14,7 +14,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenizer"
 	appTool "github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
@@ -82,7 +82,7 @@ func (fake *einoWaitRecoveryModel) Stream(ctx context.Context, input []*schema.M
 
 func TestAgentWaitResumesThroughRealEinoCheckpointWithOriginalDeadline(t *testing.T) {
 	ctx := context.Background()
-	database, err := sqlitestore.Open(ctx, ":memory:")
+	database, err := testfixture.Open(t, ctx, ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

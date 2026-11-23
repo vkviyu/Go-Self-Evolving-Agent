@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenizer"
 )
@@ -26,68 +25,48 @@ func (f *Factory) WithActorScope(scope orchestration.ActorScope) (*Factory, erro
 	child.tokenizer = tokenizer.Fork(f.tokenizer)
 	child.config.Tokenizer = child.tokenizer
 	child.calibration = &contextCalibration{}
-	if child.goalMode.Enabled {
-		var err error
-		child.goalEval, err = child.GoalEvaluator(child.goalMode.Assessment)
-		if err != nil {
-			return nil, err
-		}
-	}
 	return &child, nil
 }
 
-// GoalRuntime returns the immutable Outer Loop dependencies shared by root,
-// delegated and Flow-invoked Agent sessions.
-func (f *Factory) GoalRuntime() (agentgoal.Config, agentgoal.Store, agentgoal.Evaluator, agentgoal.CapGuard) {
-	if f == nil {
-		return agentgoal.Config{}, nil, nil, agentgoal.CapGuard{}
-	}
-	return f.goalMode, f.goalStore, f.goalEval, agentgoal.CapGuard{Budget: f.goalBudget}
-}
-
-// GoalRuntimeStore exposes the durable Goal port for optional lifecycle
-// extensions such as AdmissionRepository.
-func (f *Factory) GoalRuntimeStore() agentgoal.Store {
-	if f == nil {
-		return nil
-	}
-	return f.goalStore
-}
-
-// WithoutGoalMode returns an immutable view for a direct conversation turn.
-// Registry, policy, accounting and history remain shared; only the goal
-// protocol is disabled. The next task can use the original factory again.
-func (f *Factory) WithoutGoalMode() *Factory {
-	direct := *f
-	direct.goalMode.Enabled = false
-	direct.config.GoalMode.Enabled = false
-	return &direct
-}
-
-// WithActiveGoal disables new admission while preserving the reporting protocol.
-func (f *Factory) WithActiveGoal() *Factory {
-	active := *f
-	active.goalMode.Enabled = true
-	active.goalMode.Activation = agentgoal.ActivationAlways
-	return &active
-}
-
-// GoalEvaluator resolves the persisted assessment strategy, not today's default.
-func (f *Factory) GoalEvaluator(strategy agentgoal.AssessmentStrategy) (agentgoal.Evaluator, error) {
-	independent := f.config.GoalEvaluator
-	if independent == nil && strategy != agentgoal.AssessmentSelf {
-		independent = &modelGoalEvaluator{factory: f}
-	}
-	if strategy == agentgoal.AssessmentAdaptive {
-		return agentgoal.AdaptiveEvaluator{Verifier: &fileGoalVerifier{factory: f}, Fallback: independent}, nil
-	}
-	return agentgoal.Compose(strategy, independent)
-}
-
-// ActorScope is the trusted identity used for Goal and Flow attribution.
+// ActorScope is the trusted identity used for execution and Flow attribution.
 func (f *Factory) ActorScope() orchestration.ActorScope {
 	if f == nil {
 		return orchestration.ActorScope{}
 	}
 	return f.config.ActorScope
+}
+
+// WithExecutionBinding narrows a factory to one immutable execution scope.
+// The returned factory is independent; callers cannot mutate the parent
+// runtime's binding by changing a child run.
+func (f *Factory) WithExecutionBinding(binding orchestration.ExecutionBinding) (*Factory, error) {
+	if f == nil {
+		return nil, errors.New("Agent factory is nil")
+	}
+	if err := binding.Validate(); err != nil {
+		return nil, fmt.Errorf("execution binding: %w", err)
+	}
+	child := *f
+	child.config.Execution = binding
+	return &child, nil
+}
+
+// WithExecutionContract attaches the immutable resource and deadline limits
+// for the execution. The runtime narrows its model allowance to the contract.
+func (f *Factory) WithExecutionContract(contract orchestration.ExecutionContract) (*Factory, error) {
+	if f == nil {
+		return nil, errors.New("Agent factory is nil")
+	}
+	if !contract.IsZero() {
+		if err := contract.Validate(); err != nil {
+			return nil, fmt.Errorf("execution contract: %w", err)
+		}
+	}
+	child := *f
+	child.config.ExecutionContract = contract
+	if contract.MaxOutputTokens > 0 &&
+		(child.config.MaxOutputTokens == 0 || contract.MaxOutputTokens < child.config.MaxOutputTokens) {
+		child.config.MaxOutputTokens = contract.MaxOutputTokens
+	}
+	return &child, nil
 }

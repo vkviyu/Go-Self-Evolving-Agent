@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
+	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
 func TestSessionTitleUsesFirstHumanQuestionAndExplicitName(t *testing.T) {
@@ -155,9 +156,10 @@ func TestReadingQuestionSurvivesResizeAndToolDisclosure(t *testing.T) {
 func TestViewerUsesItsOwnQuestionsWithoutChangingSessionTitle(t *testing.T) {
 	model := navigationFixture(t)
 	title := model.displaySessionTitle()
-	model.openTranscriptViewer(agentTranscriptMsg{agentID: "child", messages: []*schema.Message{
+	model.transcripts = fakeTranscriptReader{sessions: map[session.ID][]*schema.Message{"child-session": {
 		schema.UserMessage("child-specific question"), schema.AssistantMessage(strings.Repeat("child answer\n", 60), nil),
-	}})
+	}}}
+	runAction(t, model, model.openAgentTranscript(orchestration.AgentSnapshot{ID: "child", ParentAgentID: "root", SessionID: "child-session"}))
 	if query, ok := model.currentQuestion(); !ok || query.preview != "child-specific question" {
 		t.Fatalf("viewer retained root query navigation: %+v", query)
 	}

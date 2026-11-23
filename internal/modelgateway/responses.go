@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/vkviyu/go-self-evolving-agent/internal/modeltelemetry"
 )
 
 const (
@@ -32,7 +34,7 @@ func newResponsesModel(config responsesModelConfig) (*responsesModel, error) {
 	}
 	client := config.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: config.Timeout}
+		client = http.DefaultClient
 	}
 	reasoningEffort, err := normalizeReasoningEffort(config.ReasoningEffort)
 	if err != nil {
@@ -43,7 +45,6 @@ func newResponsesModel(config responsesModelConfig) (*responsesModel, error) {
 		model:           config.Model,
 		endpoint:        endpoint,
 		reasoningEffort: reasoningEffort,
-		timeout:         config.Timeout,
 		httpClient:      client,
 	}, nil
 }
@@ -101,12 +102,9 @@ func (m *responsesModel) Generate(ctx context.Context, input []*schema.Message, 
 	if err != nil {
 		return nil, err
 	}
-	response, cancel, err := m.doResponsesRequest(ctx, payload, false)
+	response, err := m.doResponsesRequest(ctx, payload, nil)
 	if err != nil {
 		return nil, err
-	}
-	if cancel != nil {
-		defer cancel()
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponsesBodyBytes))
@@ -131,19 +129,22 @@ func (m *responsesModel) Stream(ctx context.Context, input []*schema.Message, op
 		return nil, fmt.Errorf("encode streaming Responses request: %w", err)
 	}
 
-	response, cancel, err := m.doResponsesRequest(ctx, payload, true)
+	observation := modeltelemetry.Stream{StartedAt: time.Now().UTC()}
+	response, err := m.doResponsesRequest(ctx, payload, &observation)
 	if err != nil {
+		recordResponsesTransport(ctx, &observation, err)
 		return nil, fmt.Errorf("send streaming Responses request: %w", err)
 	}
 
 	reader, writer := schema.Pipe[*schema.Message](16)
 	go func() {
-		defer func() {
-			if cancel != nil {
-				cancel()
-			}
-		}()
-		streamResponsesBody(response.Body, writer)
+		defer writer.Close()
+		defer response.Body.Close()
+		err := streamResponsesBody(response.Body, writer, &observation)
+		recordResponsesTransport(ctx, &observation, err)
+		if err != nil {
+			writer.Send(nil, err)
+		}
 	}()
 	return reader, nil
 }
@@ -307,6 +308,7 @@ func responseFunctionTool(tool *schema.ToolInfo) (responsesFunctionTool, error) 
 		Name:        tool.Name,
 		Description: tool.Desc,
 		Parameters:  parameters,
+		Strict:      false,
 	}, nil
 }
 

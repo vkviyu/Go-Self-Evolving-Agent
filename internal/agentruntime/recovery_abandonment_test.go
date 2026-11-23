@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
@@ -55,11 +54,6 @@ func TestAbandonedTurnCannotExecuteEvenWithPreconstructedRuntime(t *testing.T) {
 	}
 	if _, _, err := factory.CompletedTurn(ctx, "session", turn.ID()); !errors.Is(err, session.ErrRecoveryAbandoned) {
 		t.Fatalf("completed result accepted: %v", err)
-	}
-	content := "expected"
-	evaluation := agentgoal.Evaluation{Goal: agentgoal.Goal{SessionID: "session", Contract: &agentgoal.Contract{Objective: "verify", Scope: "workspace", Criteria: []agentgoal.Criterion{{Description: "file matches", Kind: "file_content", Path: "result.txt", Content: &content}}}}, Round: agentgoal.Round{TurnID: turn.ID()}}
-	if _, err := (&fileGoalVerifier{factory: factory}).Verify(ctx, evaluation); !errors.Is(err, session.ErrRecoveryAbandoned) {
-		t.Fatalf("verifier accepted abandoned task: %v", err)
 	}
 	records, err := factory.TurnRecords(ctx, "session")
 	if err != nil || len(records) != 1 || !records[0].Abandoned || records[0].HasCheckpoint {

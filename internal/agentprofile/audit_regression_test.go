@@ -14,9 +14,10 @@ func TestDelegationNarrowsAllAncestorLimits(t *testing.T) {
 		t.Fatalf("ancestor limits widened: %+v err=%v", got.Limits, err)
 	}
 	child.Limits.MaxOutputTokens = 5
+	child.Limits.MaxWallTime = 0
 	got, err = ConstrainDelegation(parent, child)
-	if err != nil || got.Limits.MaxOutputTokens != 5 {
-		t.Fatalf("narrower child output limit lost: %+v %v", got.Limits, err)
+	if err != nil || got.Limits.MaxOutputTokens != 5 || got.Limits.MaxWallTime != time.Second {
+		t.Fatalf("optional limits were not narrowed: %+v %v", got.Limits, err)
 	}
 }
 

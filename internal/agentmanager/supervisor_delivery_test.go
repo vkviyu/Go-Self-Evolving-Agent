@@ -14,7 +14,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/artifact"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
@@ -24,7 +24,7 @@ type (
 	snapshotTeam struct {
 		t          *testing.T
 		ctx        context.Context
-		store      *sqlitestore.OrchestrationStore
+		store      *testfixture.OrchestrationStore
 		root       orchestration.RootThread
 		main       string
 		supervisor *Supervisor
@@ -32,7 +32,7 @@ type (
 
 	// snapshotRunner runs each Agent with work inside its active view.
 	snapshotRunner struct {
-		store *sqlitestore.OrchestrationStore
+		store *testfixture.OrchestrationStore
 		work  func(ctx context.Context, request RunRequest, view workspacecoord.View) error
 	}
 
@@ -112,7 +112,7 @@ func (seen *observations) get(name string) string {
 func newSnapshotTeam(t *testing.T, files map[string]string, profiles *agentprofile.Registry, rootProfile *agentprofile.Profile, runner *snapshotRunner) *snapshotTeam {
 	t.Helper()
 	ctx := context.Background()
-	database, err := sqlitestore.Open(ctx, ":memory:")
+	database, err := testfixture.Open(t, ctx, ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

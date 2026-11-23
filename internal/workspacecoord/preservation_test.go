@@ -13,7 +13,7 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/artifact"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
@@ -31,7 +31,7 @@ func preservationFixture(t *testing.T) (*workspacecoord.Coordinator, workspaceco
 	fixtureWrite(t, filepath.Join(root, ".gitignore"), []byte("/.gsea/\n/ignored.bin\n"))
 	fixtureGit(t, root, "add", ".")
 	fixtureGit(t, root, "commit", "-qm", "base")
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

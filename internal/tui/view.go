@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -51,7 +52,11 @@ func (model *Model) resizeInput() {
 	inputHeight := min(max(1, model.inputDisplayHeight()), maximumInputHeight)
 	if model.ready {
 		// Keep one header, navigation, transcript, status and suggestions row.
-		inputHeight = min(inputHeight, max(1, model.height-5))
+		reserved := 5 + max(0, model.suggestionHeight()-1)
+		if model.hasActivityOverview() {
+			reserved++
+		}
+		inputHeight = min(inputHeight, max(1, model.height-reserved))
 	}
 	model.input.SetHeight(inputHeight)
 	model.updateInputScroll()
@@ -59,7 +64,7 @@ func (model *Model) resizeInput() {
 		return
 	}
 	// Navigation, status and command suggestions each occupy one row.
-	model.viewport.Height = max(1, model.height-model.headerHeight()-3-inputHeight-model.activityHeight())
+	model.viewport.Height = max(1, model.height-model.headerHeight()-3-inputHeight-model.activityHeight()-max(0, model.suggestionHeight()-1))
 	model.refreshTranscript(false)
 }
 
@@ -141,26 +146,19 @@ func compactPath(path string) string {
 
 func (model *Model) renderStatus(width int) string {
 	left := model.styles.ready.Render(render.PlainText(model.stage))
-	if model.busy {
-		left = model.spinner.View() + " " + model.styles.status.Render(render.PlainText(model.stage))
+	if model.busy || model.startup != nil {
+		left = model.spinner.View() + " " + model.styles.status.Render(render.PlainText(model.progressLabel(time.Now())))
 	}
 	if model.approvalPending != nil {
 		left = model.styles.approval.Render("approval required") + " " + model.styles.metadata.Render("↑↓ select  Enter confirm  Esc reject")
 	} else if model.showActivity && model.panelFocused {
 		left = model.styles.activityHeader.Render(model.panelHint())
 	} else if model.viewer != nil {
-		left = model.styles.activityHeader.Render("transcript of "+shortID(string(model.viewer.agentID))) + "  " + model.styles.metadata.Render("Esc return")
+		left = model.styles.activityHeader.Render("Agent "+shortID(string(model.viewer.agentID))) + "  " + model.styles.metadata.Render("Esc main")
 	}
 	right := ""
-	// The panel header already carries the summary while it is shown.
-	if summary := model.agentSummary(); summary != "" && !model.showActivity {
-		right = model.styles.activityHeader.Render(summary)
-	}
 	if model.contextUsage.Window > 0 {
-		if right != "" {
-			right += "  "
-		}
-		right += model.styles.metadata.Render(fmt.Sprintf(
+		right = model.styles.metadata.Render(fmt.Sprintf(
 			"ctx input %s / %s  %s · %s",
 			formatTokens(model.contextUsage.Used),
 			model.contextBudgetLabel(),
@@ -203,6 +201,9 @@ func (model *Model) renderStatus(width int) string {
 			right += "  " + notice
 		}
 	}
+	if model.viewer != nil {
+		right = model.styles.metadata.Render("main ") + right
+	}
 	available := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if available < 1 {
 		compact := model.compactStatusRight(width)
@@ -217,9 +218,6 @@ func (model *Model) renderStatus(width int) string {
 
 func (model *Model) compactStatusRight(width int) string {
 	parts := make([]string, 0, 4)
-	if summary := model.agentSummary(); summary != "" && !model.showActivity {
-		parts = append(parts, summary)
-	}
 	if model.contextUsage.Window > 0 {
 		parts = append(parts, fmt.Sprintf("ctx input %s/%s",
 			formatTokens(model.contextUsage.Used),
@@ -235,6 +233,9 @@ func (model *Model) compactStatusRight(width int) string {
 		parts = append(parts, fmt.Sprintf("usage %d", model.lastUsage.Total))
 	}
 	compact := strings.Join(parts, "  ")
+	if model.viewer != nil && compact != "" {
+		compact = "main " + compact
+	}
 	if ansi.StringWidth(compact) > width {
 		compact = strings.Replace(compact, "ctx input ", "ctx ", 1)
 	}
@@ -252,8 +253,32 @@ func formatTokens(tokens int) string {
 }
 
 func (model *Model) renderCommandSuggestions(width int) string {
-	if len(model.commandSuggestions) == 0 {
+	if len(model.memorySuggestionItems) > 0 {
+		rows := make([]string, 0, len(model.memorySuggestionItems))
+		for index, item := range model.memorySuggestionItems {
+			claim := singleLineMemoryClaim(string(item.Memory.Claim), max(1, width-ansi.StringWidth(item.ID)-12))
+			line := fmt.Sprintf("@memory:%s  %s", item.ID, claim)
+			if index == model.memorySuggestionIndex {
+				rows = append(rows, model.styles.approvalSelected.Render("› "+line))
+			} else {
+				rows = append(rows, model.styles.suggest.Render("  "+line))
+			}
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, rows...)
+	}
+	suggestions := append([]string(nil), model.commandSuggestions...)
+	for _, value := range model.memorySuggestions {
+		suggestions = append(suggestions, "@memory:"+value)
+	}
+	if len(suggestions) == 0 {
 		return strings.Repeat(" ", max(0, width))
 	}
-	return ansi.Truncate(model.styles.suggest.Render(strings.Join(model.commandSuggestions, "  ")), width, "...")
+	return ansi.Truncate(model.styles.suggest.Render(strings.Join(suggestions, "  ")), width, "...")
+}
+
+func (model *Model) suggestionHeight() int {
+	if len(model.memorySuggestionItems) > 0 {
+		return min(len(model.memorySuggestionItems), 6)
+	}
+	return 1
 }

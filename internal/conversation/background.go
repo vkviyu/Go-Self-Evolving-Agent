@@ -3,7 +3,6 @@ package conversation
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/cloudwego/eino/schema"
 
@@ -25,17 +24,7 @@ func (conversation *Conversation) PendingBackground(ctx context.Context) (int, e
 func (conversation *Conversation) RunBackgroundTurn(ctx context.Context, sink agentruntime.EventSink) (agentruntime.Result, error) {
 	conversation.mutex.Lock()
 	defer conversation.mutex.Unlock()
-	factory := conversation.factory.WithoutGoalMode()
-	_, _, _, guard := factory.GoalRuntime()
-	if guard.Budget != nil {
-		budget, err := guard.Budget.Budget(ctx, factory.ActorScope().TeamID)
-		if err != nil {
-			return agentruntime.Result{}, fmt.Errorf("read team budget before wake: %w", err)
-		}
-		if budget.Exhausted {
-			return agentruntime.Result{}, ErrBackgroundBudgetExhausted
-		}
-	}
+	factory := conversation.factory
 	turn, err := factory.NewTurn(ctx, conversation.sessionID)
 	if err != nil {
 		return agentruntime.Result{}, err

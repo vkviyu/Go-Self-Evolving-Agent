@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/vkviyu/go-self-evolving-agent/internal/modeltelemetry"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
@@ -25,6 +26,14 @@ func (e *modelInvocationError) Unwrap() error { return e.cause }
 func (m *recordingModel) failRequest(ctx context.Context, requestID string, cause error, streaming bool) error {
 	settlementErr := m.settleUsage(ctx, requestID, nil)
 	recordErr := m.recordModelFailure(ctx, requestID, cause, streaming)
+	if observation := modeltelemetry.ReadStream(ctx); observation != nil &&
+		(observation.Outcome == "response_headers_timeout" || observation.Outcome == "stream_read_timeout") {
+		lastEvent := observation.LastEvent
+		if lastEvent == "" {
+			lastEvent = "none"
+		}
+		cause = fmt.Errorf("%w (request %s, received %d bytes, last SSE event %s)", cause, requestID, observation.BodyBytes, lastEvent)
+	}
 	if settlementErr != nil || recordErr != nil {
 		return errors.Join(cause, settlementErr, recordErr)
 	}
@@ -93,6 +102,7 @@ func (m *recordingModel) markDispatched(ctx context.Context, requestID string) e
 	if !ok {
 		return errors.New("durable model request has no reservation")
 	}
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelDispatchPersistenceStarted))
 	if err := ledger.MarkDispatched(ctx, id.(string)); err != nil {
 		return fmt.Errorf("persist model dispatch boundary: %w", err)
 	}

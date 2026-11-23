@@ -13,7 +13,7 @@ import (
 func TestAppsShareWorkspaceLeasesAcrossDataDirectories(t *testing.T) {
 	home, workspace, rendezvous := t.TempDir(), t.TempDir(), t.TempDir()
 	open := func() *App {
-		application, err := Open(context.Background(), config.Config{
+		application, err := testOpen(t, context.Background(), config.Config{
 			HomeDirectory: home, DataDirectory: t.TempDir(), WorkspaceDirectory: workspace, CoordinationDirectory: rendezvous,
 		})
 		if err != nil {
@@ -56,7 +56,7 @@ func TestAppsShareWorkspaceLeasesAcrossDataDirectories(t *testing.T) {
 func TestAppRejectsWorkspaceCoordinatedByAnotherHome(t *testing.T) {
 	workspace, rendezvous := t.TempDir(), t.TempDir()
 	open := func(home, data string) (*App, error) {
-		return Open(context.Background(), config.Config{
+		return testOpen(t, context.Background(), config.Config{
 			HomeDirectory: home, DataDirectory: data, WorkspaceDirectory: workspace, CoordinationDirectory: rendezvous,
 		})
 	}

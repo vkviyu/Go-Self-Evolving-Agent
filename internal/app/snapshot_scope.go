@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"path/filepath"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
@@ -20,12 +22,12 @@ func (a *App) RuntimeSnapshotReferences(ctx context.Context, identity string) ([
 		return nil, errors.New("application snapshot store is unavailable")
 	}
 	a.stateMu.Lock()
-	database, closed := a.database, a.closed
+	snapshots, closed := a.runtime.snapshots, a.closed
 	a.stateMu.Unlock()
-	if database == nil || closed {
+	if snapshots == nil || closed {
 		return nil, errors.New("application snapshot store is unavailable")
 	}
-	return database.RuntimeSnapshots().References(ctx, identity)
+	return snapshots.References(ctx, identity)
 }
 
 // RuntimeSnapshotReferenceHistory includes explicitly released references and
@@ -35,25 +37,32 @@ func (a *App) RuntimeSnapshotReferenceHistory(ctx context.Context, identity stri
 		return nil, errors.New("application snapshot store is unavailable")
 	}
 	a.stateMu.Lock()
-	database, closed := a.database, a.closed
+	snapshots, closed := a.runtime.snapshots, a.closed
 	a.stateMu.Unlock()
-	if database == nil || closed {
+	if snapshots == nil || closed {
 		return nil, errors.New("application snapshot store is unavailable")
 	}
-	return database.RuntimeSnapshots().ReferenceHistory(ctx, identity)
+	return snapshots.ReferenceHistory(ctx, identity)
 }
 
 // Native executors contain closures over runtime services. Their host binary
 // alone is insufficient identity: changing workspace or sandbox must never
 // redirect a recovered operation. Only the digest enters snapshot manifests.
 func nativeSnapshotScope(resolved config.Config, workspaceRoot string, mode sandbox.Mode) (string, error) {
+	// Recovery may obtain the data directory from the Session catalog, which
+	// publishes its physical path. Use the same database identity when the
+	// initial launch entered through a symlink.
+	database, err := filepath.EvalSymlinks(resolved.RuntimeDatabasePath())
+	if err != nil {
+		return "", fmt.Errorf("resolve runtime database identity: %w", err)
+	}
 	encoded, err := json.Marshal(struct {
 		Version             int
 		Workspace, Database string
 		Sandbox             sandbox.Mode
 		LSP                 lsp.Config
 		Model               config.ModelConfig
-	}{1, workspaceRoot, resolved.SessionDatabasePath(), mode, resolved.LSP, resolved.Model})
+	}{1, workspaceRoot, database, mode, resolved.LSP, resolved.Model})
 	if err != nil {
 		return "", err
 	}

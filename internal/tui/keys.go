@@ -6,6 +6,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 )
 
 var (
@@ -79,6 +81,16 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 	case tea.KeyCtrlC:
 		// copyInputBinding above already copied any selected input text.
 		if model.busy {
+			if model.startupOperation != nil {
+				model.startupOperation = nil
+				model.turnCancel()
+				model.turnCancel = nil
+				model.busy = false
+				model.wakeSuppressed = true
+				model.stage = "Starting runtime"
+				model.notice(blockSystem, "Queued request cancelled")
+				return nil, true
+			}
 			if model.turnCancel != nil && !model.cancelling {
 				model.cancelling = true
 				model.stage = "Cancelling"
@@ -93,6 +105,9 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 			model.input.Reset()
 			model.clearInputSelection()
 			model.updateCommandSuggestions()
+			model.memorySuggestions = nil
+			model.memorySuggestionItems = nil
+			model.memorySuggestionIndex = 0
 			model.resizeInput()
 			return nil, true
 		}
@@ -102,8 +117,16 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 			return tea.Quit, true
 		}
 	case tea.KeyEnter:
-		if model.busy {
+		if len(model.memorySuggestions) > 0 {
+			model.insertMemorySuggestion(model.memorySuggestions[model.memorySuggestionIndex])
 			return nil, true
+		}
+		if model.busy {
+			switch strings.ToLower(strings.TrimSpace(model.input.Value())) {
+			case "/agents", "/activity":
+			default:
+				return nil, true
+			}
 		}
 		return model.submit(), true
 	case tea.KeyPgUp, tea.KeyPgDown:
@@ -118,14 +141,26 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 			return command, true
 		}
 	case tea.KeyUp:
+		if len(model.memorySuggestions) > 0 {
+			model.memorySuggestionIndex = (model.memorySuggestionIndex - 1 + len(model.memorySuggestions)) % len(model.memorySuggestions)
+			return nil, true
+		}
 		if model.inputDisplayHeight() == 1 && model.recallPrevious() {
 			return nil, true
 		}
 	case tea.KeyDown:
+		if len(model.memorySuggestions) > 0 {
+			model.memorySuggestionIndex = (model.memorySuggestionIndex + 1) % len(model.memorySuggestions)
+			return nil, true
+		}
 		if model.inputDisplayHeight() == 1 && model.recallNext() {
 			return nil, true
 		}
 	case tea.KeyTab:
+		if len(model.memorySuggestions) > 0 {
+			model.insertMemorySuggestion(model.memorySuggestions[model.memorySuggestionIndex])
+			return nil, true
+		}
 		if len(model.commandSuggestions) > 0 {
 			model.input.SetValue(model.commandSuggestions[0])
 			model.clearInputSelection()
@@ -146,6 +181,9 @@ func (model *Model) submit() tea.Cmd {
 		model.input.Reset()
 		model.clearInputSelection()
 		model.updateCommandSuggestions()
+		model.memorySuggestions = nil
+		model.memorySuggestionItems = nil
+		model.memorySuggestionIndex = 0
 		model.resizeInput()
 		if command == nil {
 			return func() tea.Msg { return nil }
@@ -153,7 +191,7 @@ func (model *Model) submit() tea.Cmd {
 		return command
 	}
 
-	model.viewer = nil
+	model.closeTranscriptViewer()
 	model.blocks = append(model.blocks, transcriptBlock{kind: blockUser, content: input})
 	var titleCommand tea.Cmd
 	if model.sessionTitle == "" {
@@ -167,33 +205,51 @@ func (model *Model) submit() tea.Cmd {
 	model.input.Reset()
 	model.clearInputSelection()
 	model.updateCommandSuggestions()
+	model.memorySuggestions = nil
+	model.memorySuggestionItems = nil
+	model.memorySuggestionIndex = 0
 	model.resizeInput()
 	if contextConversation, ok := model.conversation.(pendingContextConversation); ok {
 		model.contextUsage = contextConversation.ContextUsageFor(input)
 	}
-	return tea.Batch(titleCommand, model.startOperation("Thinking", func(ctx context.Context, events chan<- tea.Msg) tea.Cmd {
-		return runTurnCommand(ctx, model.ctx, model.conversation, input, events)
+	return tea.Batch(titleCommand, model.startOperation("Starting request", func(ctx context.Context, events chan<- tea.Msg) tea.Cmd {
+		return runOperationCommand(ctx, func(turnCtx context.Context, sink agentruntime.EventSink) (agentruntime.Result, error) {
+			return model.runTurnWithMemory(turnCtx, input, sink)
+		}, events, model.ctx)
 	}))
 }
 
 func (model *Model) startOperation(stage string, command func(context.Context, chan<- tea.Msg) tea.Cmd) tea.Cmd {
+	if model.startupErr != nil {
+		model.notice(blockFailure, "Runtime startup failed: "+model.startupErr.Error())
+		return nil
+	}
 	model.busy = true
-	model.autoScroll = true
 	model.cancelling = false
 	model.stage = stage
+	model.resetProgress()
 	model.activeAssistant = -1
 	model.lastAssistantMessage = -1
 	model.activeReasoning = -1
 	model.activeTools = make(map[string]int)
-	model.refreshTranscript(true)
+	model.refreshRootTranscript(true)
 
 	model.turnContext, model.turnCancel = context.WithCancel(model.ctx)
 	model.turnEvents = make(chan tea.Msg, 256)
+	if model.startup != nil {
+		model.stage = "Waiting for runtime startup"
+		model.startupStage = stage
+		model.startupOperation = command
+		// Init owns the startup waiter and spinner. No turn event waiter or
+		// command exists until the final attachment has hydrated history.
+		return nil
+	}
 	// Init starts the only approval waiter: delegated Agents ask for approval
 	// between root turns too, and a second waiter would split the queue.
 	return tea.Batch(
 		command(model.turnContext, model.turnEvents),
 		waitForTurnEvent(model.ctx, model.turnEvents),
 		model.spinner.Tick,
+		model.startActivityRefresh(),
 	)
 }

@@ -8,62 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
-
-func TestGoalAssessmentTimeoutConfiguration(t *testing.T) {
-	home, project := t.TempDir(), t.TempDir()
-	t.Setenv(HomeEnvironment, home)
-	t.Setenv(ProfileEnvironment, "")
-	t.Setenv("GSEA_GOAL_ENABLED", "true")
-	t.Setenv("GSEA_GOAL_ASSESSMENT", "")
-	t.Setenv("GSEA_GOAL_EVALUATION_TIMEOUT", "")
-	loaded, err := Load(LoadOptions{WorkingDirectory: project})
-	if err != nil || loaded.Goal.Assessment != agentgoal.AssessmentAdaptive || loaded.Goal.EvaluationTimeout != 30*time.Second {
-		t.Fatalf("defaults=%+v err=%v", loaded.Goal, err)
-	}
-	writeConfig(t, filepath.Join(home, configFileName), "[goal]\nassessment = \"self\"\nevaluation_timeout = \"12s\"\n")
-	loaded, err = Load(LoadOptions{WorkingDirectory: project})
-	if err != nil || loaded.Goal.Assessment != agentgoal.AssessmentSelf || loaded.Goal.EvaluationTimeout != 12*time.Second {
-		t.Fatalf("file=%+v err=%v", loaded.Goal, err)
-	}
-	t.Setenv("GSEA_GOAL_EVALUATION_TIMEOUT", "4s")
-	loaded, err = Load(LoadOptions{WorkingDirectory: project})
-	if err != nil || loaded.Goal.EvaluationTimeout != 4*time.Second {
-		t.Fatalf("env=%+v err=%v", loaded.Goal, err)
-	}
-	t.Setenv("GSEA_GOAL_EVALUATION_TIMEOUT", "0s")
-	if _, err := Load(LoadOptions{WorkingDirectory: project}); err == nil {
-		t.Fatal("zero configured assessment timeout accepted")
-	}
-}
-
-func TestGoalActivationConfigurationPrecedence(t *testing.T) {
-	home, project := t.TempDir(), t.TempDir()
-	t.Setenv(HomeEnvironment, home)
-	t.Setenv(ProfileEnvironment, "")
-	t.Setenv("GSEA_GOAL_ENABLED", "true")
-	t.Setenv("GSEA_GOAL_ACTIVATION", "")
-	loaded, err := Load(LoadOptions{WorkingDirectory: project})
-	if err != nil || loaded.Goal.Activation != agentgoal.ActivationAuto {
-		t.Fatalf("default activation=%q err=%v", loaded.Goal.Activation, err)
-	}
-	writeConfig(t, filepath.Join(home, configFileName), "[goal]\nactivation = \"always\"\n")
-	loaded, err = Load(LoadOptions{WorkingDirectory: project})
-	if err != nil || loaded.Goal.Activation != agentgoal.ActivationAlways {
-		t.Fatalf("file activation=%q err=%v", loaded.Goal.Activation, err)
-	}
-	t.Setenv("GSEA_GOAL_ACTIVATION", "auto")
-	loaded, err = Load(LoadOptions{WorkingDirectory: project})
-	if err != nil || loaded.Goal.Activation != agentgoal.ActivationAuto {
-		t.Fatalf("environment activation=%q err=%v", loaded.Goal.Activation, err)
-	}
-	t.Setenv("GSEA_GOAL_ACTIVATION", "invalid")
-	if _, err := Load(LoadOptions{WorkingDirectory: project}); err == nil {
-		t.Fatal("invalid activation accepted")
-	}
-}
 
 func TestDefaultSelectsProviderSpecificEnvironment(t *testing.T) {
 	directory := t.TempDir()

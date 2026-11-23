@@ -11,17 +11,20 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/artifact"
+	"github.com/vkviyu/go-self-evolving-agent/internal/atebridge"
+	"github.com/vkviyu/go-self-evolving-agent/internal/ateprocess"
 	"github.com/vkviyu/go-self-evolving-agent/internal/codingtools"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
+	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
 	"github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
+	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
@@ -31,10 +34,16 @@ import (
 // App owns component lifetimes. Construction either succeeds completely or
 // releases every resource acquired on the failed path.
 type App struct {
+	// database owns local runtime resources and unresolved native requests.
+	// Business repositories and session history are authoritative in ATE.
+	database         *runtimestore.Database
+	authority        *authorityResources
+	sessionOwners    map[session.ID]*runtimeowner.Lock
+	ownedTeams       map[orchestration.TeamID]struct{}
 	config           config.Config
-	database         *sqlitestore.Database
+	repositories     OrchestrationRepository
 	events           session.EventStore
-	checkpoints      session.CheckpointStore
+	runtime          runtimeStorage
 	registry         *tool.Registry
 	pipeline         *tool.Pipeline
 	wasm             *wasm.Runtime
@@ -46,6 +55,9 @@ type App struct {
 	coordinator      *workspacecoord.Coordinator
 	artifacts        *artifact.Store
 	diagnostics      *lsp.Manager
+	temporalProcess  *ateprocess.Manager
+	temporalBridge   *atebridge.Bridge
+	experience       *experience.Service
 	flows            *agentflow.Runtime
 	flowCatalog      *agentflow.Catalog
 	builds           *pluginbuild.Service
@@ -64,6 +76,24 @@ type App struct {
 	owner       *runtimeowner.Lock
 	domain      *workspacedomain.Domain
 	nativeScope string
+}
+
+// runtimeStorage holds host execution resources. Session events, control-plane
+// records and their recovery facts live in the authoritative ATE repositories.
+type runtimeStorage struct {
+	checkpoints session.CheckpointStore
+	snapshots   runtimeSnapshotStore
+	plugins     plugin.Catalog
+	strategies  strategy.Catalog
+	diagnostics lsp.ProjectionStore
+	builds      pluginbuild.BuildStore
+	reports     plugin.TestReportStore
+}
+
+type runtimeSnapshotStore interface {
+	tool.SnapshotStore
+	References(context.Context, string) ([]tool.SnapshotReference, error)
+	ReferenceHistory(context.Context, string) ([]tool.SnapshotReferenceRecord, error)
 }
 
 // OpenOptions contains invocation-scoped trust-boundary choices that must not

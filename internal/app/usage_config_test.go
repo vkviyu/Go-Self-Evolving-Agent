@@ -38,7 +38,7 @@ func TestUsageConfigPricesTurnsAndBoundsTheRootTeam(t *testing.T) {
 		Prices: map[string]tokenusage.Price{"fake/priced": {InputMicrosPerMillion: 2_000_000, OutputMicrosPerMillion: 4_000_000}},
 		Budget: tokenusage.BudgetLimits{MaxCostMicros: 1_000_000_000},
 	}}
-	a, err := Open(ctx, cfg)
+	a, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRootThreadClearsABudgetRemovedFromTheConfig(t *testing.T) {
 	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir(), Usage: config.UsageConfig{Budget: tokenusage.BudgetLimits{MaxCostMicros: 10}}}
 	for _, limits := range []tokenusage.BudgetLimits{cfg.Usage.Budget, {}} {
 		cfg.Usage.Budget = limits
-		a, err := Open(ctx, cfg)
+		a, err := testOpen(t, ctx, cfg)
 		if err != nil {
 			t.Fatal(err)
 		}

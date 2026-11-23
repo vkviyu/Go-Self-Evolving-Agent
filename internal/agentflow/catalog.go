@@ -186,8 +186,9 @@ func CatalogBindings(catalog *Catalog) []tool.Binding {
 				}
 				result, err := catalog.Run(ctx, request.Name, Invocation{
 					Actor: actor, SessionID: trusted.SessionID, IdempotencyKey: request.IdempotencyKey,
-					Input:    Value{Key: request.Key, Data: append(json.RawMessage(nil), request.Input...)},
-					Pipeline: pipeline, RegistryGeneration: trusted.RegistryGeneration, RuntimeSnapshotID: trusted.RuntimeSnapshotID,
+					Execution: trusted.Execution,
+					Input:     Value{Key: request.Key, Data: append(json.RawMessage(nil), request.Input...)},
+					Pipeline:  pipeline, RegistryGeneration: trusted.RegistryGeneration, RuntimeSnapshotID: trusted.RuntimeSnapshotID,
 				})
 				if err != nil {
 					return nil, err

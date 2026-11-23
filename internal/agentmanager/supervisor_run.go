@@ -18,9 +18,11 @@ func (supervisor *Supervisor) run(ctx context.Context, agent orchestration.Agent
 			supervisor.finish(agent, orchestration.AgentResult{Status: orchestration.ResultFailed, Error: "invalid Agent profile snapshot"}, fmt.Errorf("invalid Agent profile snapshot"))
 			return
 		}
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, agent.CreatedAt.Add(profile.Limits.MaxWallTime))
-		defer cancel()
+		if profile.Limits.MaxWallTime > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, agent.CreatedAt.Add(profile.Limits.MaxWallTime))
+			defer cancel()
+		}
 	}
 	continuation := agent.CurrentRunID != ""
 	resuming := strings.HasPrefix(agent.Activity, "recovery:")
@@ -88,6 +90,18 @@ func (supervisor *Supervisor) run(ctx context.Context, agent orchestration.Agent
 		prompt = ""
 	}
 	request := RunRequest{Agent: running, Prompt: prompt, Messages: messages, Recover: recovering}
+	request.Execution, request.Contract, err = supervisor.executionBinding(ctx, running)
+	if err != nil {
+		supervisor.finish(running, orchestration.AgentResult{Status: orchestration.ResultFailed, Error: err.Error()}, err)
+		return
+	}
+	if request.Contract.Deadline != nil {
+		if deadline, ok := ctx.Deadline(); !ok || request.Contract.Deadline.Before(deadline) {
+			var contractCancel context.CancelFunc
+			ctx, contractCancel = context.WithDeadline(ctx, *request.Contract.Deadline)
+			defer contractCancel()
+		}
+	}
 	if resumeWait != nil {
 		request.ResumeWaitSet = resumeWait.ID
 		request.ResumeToken = resumeWait.ResumeToken
@@ -130,6 +144,37 @@ func (supervisor *Supervisor) run(ctx context.Context, agent orchestration.Agent
 		}
 	}
 	supervisor.finish(running, result, runErr)
+}
+
+func (supervisor *Supervisor) executionBinding(ctx context.Context, agent orchestration.AgentSnapshot) (orchestration.ExecutionBinding, orchestration.ExecutionContract, error) {
+	if supervisor.tasks == nil || agent.AssignedTaskID == "" {
+		return orchestration.ExecutionBinding{}, orchestration.ExecutionContract{}, nil
+	}
+	task, err := supervisor.tasks.GetTask(ctx, agent.AssignedTaskID)
+	if err != nil {
+		return orchestration.ExecutionBinding{}, orchestration.ExecutionContract{}, fmt.Errorf("load execution contract for Agent %s: %w", agent.ID, err)
+	}
+	if task.Contract.IsZero() {
+		return orchestration.ExecutionBinding{}, orchestration.ExecutionContract{}, nil
+	}
+	if task.ContractHash == "" {
+		return orchestration.ExecutionBinding{}, orchestration.ExecutionContract{}, fmt.Errorf("task %s has no durable contract hash", task.ID)
+	}
+	if agent.CurrentRunID == "" {
+		return orchestration.ExecutionBinding{}, orchestration.ExecutionContract{}, fmt.Errorf("Agent %s has no durable run ID", agent.ID)
+	}
+	attempt := task.Attempt + 1
+	if task.Contract.MaxAttempts > 0 && attempt > task.Contract.MaxAttempts {
+		return orchestration.ExecutionBinding{}, orchestration.ExecutionContract{}, fmt.Errorf("task %s exceeded max attempts %d", task.ID, task.Contract.MaxAttempts)
+	}
+	binding := orchestration.ExecutionBinding{
+		TaskID: task.ID, ExecutionID: string(agent.CurrentRunID),
+		Attempt: attempt, ContractHash: task.ContractHash,
+	}
+	if err := binding.Validate(); err != nil {
+		return orchestration.ExecutionBinding{}, orchestration.ExecutionContract{}, fmt.Errorf("task %s execution binding: %w", task.ID, err)
+	}
+	return binding, task.Contract, nil
 }
 
 func classifyTaskAttemptFailure(result *orchestration.AgentResult, err error) {
@@ -198,10 +243,16 @@ func (supervisor *Supervisor) findResolvedWait(ctx context.Context, agent orches
 // failure keeps that immutable receipt pending; it never rewrites a successful
 // worker result into a new failure or runs the worker to retry coordination.
 func (supervisor *Supervisor) finish(agent orchestration.AgentSnapshot, result orchestration.AgentResult, runErr error) error {
-	supervisor.settlement.Lock()
-	defer supervisor.settlement.Unlock()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(supervisor.ctx), 5*time.Second)
 	defer cancel()
+	return supervisor.finishContext(ctx, agent, result, runErr)
+}
+
+// finishContext keeps synchronous recovery on its caller's storage process.
+// Live workers use finish so cancellation still permits bounded settlement.
+func (supervisor *Supervisor) finishContext(ctx context.Context, agent orchestration.AgentSnapshot, result orchestration.AgentResult, runErr error) error {
+	supervisor.settlement.Lock()
+	defer supervisor.settlement.Unlock()
 	current, err := supervisor.agents.GetAgent(ctx, agent.ID)
 	if err != nil {
 		return err

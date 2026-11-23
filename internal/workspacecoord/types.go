@@ -193,6 +193,9 @@ type MergeSpec struct {
 	TeamID        orchestration.TeamID
 	AgentID       orchestration.AgentID
 	TaskID        orchestration.TaskID
+	ExecutionID   string
+	ContractHash  string
+	Attempt       int
 	ViewID        orchestration.WorkspaceViewID
 	BaseRevision  string
 	PatchArtifact string
@@ -222,6 +225,11 @@ func (spec MergeSpec) Validate() error {
 			return fmt.Errorf("merge task: %w", err)
 		}
 	}
+	if spec.ExecutionID != "" || spec.ContractHash != "" || spec.Attempt != 0 {
+		if spec.ExecutionID == "" || len(spec.ContractHash) != 64 || spec.Attempt < 1 {
+			return fmt.Errorf("%w: execution delivery binding is incomplete", orchestration.ErrInvalidEvent)
+		}
+	}
 	if strings.TrimSpace(spec.BaseRevision) == "" || strings.TrimSpace(spec.PatchArtifact) == "" {
 		return fmt.Errorf("%w: merge base revision and patch artifact are required", orchestration.ErrInvalidEvent)
 	}
@@ -247,6 +255,9 @@ type MergeRequest struct {
 	TeamID           orchestration.TeamID          `json:"team_id"`
 	AgentID          orchestration.AgentID         `json:"agent_id"`
 	TaskID           orchestration.TaskID          `json:"task_id,omitempty"`
+	ExecutionID      string                        `json:"execution_id,omitempty"`
+	ContractHash     string                        `json:"contract_hash,omitempty"`
+	Attempt          int                           `json:"attempt,omitempty"`
 	ViewID           orchestration.WorkspaceViewID `json:"view_id"`
 	BaseRevision     string                        `json:"base_revision"`
 	PatchArtifact    string                        `json:"patch_artifact"`

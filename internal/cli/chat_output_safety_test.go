@@ -17,9 +17,6 @@ func TestHeadlessHumanOutputFiltersSplitReasoningTerminalCommands(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	if err := output.Sink(context.Background(), agentruntime.Event{Type: agentruntime.EventGoalPhase, GoalPhase: &agentruntime.GoalPhase{Stage: "stopped", State: "failed", Reason: "reason\x1b[2J"}}); err != nil {
-		t.Fatal(err)
-	}
 	if got := writer.String(); strings.ContainsRune(got, '\x1b') || strings.Contains(got, "clipboard") || !strings.Contains(got, "reason end") {
 		t.Fatalf("untrusted terminal command passed through: %q", got)
 	}

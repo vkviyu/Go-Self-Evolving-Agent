@@ -12,13 +12,14 @@ import (
 )
 
 type taskCreateToolArgs struct {
-	Title               string `json:"title"`
-	Description         string `json:"description"`
-	ParentTaskID        string `json:"parent_task_id"`
-	Priority            int    `json:"priority"`
-	RequiredProfile     string `json:"required_profile"`
-	VerificationProfile string `json:"verification_profile"`
-	IdempotencyKey      string `json:"idempotency_key"`
+	Title               string                          `json:"title"`
+	Description         string                          `json:"description"`
+	Contract            orchestration.ExecutionContract `json:"contract"`
+	ParentTaskID        string                          `json:"parent_task_id"`
+	Priority            int                             `json:"priority"`
+	RequiredProfile     string                          `json:"required_profile"`
+	VerificationProfile string                          `json:"verification_profile"`
+	IdempotencyKey      string                          `json:"idempotency_key"`
 }
 
 type taskRefineToolArgs struct {
@@ -26,12 +27,13 @@ type taskRefineToolArgs struct {
 	ExpectedVersion uint64 `json:"expected_version"`
 	IdempotencyKey  string `json:"idempotency_key"`
 	Children        []struct {
-		Key                 string `json:"key"`
-		Title               string `json:"title"`
-		Description         string `json:"description"`
-		Priority            int    `json:"priority"`
-		RequiredProfile     string `json:"required_profile"`
-		VerificationProfile string `json:"verification_profile"`
+		Key                 string                          `json:"key"`
+		Title               string                          `json:"title"`
+		Description         string                          `json:"description"`
+		Contract            orchestration.ExecutionContract `json:"contract"`
+		Priority            int                             `json:"priority"`
+		RequiredProfile     string                          `json:"required_profile"`
+		VerificationProfile string                          `json:"verification_profile"`
 	} `json:"children"`
 	Dependencies []struct {
 		ChildKey           string `json:"child_key"`
@@ -138,6 +140,7 @@ func (supervisor *Supervisor) taskCreateTool(ctx context.Context, raw json.RawMe
 	}
 	spec := orchestration.TaskSpec{
 		TeamID: actor.TeamID, ActorAgentID: actor.AgentID, Title: args.Title, Description: args.Description,
+		Contract: args.Contract,
 		Priority: args.Priority, RequiredProfile: args.RequiredProfile, VerificationProfile: args.VerificationProfile, IdempotencyKey: args.IdempotencyKey,
 		CorrelationID: orchestration.ToolCallIDFromContext(ctx), ParentTaskID: orchestration.TaskID(args.ParentTaskID),
 	}
@@ -168,7 +171,7 @@ func (supervisor *Supervisor) taskRefineTool(ctx context.Context, raw json.RawMe
 	}
 	spec := orchestration.TaskRefinementSpec{TeamID: actor.TeamID, ActorAgentID: actor.AgentID, ParentTaskID: orchestration.TaskID(args.ParentTaskID), Expected: args.ExpectedVersion, IdempotencyKey: args.IdempotencyKey, CorrelationID: orchestration.ToolCallIDFromContext(ctx)}
 	for _, child := range args.Children {
-		spec.Children = append(spec.Children, orchestration.TaskRefinementChild{Key: child.Key, Title: child.Title, Description: child.Description, Priority: child.Priority, RequiredProfile: child.RequiredProfile, VerificationProfile: child.VerificationProfile})
+		spec.Children = append(spec.Children, orchestration.TaskRefinementChild{Key: child.Key, Title: child.Title, Description: child.Description, Contract: child.Contract, Priority: child.Priority, RequiredProfile: child.RequiredProfile, VerificationProfile: child.VerificationProfile})
 	}
 	for _, dependency := range args.Dependencies {
 		spec.Dependencies = append(spec.Dependencies, orchestration.TaskRefinementDependency{ChildKey: dependency.ChildKey, DependencyChildKey: dependency.DependencyChildKey, DependencyTaskID: orchestration.TaskID(dependency.DependencyTaskID)})

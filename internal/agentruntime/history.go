@@ -1,10 +1,12 @@
 package agentruntime
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/cloudwego/eino/schema"
@@ -13,14 +15,14 @@ import (
 )
 
 type historyTurn struct {
-	id        string
-	user      string
-	hasUser   bool
-	messages  []*schema.Message
-	completed bool
-	context   *historyContextCheckpoint
-	partial   map[string][]*schema.Message
-	confirmed map[string]bool
+	openedAt    uint64
+	completedAt uint64
+	user        string
+	hasUser     bool
+	messages    []*schema.Message
+	context     *historyContextCheckpoint
+	partial     map[string][]*schema.Message
+	confirmed   map[string]bool
 }
 
 type historyContextCheckpoint struct {
@@ -32,6 +34,7 @@ type historyContextCheckpoint struct {
 }
 
 type historyMessagePayload struct {
+	Purpose            string            `json:"purpose"`
 	RequestID          string            `json:"request_id"`
 	Content            string            `json:"content"`
 	ToolCalls          []schema.ToolCall `json:"tool_calls"`
@@ -71,6 +74,16 @@ func (f *Factory) LoadTranscript(ctx context.Context, sessionID session.ID) ([]*
 	return f.projectHistory(ctx, sessionID, true)
 }
 
+// TranscriptRevision returns the session event high-water mark. Read it before
+// loading the transcript so that events appended during the projection can
+// trigger another refresh.
+func (f *Factory) TranscriptRevision(ctx context.Context, sessionID session.ID) (uint64, error) {
+	if sessionID == "" {
+		return 0, errors.New("transcript requires a session ID")
+	}
+	return f.events.CurrentSequence(ctx, sessionID)
+}
+
 // projectHistory replays the events of sessionID. A transcript keeps open
 // turns and skips provider calibration; a model history keeps only completed
 // turns.
@@ -84,6 +97,20 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 	estimatedByTurn := make(map[string]int)
 	compactedSummary := ""
 	var compactedRetained []*schema.Message
+	var lastHistoryCommit uint64
+	pruneCompactedTurns := func() {
+		// Checkpoints cover completed context. An unresolved turn was not in
+		// that context and may still complete through its original journal.
+		order = slices.DeleteFunc(order, func(id string) bool {
+			if turns[id].completedAt == 0 {
+				return false
+			}
+			delete(turns, id)
+			delete(estimatedByTurn, id)
+			return true
+		})
+		maps.DeleteFunc(callToTurn, func(_ string, id string) bool { return turns[id] == nil })
+	}
 	err := session.VisitEvents(ctx, f.events, sessionID, func(event session.Event) error {
 		switch event.Type {
 		case session.EventContextCompacted:
@@ -91,31 +118,26 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return fmt.Errorf("decode context compaction event %s: %w", event.EventID, err)
 			}
-			if payload.Version > 2 {
+			if payload.Version != 1 && payload.Version != 2 {
 				return fmt.Errorf("unsupported context checkpoint version %d", payload.Version)
 			}
 			if payload.Version == 2 {
 				if payload.TurnID == "" {
 					return errors.New("request context checkpoint is missing its turn ID")
 				}
-				turn := ensureHistoryTurn(turns, &order, payload.TurnID)
+				turn := ensureHistoryTurn(turns, &order, payload.TurnID, event.Sequence)
 				payload.offset = len(turn.messages)
 				turn.context = &payload
 				return nil
 			}
 			compactedSummary = payload.Summary
 			compactedRetained = payload.Retained
-			turns = make(map[string]*historyTurn)
-			order = order[:0]
-			callToTurn = make(map[string]string)
-			estimatedByTurn = make(map[string]int)
+			lastHistoryCommit = event.Sequence
+			pruneCompactedTurns()
 		case session.EventTurnStarted:
-			if _, exists := turns[event.CorrelationID]; !exists {
-				turns[event.CorrelationID] = &historyTurn{id: event.CorrelationID}
-				order = append(order, event.CorrelationID)
-			}
+			ensureHistoryTurn(turns, &order, event.CorrelationID, event.Sequence)
 		case session.EventUserMessage:
-			turn := ensureHistoryTurn(turns, &order, event.CorrelationID)
+			turn := ensureHistoryTurn(turns, &order, event.CorrelationID, event.Sequence)
 			var payload struct {
 				Content string `json:"content"`
 			}
@@ -125,7 +147,7 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 			turn.user = payload.Content
 			turn.hasUser = true
 		case session.EventBackgroundInput:
-			turn := ensureHistoryTurn(turns, &order, event.CorrelationID)
+			turn := ensureHistoryTurn(turns, &order, event.CorrelationID, event.Sequence)
 			var payload backgroundRecord
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return fmt.Errorf("decode background history event %s: %w", event.EventID, err)
@@ -140,17 +162,21 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 			}
 		case session.EventModelRequested:
 			var payload struct {
-				EstimatedInputTokens int `json:"estimated_input_tokens"`
+				EstimatedInputTokens int    `json:"estimated_input_tokens"`
+				Purpose              string `json:"purpose"`
 			}
-			if err := json.Unmarshal(event.Payload, &payload); err == nil {
+			if err := json.Unmarshal(event.Payload, &payload); err == nil && payload.Purpose == "" {
 				estimatedByTurn[event.CorrelationID] = payload.EstimatedInputTokens
 			}
 		case session.EventAssistantMessage:
-			turn := ensureHistoryTurn(turns, &order, event.CorrelationID)
 			var payload historyMessagePayload
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return fmt.Errorf("decode assistant history event %s: %w", event.EventID, err)
 			}
+			if payload.Purpose != "" {
+				return nil
+			}
+			turn := ensureHistoryTurn(turns, &order, event.CorrelationID, event.Sequence)
 			if turn.confirmed == nil {
 				turn.confirmed = make(map[string]bool)
 			}
@@ -194,7 +220,7 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return err
 			}
-			turn := ensureHistoryTurn(turns, &order, event.CorrelationID)
+			turn := ensureHistoryTurn(turns, &order, event.CorrelationID, event.Sequence)
 			if turn.partial == nil {
 				turn.partial = make(map[string][]*schema.Message)
 			}
@@ -216,7 +242,7 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 			if turnID == "" || payload.CallID == "" {
 				return nil
 			}
-			turn := ensureHistoryTurn(turns, &order, turnID)
+			turn := ensureHistoryTurn(turns, &order, turnID, event.Sequence)
 			result := string(payload.Result)
 			if result == "" || result == "null" {
 				result = "{}"
@@ -234,7 +260,7 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 			if turnID == "" || payload.CallID == "" {
 				return nil
 			}
-			turn := ensureHistoryTurn(turns, &order, turnID)
+			turn := ensureHistoryTurn(turns, &order, turnID, event.Sequence)
 			failure := map[string]string{"error": payload.Error}
 			encoded, err := json.Marshal(failure)
 			if err != nil {
@@ -242,16 +268,17 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 			}
 			turn.messages = append(turn.messages, schema.ToolMessage(string(encoded), payload.CallID, schema.WithToolName(payload.Tool)))
 		case session.EventTurnCompleted:
-			turn := ensureHistoryTurn(turns, &order, event.CorrelationID)
-			turn.completed = true
-			if checkpoint := turn.context; checkpoint != nil {
+			turn := ensureHistoryTurn(turns, &order, event.CorrelationID, event.Sequence)
+			turn.completedAt = event.Sequence
+			// Resume reconstructs the original turn input, even when newer
+			// context has committed in the meantime. Publish this checkpoint
+			// only if it was derived from the current conversation baseline.
+			if checkpoint := turn.context; checkpoint != nil && turn.openedAt > lastHistoryCommit {
 				compactedSummary = checkpoint.Summary
 				compactedRetained = append(append([]*schema.Message(nil), checkpoint.Retained...), turn.messages[checkpoint.offset:]...)
-				turns = make(map[string]*historyTurn)
-				order = order[:0]
-				callToTurn = make(map[string]string)
-				estimatedByTurn = make(map[string]int)
+				pruneCompactedTurns()
 			}
+			lastHistoryCommit = event.Sequence
 		}
 		return nil
 	})
@@ -264,14 +291,19 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 		history = append(history, schema.SystemMessage("Conversation summary:\n"+compactedSummary))
 	}
 	history = append(history, compactedRetained...)
+	if !transcript {
+		// Late recovery becomes available to the model when it completes.
+		// The display keeps the opening order of the remaining turns.
+		slices.SortStableFunc(order, func(a, b string) int { return cmp.Compare(turns[a].completedAt, turns[b].completedAt) })
+	}
 	for _, id := range order {
 		turn := turns[id]
-		if turn == nil || !turn.hasUser || (!turn.completed && !transcript) {
+		if !turn.hasUser || (turn.completedAt == 0 && !transcript) {
 			continue
 		}
 		history = append(history, schema.UserMessage(turn.user))
 		history = append(history, turn.messages...)
-		if transcript && !turn.completed {
+		if transcript && turn.completedAt == 0 {
 			// Request IDs contain a monotonic sequence. Event order is retained
 			// separately below rather than relying on map iteration.
 			keys := make([]string, 0, len(turn.partial))
@@ -289,7 +321,7 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 				}
 				if message != nil && message.Content != "" {
 					message.ToolCalls = nil
-					message.Content += "\n[Interrupted model response; not a completed result.]"
+					message.Content += "\n[Partial model response]"
 					history = append(history, message)
 				}
 			}
@@ -314,11 +346,11 @@ func durableContextMessages(messages []*schema.Message) []*schema.Message {
 	return result
 }
 
-func ensureHistoryTurn(turns map[string]*historyTurn, order *[]string, id string) *historyTurn {
+func ensureHistoryTurn(turns map[string]*historyTurn, order *[]string, id string, sequence uint64) *historyTurn {
 	if turn, ok := turns[id]; ok {
 		return turn
 	}
-	turn := &historyTurn{id: id}
+	turn := &historyTurn{openedAt: sequence}
 	turns[id] = turn
 	*order = append(*order, id)
 	return turn

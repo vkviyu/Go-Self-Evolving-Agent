@@ -125,6 +125,7 @@ type Run struct {
 	Error                 string
 	RegistryGeneration    uint64
 	RuntimeSnapshotID     string
+	Execution             orchestration.ExecutionBinding
 	Version               uint64
 	StartedAt             time.Time
 	UpdatedAt             time.Time
@@ -143,6 +144,7 @@ type RunRequest struct {
 	Input                 Value
 	RegistryGeneration    uint64
 	RuntimeSnapshotID     string
+	Execution             orchestration.ExecutionBinding
 }
 
 func (request RunRequest) Validate() error {
@@ -163,6 +165,9 @@ func (request RunRequest) Validate() error {
 	}
 	if err := request.AgentID.Validate(); err != nil {
 		return err
+	}
+	if err := request.Execution.Validate(); err != nil {
+		return fmt.Errorf("Flow execution binding: %w", err)
 	}
 	return request.Input.Validate()
 }

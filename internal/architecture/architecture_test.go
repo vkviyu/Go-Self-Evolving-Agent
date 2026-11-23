@@ -22,15 +22,18 @@ const module = "github.com/vkviyu/go-self-evolving-agent/"
 // These are architectural roles, not a snapshot of every current import. UI
 // and assembly packages may evolve, but cannot be imported by lower layers.
 var ownedImports = map[string][]string{
-	module + "internal/app":                 {"internal/cli"},
-	module + "internal/cli":                 {"cmd/local-agent"},
-	module + "internal/session/sqlitestore": {"internal/app"},
-	"database/sql":                          {"internal/session/sqlitestore", "internal/sessionregistry", "internal/workspacedomain"},
-	"modernc.org/sqlite":                    {"internal/session/sqlitestore", "internal/sessionregistry", "internal/workspacedomain"},
-	"github.com/cloudwego/eino/adk":         {"internal/agentruntime"},
-	"github.com/cloudwego/eino/compose":     {"internal/agentruntime", "internal/einoadapter"},
-	"github.com/cloudwego/eino-ext":         {"internal/modelgateway"},
-	"github.com/tetratelabs/wazero":         {"internal/plugin/wasm"},
+	// Production hosts use ATE contracts/client; engine assembly is test-only.
+	"github.com/vkviyu/agent-temporal-engine/engine": {},
+	module + "internal/app":                          {"internal/cli"},
+	module + "internal/cli":                          {"cmd/gsea"},
+	module + "internal/runtimestore":                 {"internal/app", "internal/testfixture"},
+	"database/sql":                                   {"internal/runtimestore", "internal/workspacedomain"},
+	"modernc.org/sqlite":                             {"internal/runtimestore", "internal/workspacedomain"},
+	module + "internal/testfixture":                  {},
+	"github.com/cloudwego/eino/adk":                  {"internal/agentruntime"},
+	"github.com/cloudwego/eino/compose":              {"internal/agentruntime", "internal/einoadapter"},
+	"github.com/cloudwego/eino-ext":                  {"internal/modelgateway"},
+	"github.com/tetratelabs/wazero":                  {"internal/plugin/wasm"},
 }
 
 // Domain protocols and services depend inward through their explicit ports.
@@ -38,37 +41,50 @@ var ownedImports = map[string][]string{
 // unrelated import merely because it compiles. Descendant packages inherit it.
 var domainDependencies = map[string][]string{
 	"internal/session":         {},
-	"internal/sessionregistry": {}, // separate Session catalog database, not conversation history
+	"internal/sessionregistry": {"internal/ateauthority"},
 	// Workspace coordination database shared by every Session on one
 	// workspace; it must not reach into any Session database.
 	"internal/workspacedomain": {"internal/orchestration"},
-	"internal/orchestration":   {"internal/session"},
+	"internal/orchestration":   {"internal/execution", "internal/session"},
 	"internal/policy":          {"internal/orchestration"},
 	"internal/tool":            {"internal/orchestration", "internal/policy", "internal/session"},
 	"internal/agentprofile":    {},
+	"internal/execution":       {},
 	"internal/strategy":        {},
-	"internal/agentgoal":       {"internal/orchestration", "internal/session", "internal/tokenusage", "internal/tool"},
 	"internal/agentflow":       {"internal/orchestration", "internal/session", "internal/tokenusage", "internal/tool"},
-	"internal/conversation":    {"internal/agentgoal", "internal/agentruntime", "internal/orchestration", "internal/session", "internal/tool"},
-	"internal/agentruntime":    {"internal/agentgoal", "internal/agentprofile", "internal/einoadapter", "internal/modelcontext", "internal/orchestration", "internal/policy", "internal/session", "internal/session/memorystore", "internal/strategy", "internal/tokenizer", "internal/tokenusage", "internal/tool"},
+	"internal/conversation":    {"internal/agentruntime", "internal/orchestration", "internal/session", "internal/tool"},
+	"internal/agentruntime":    {"internal/agentprofile", "internal/einoadapter", "internal/experienceport", "internal/modelcontext", "internal/modeltelemetry", "internal/orchestration", "internal/policy", "internal/session", "internal/session/memorystore", "internal/strategy", "internal/tokenizer", "internal/tokenusage", "internal/tool"},
 	"internal/agentmanager":    {"internal/agentprofile", "internal/orchestration", "internal/scheduler", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
 	"internal/einoadapter":     {"internal/orchestration", "internal/session", "internal/tool"},
-	"internal/modelgateway":    {"internal/modelcontext", "internal/tokenizer"},
+	"internal/modelgateway":    {"internal/modelcontext", "internal/modeltelemetry", "internal/tokenizer"},
 	"internal/modelcontext":    {},
+	"internal/modeltelemetry":  {},
 	"internal/retention":       {"internal/session", "internal/tool"},
 	"internal/tokenusage":      {"internal/orchestration"},
 	"internal/tokenizer":       {},
 	"internal/runtimeowner":    {},
-	"internal/scheduler":       {},
-	"internal/evolutiontools":  {"internal/pluginbuild", "internal/strategy", "internal/tool"},
-	"internal/pluginbuild":     {"internal/plugin", "internal/sandbox", "internal/tool", "sdk/pluginabi"},
-	"internal/plugin":          {"internal/plugin/wasm", "internal/tool"},
-	"internal/plugin/wasm":     {},
-	"sdk/pluginabi":            {},
+	// Temporal implementations depend on shared contracts; the runtime consumes
+	// experienceport and must not import the service, bridge, or process manager.
+	"internal/ateprocess":     {"internal/runtimeowner"},
+	"internal/aterequest":     {},
+	"internal/ateauthority":   {"internal/aterequest"},
+	"internal/atebridge":      {"internal/aterequest", "internal/session", "internal/ateports"},
+	"internal/experience":     {"internal/atebridge", "internal/experienceport", "internal/session", "internal/ateports"},
+	"internal/experienceport": {"internal/ateports"},
+	"internal/ateports":       {},
+	"internal/scheduler":      {},
+	"internal/evolutiontools": {"internal/pluginbuild", "internal/strategy", "internal/tool"},
+	"internal/evolutionstore": {"internal/ateauthority", "internal/orchestration", "internal/plugin", "internal/pluginbuild", "internal/retention", "internal/strategy"},
+	"internal/pluginbuild":    {"internal/plugin", "internal/sandbox", "internal/tool", "sdk/pluginabi"},
+	"internal/plugin":         {"internal/plugin/wasm", "internal/tool"},
+	"internal/plugin/wasm":    {},
+	"sdk/pluginabi":           {},
 	// Adapters implement domain ports, but must not call the runtime they
 	// persist. Explicit roles override the pure session protocol above.
-	"internal/session/memorystore": {"internal/session"},
-	"internal/session/sqlitestore": {"internal/agentflow", "internal/agentgoal", "internal/lsp", "internal/orchestration", "internal/plugin", "internal/pluginbuild", "internal/retention", "internal/session", "internal/strategy", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
+	"internal/session/memorystore":    {"internal/session"},
+	"internal/session/atestore":       {"internal/aterequest", "internal/session", "internal/ateports"},
+	"internal/orchestration/atestore": {"internal/ateauthority", "internal/agentflow", "internal/agentprofile", "internal/orchestration", "internal/retention", "internal/session", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
+	"internal/runtimestore":           {"internal/agentflow", "internal/aterequest", "internal/lsp", "internal/orchestration", "internal/plugin", "internal/pluginbuild", "internal/retention", "internal/session", "internal/strategy", "internal/ateports", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
 }
 
 // Check imported selectors, not source spelling, so aliases and taking a
@@ -76,10 +92,11 @@ var domainDependencies = map[string][]string{
 var constructors = map[string][]string{
 	"github.com/cloudwego/eino/adk.NewRunner":         {"internal/agentruntime/eino_turn.go"},
 	"github.com/cloudwego/eino/adk.NewChatModelAgent": {"internal/agentruntime/eino_turn.go"},
-	module + "internal/session/sqlitestore.Open":      {"internal/app/open.go", "internal/app/maintenance.go"},
-	module + "internal/workspacedomain.Open":          {"internal/app/open.go"},
-	module + "internal/plugin/wasm.NewRuntime":        {"internal/app/open.go"},
-	module + "internal/tool.NewPipeline":              {"internal/app/open.go", "internal/agentruntime/strategy_shadow.go"},
+	// Native integration fixtures are forbidden from production imports.
+	module + "internal/runtimestore.OpenRuntime": {"internal/app/open.go", "internal/app/maintenance.go", "internal/app/catalog.go", "internal/app/control.go", "internal/testfixture/native.go"},
+	module + "internal/workspacedomain.Open":     {"internal/app/open.go", "internal/app/control.go"},
+	module + "internal/plugin/wasm.NewRuntime":   {"internal/app/open.go"},
+	module + "internal/tool.NewPipeline":         {"internal/app/open.go", "internal/agentruntime/strategy_shadow.go"},
 }
 
 func within(value, prefix string) bool {
@@ -138,7 +155,11 @@ func constructionViolations(filePath string, file *ast.File) []string {
 		}
 		qualified := imports[alias.Name] + "." + selector.Sel.Name
 		if owners, protected := constructors[qualified]; protected && !slices.Contains(owners, filePath) {
-			violations = append(violations, qualified+" must be constructed in "+strings.Join(owners, ", "))
+			if len(owners) == 0 {
+				violations = append(violations, qualified+" is unavailable to production assembly")
+			} else {
+				violations = append(violations, qualified+" must be constructed in "+strings.Join(owners, ", "))
+			}
 		}
 		return true
 	})
@@ -201,8 +222,12 @@ func TestArchitectureRulesDetectBoundaryViolations(t *testing.T) {
 		importer, dependency string
 		allowed              bool
 	}{
-		{"internal/app", module + "internal/session/sqlitestore", true},
-		{"internal/cli", module + "internal/session/sqlitestore", false},
+		{"internal/session/atestore", "github.com/vkviyu/agent-temporal-engine/engine", false},
+		{"internal/app", "github.com/vkviyu/agent-temporal-engine/engine", false},
+		{"internal/session/atestore", "github.com/vkviyu/agent-temporal-engine/api", true},
+		{"internal/session/atestore", "github.com/vkviyu/agent-temporal-engine/client", true},
+		{"internal/app", module + "internal/runtimestore", true},
+		{"internal/cli", module + "internal/runtimestore", false},
 		{"internal/cli", module + "internal/app", true},
 		{"internal/strategy", module + "internal/app", false},
 		{"internal/evolutiontools", "github.com/cloudwego/eino/schema", false},
@@ -212,11 +237,37 @@ func TestArchitectureRulesDetectBoundaryViolations(t *testing.T) {
 		{"internal/tool/nested", module + "internal/codingtools", false},
 		{"internal/agentmanager", "database/sql", false},
 		{"internal/workspacedomain", "database/sql", true},
-		{"internal/workspacedomain", module + "internal/session/sqlitestore", false},
-		{"internal/session/sqlitestore", module + "internal/agentgoal", true},
-		{"internal/session/sqlitestore", module + "internal/agentruntime", false},
+		{"internal/workspacedomain", module + "internal/runtimestore", false},
+		{"internal/runtimestore", module + "internal/agentruntime", false},
 		{"internal/agentruntime", module + "internal/cli", false},
 		{"internal/agentruntime", module + "internal/agentmanager", false},
+		{"internal/agentruntime", module + "internal/experienceport", true},
+		{"internal/agentruntime", module + "internal/experience", false},
+		{"internal/agentruntime", module + "internal/atebridge", false},
+		{"internal/agentruntime", module + "internal/ateprocess", false},
+		{"internal/agentruntime", module + "internal/ateports", false},
+		{"internal/runtimestore", module + "internal/ateports", true},
+		{"internal/runtimestore", module + "internal/experience", false},
+		{"internal/ateprocess", module + "internal/runtimeowner", true},
+		{"internal/ateprocess", module + "internal/agentruntime", false},
+		{"internal/ateprocess", module + "internal/atebridge", false},
+		{"internal/atebridge", module + "internal/session", true},
+		{"internal/atebridge", module + "internal/ateports", true},
+		{"internal/atebridge", module + "internal/agentruntime", false},
+		{"internal/atebridge", module + "internal/experience", false},
+		{"internal/experience", module + "internal/atebridge", true},
+		{"internal/experience", module + "internal/experienceport", true},
+		{"internal/experience", module + "internal/session", true},
+		{"internal/experience", module + "internal/ateports", true},
+		{"internal/experience", module + "internal/agentruntime", false},
+		{"internal/experience", module + "internal/runtimestore", false},
+		{"internal/experienceport", module + "internal/ateports", true},
+		{"internal/experienceport", module + "internal/experience", false},
+		{"internal/experienceport", module + "internal/atebridge", false},
+		{"internal/experienceport", module + "internal/agentruntime", false},
+		{"internal/ateports", module + "internal/runtimestore", false},
+		{"internal/ateports", module + "internal/experienceport", false},
+		{"internal/ateports", module + "internal/atebridge", false},
 		{"internal/conversation", module + "internal/agentruntime", true},
 		{"internal/modelgateway", module + "internal/conversation", false},
 		{"internal/modelgateway", "github.com/cloudwego/eino-ext/components/model/openai", true},
@@ -228,8 +279,8 @@ func TestArchitectureRulesDetectBoundaryViolations(t *testing.T) {
 		}
 	}
 	for _, test := range []struct{ name, source string }{
-		{"alias", `package fixture; import db "` + module + `internal/session/sqlitestore"; var open = db.Open`},
-		{"dot", `package fixture; import . "` + module + `internal/session/sqlitestore"; var open = Open`},
+		{"alias", `package fixture; import db "` + module + `internal/runtimestore"; var open = db.OpenRuntime`},
+		{"dot", `package fixture; import . "` + module + `internal/runtimestore"; var open = OpenRuntime`},
 	} {
 		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", test.source, 0)
 		if err != nil {

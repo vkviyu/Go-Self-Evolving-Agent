@@ -13,7 +13,7 @@ func TestMergeExecutorUsesTheConfiguredPostMergeCheck(t *testing.T) {
 	for _, command := range []string{"", "go test ./..."} {
 		cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
 		cfg.Agents.PostMergeCheck, cfg.Agents.PostMergeCheckTimeout = command, time.Minute
-		a, err := Open(ctx, cfg)
+		a, err := testOpen(t, ctx, cfg)
 		if err != nil {
 			t.Fatal(err)
 		}

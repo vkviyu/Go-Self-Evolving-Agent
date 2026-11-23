@@ -17,18 +17,11 @@ func readRootBounded(ctx context.Context, root *os.Root, name string, limit int)
 	if err := contextError(ctx); err != nil {
 		return nil, false, err
 	}
-	file, err := root.Open(name)
+	file, _, err := openRootRegular(root, name)
 	if err != nil {
 		return nil, false, err
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, false, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, false, errors.New("workspace content must be a regular file")
-	}
 	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return nil, false, err
@@ -40,6 +33,22 @@ func readRootBounded(ctx context.Context, root *os.Root, name string, limit int)
 		return data[:limit], true, nil
 	}
 	return data, false, nil
+}
+
+func openRootRegular(root *os.Root, name string) (*os.File, os.FileInfo, error) {
+	file, err := openRootFile(root, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errors.New("workspace content must be a regular file")
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	return file, info, nil
 }
 
 func atomicWriteRoot(root *os.Root, name string, data []byte, mode os.FileMode) error {

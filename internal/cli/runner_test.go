@@ -6,21 +6,18 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/codingtools"
-	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/modelgateway"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
 )
 
 func TestDoctorCommand(t *testing.T) {
-	t.Parallel()
-
 	var stdout, stderr bytes.Buffer
 	exitCode := run(context.Background(), []string{"doctor", "--data-dir", t.TempDir()}, bytes.NewBuffer(nil), &stdout, &stderr)
 	if exitCode != 0 {
@@ -50,14 +47,15 @@ func TestSubcommandHelpReturnsSuccess(t *testing.T) {
 }
 
 func TestChatCommandRunsMultipleTurns(t *testing.T) {
-	t.Parallel()
+	cliATEEnvironment(t)
 
+	profile := nativeCLIProfile(t)
 	var stdout, stderr bytes.Buffer
 	fakeModel := &chatTestModel{}
 	dataDirectory := t.TempDir()
 	exitCode := runWithDependencies(
 		context.Background(),
-		[]string{"chat", "--model", "test-model", "--data-dir", dataDirectory, "--session", "test-session", "--goal-mode=false"},
+		[]string{"chat", "--profile", profile, "--model", "test-model", "--data-dir", dataDirectory, "--session", "test-session"},
 		bytes.NewBufferString("hello\nagain\n/exit\n"),
 		&stdout,
 		&stderr,
@@ -69,6 +67,8 @@ func TestChatCommandRunsMultipleTurns(t *testing.T) {
 	if got := stdout.String(); got != "reply: hello\nreply: again\n" {
 		t.Fatalf("stdout = %q", got)
 	}
+	// One system instruction precedes the three conversational messages.
+	// Ordinary turns do not inject an automatically selected experience message.
 	if fakeModel.lastInputCount != 4 {
 		t.Fatalf("second turn model input count = %d, want 4", fakeModel.lastInputCount)
 	}
@@ -78,7 +78,7 @@ func TestChatCommandRunsMultipleTurns(t *testing.T) {
 	resumedModel := &chatTestModel{}
 	exitCode = runWithDependencies(
 		context.Background(),
-		[]string{"chat", "--model", "test-model", "--data-dir", dataDirectory, "--session", "test-session", "--goal-mode=false"},
+		[]string{"chat", "--profile", profile, "--model", "test-model", "--data-dir", dataDirectory, "--session", "test-session"},
 		bytes.NewBufferString("resumed\n/exit\n"),
 		&stdout,
 		&stderr,
@@ -95,12 +95,12 @@ func TestChatCommandRunsMultipleTurns(t *testing.T) {
 }
 
 func TestChatCommandRendersReasoningAndUsage(t *testing.T) {
-	t.Parallel()
+	cliATEEnvironment(t)
 
 	var stdout, stderr bytes.Buffer
 	exitCode := runWithDependencies(
 		context.Background(),
-		[]string{"chat", "--model", "test-model", "--data-dir", t.TempDir(), "--session", "reasoning-session", "--goal-mode=false"},
+		[]string{"chat", "--profile", nativeCLIProfile(t), "--model", "test-model", "--data-dir", t.TempDir(), "--session", "reasoning-session"},
 		bytes.NewBufferString("hello\n/exit\n"),
 		&stdout,
 		&stderr,
@@ -118,12 +118,12 @@ func TestChatCommandRendersReasoningAndUsage(t *testing.T) {
 }
 
 func TestChatCommandEmitsMachineReadableFinalResult(t *testing.T) {
-	t.Parallel()
+	cliATEEnvironment(t)
 
 	var stdout, stderr bytes.Buffer
 	exitCode := runWithDependencies(
 		context.Background(),
-		[]string{"chat", "--model", "test-model", "--data-dir", t.TempDir(), "--session", "json-session", "--goal-mode=false", "--headless-format", "json"},
+		[]string{"chat", "--profile", nativeCLIProfile(t), "--model", "test-model", "--data-dir", t.TempDir(), "--session", "json-session", "--headless-format", "json"},
 		bytes.NewBufferString("hello\n/exit\n"),
 		&stdout,
 		&stderr,
@@ -147,13 +147,13 @@ func TestChatCommandEmitsMachineReadableFinalResult(t *testing.T) {
 }
 
 func TestChatCommandReadsMultilinePromptFromStdin(t *testing.T) {
-	t.Parallel()
+	cliATEEnvironment(t)
 
 	var stdout, stderr bytes.Buffer
 	fakeModel := &chatTestModel{}
 	exitCode := runWithDependencies(
 		context.Background(),
-		[]string{"chat", "--model", "test-model", "--data-dir", t.TempDir(), "--session", "prompt-file-session", "--goal-mode=false", "--prompt-file", "-"},
+		[]string{"chat", "--profile", nativeCLIProfile(t), "--model", "test-model", "--data-dir", t.TempDir(), "--session", "prompt-file-session", "--prompt-file", "-"},
 		bytes.NewBufferString("first line\nsecond line\n"),
 		&stdout,
 		&stderr,
@@ -172,15 +172,16 @@ func TestChatCommandReadsMultilinePromptFromStdin(t *testing.T) {
 func TestChatEvaluationModeApprovesWorkspaceWriteThroughPipeline(t *testing.T) {
 	workspace := t.TempDir()
 	dataDirectory := t.TempDir()
-	t.Setenv(config.HomeEnvironment, t.TempDir())
-	t.Setenv("GSEA_LSP_ENABLED", "false")
+	// The fixture and the CLI process must resolve the same home and data
+	// directory, otherwise they open different native authorities.
+	cfg := cliCommandConfig(t, dataDirectory, workspace)
 
 	var stdout, stderr bytes.Buffer
 	exitCode := runWithDependencies(
 		context.Background(),
 		[]string{
 			"chat", "--model", "test-model", "--data-dir", dataDirectory,
-			"--workspace", workspace, "--evaluation-mode", "--session", "evaluation-session", "--goal-mode=false",
+			"--workspace", workspace, "--evaluation-mode", "--session", "evaluation-session",
 		},
 		bytes.NewBufferString("create the requested file\n/exit\n"),
 		&stdout,
@@ -200,12 +201,9 @@ func TestChatEvaluationModeApprovesWorkspaceWriteThroughPipeline(t *testing.T) {
 		t.Fatalf("answer.go = %q", content)
 	}
 
-	database, err := sqlitestore.Open(context.Background(), filepath.Join(dataDirectory, "sessions.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := openCLIApp(t, cfg)
 	defer database.Close()
-	events, err := database.SessionEvents().Load(context.Background(), session.ID("evaluation-session"), 0, 1000)
+	events, err := database.Events().Load(context.Background(), session.ID("evaluation-session"), 0, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,6 +229,31 @@ func TestChatEvaluationModeApprovesWorkspaceWriteThroughPipeline(t *testing.T) {
 	}
 }
 
+// cliAuxiliaryReply answers the internal experience curator's staged requests
+// with valid empty decisions. Chat tests exercise the Agent Loop, not curation;
+// without this, auxiliary maintenance would call the fake model as ordinary chat.
+func cliAuxiliaryReply(messages []*schema.Message) *schema.Message {
+	if len(messages) == 0 || !strings.Contains(messages[0].Content, "Stage: ") {
+		return nil
+	}
+	stage := strings.Split(strings.Split(messages[0].Content, "Stage: ")[1], "\n")[0]
+	switch stage {
+	case "discover":
+		return schema.AssistantMessage(`{"space_ids":[],"new_space":null,"search_terms":[],"full_history":false}`, nil)
+	case "select":
+		return schema.AssistantMessage(`{"memory_ids":[]}`, nil)
+	case "history-map", "history-reduce":
+		return schema.AssistantMessage(`{"notes":[]}`, nil)
+	case "extract":
+		return schema.AssistantMessage(`{"lessons":[]}`, nil)
+	case "organize":
+		return schema.AssistantMessage(`{"actions":[]}`, nil)
+	case "verify":
+		return schema.AssistantMessage(`{"passed":false,"reason":"no verified claim","event_ids":[],"claims_tool_success":false,"tool_success_event_ids":[]}`, nil)
+	}
+	return nil
+}
+
 type chatTestModel struct {
 	lastInputCount int
 }
@@ -238,6 +261,9 @@ type chatTestModel struct {
 var _ model.ToolCallingChatModel = (*chatTestModel)(nil)
 
 func (m *chatTestModel) Generate(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	if reply := cliAuxiliaryReply(messages); reply != nil {
+		return reply, nil
+	}
 	m.lastInputCount = len(messages)
 	return schema.AssistantMessage("reply: "+messages[len(messages)-1].Content, nil), nil
 }
@@ -263,7 +289,10 @@ type reasoningChatModel struct{}
 
 var _ model.ToolCallingChatModel = (*reasoningChatModel)(nil)
 
-func (*reasoningChatModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (*reasoningChatModel) Generate(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	if reply := cliAuxiliaryReply(messages); reply != nil {
+		return reply, nil
+	}
 	message := schema.AssistantMessage("answer", nil)
 	message.ReasoningContent = "plan"
 	message.ResponseMeta = &schema.ResponseMeta{
@@ -307,6 +336,9 @@ type workspaceWriteChatModel struct {
 var _ model.ToolCallingChatModel = (*workspaceWriteChatModel)(nil)
 
 func (m *workspaceWriteChatModel) Generate(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	if reply := cliAuxiliaryReply(messages); reply != nil {
+		return reply, nil
+	}
 	for _, message := range messages {
 		if message != nil && message.Role == schema.User {
 			m.lastUserContent = message.Content

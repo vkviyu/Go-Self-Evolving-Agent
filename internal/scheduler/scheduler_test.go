@@ -17,8 +17,8 @@ func TestBucketSetBoundsConcurrentRuns(t *testing.T) {
 	}
 }
 
-func TestWeightedRoundRobinAdvancesTeamCursor(t *testing.T) {
-	queue := &WeightedRoundRobin{}
+func TestRoundRobinAdvancesTeamCursor(t *testing.T) {
+	queue := &RoundRobin{}
 	items := []Candidate{{TeamKey: "a", ItemKey: "a1", Priority: 1}, {TeamKey: "a", ItemKey: "a2", Priority: 5}, {TeamKey: "b", ItemKey: "b1", Priority: 1}}
 	first := queue.Order(items)
 	second := queue.Order(items)

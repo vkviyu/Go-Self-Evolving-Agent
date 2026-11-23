@@ -43,6 +43,7 @@ type Invocation struct {
 	Pipeline           *tool.Pipeline
 	RegistryGeneration uint64
 	RuntimeSnapshotID  string
+	Execution          orchestration.ExecutionBinding
 }
 
 type Result struct {
@@ -115,6 +116,7 @@ func (runtime *Runtime) Run(ctx context.Context, definition *Definition, invocat
 		DefinitionRevision: definition.Revision, DefinitionFingerprint: fingerprint,
 		SessionID: invocation.SessionID, TeamID: invocation.Actor.TeamID, AgentID: invocation.Actor.AgentID,
 		Input: invocation.Input, RegistryGeneration: snapshot.Generation(), RuntimeSnapshotID: snapshotID,
+		Execution: invocation.Execution,
 	})
 	if err != nil {
 		return Result{}, err
@@ -247,8 +249,17 @@ func (execution *Execution) Tool(ctx context.Context, stepID, toolName string, a
 		return nil, err
 	}
 	callID := execution.run.ID + ":" + stepID
+	binding := execution.run.Execution
+	if !binding.IsZero() {
+		binding.StepID = stepID
+		binding.TurnID = "flow:" + execution.run.ID
+		if err := binding.Validate(); err != nil {
+			return nil, fmt.Errorf("Flow step execution binding: %w", err)
+		}
+	}
 	result, err := execution.pipeline.Execute(ctx, tool.Call{
 		Actor: execution.actor, SessionID: execution.sessionID, TurnID: "flow:" + execution.run.ID,
+		Execution:         binding,
 		RuntimeSnapshotID: execution.runtimeSnapshotID, CallID: callID,
 		ToolName: toolName, Arguments: encoded, Registry: execution.snapshot,
 	})

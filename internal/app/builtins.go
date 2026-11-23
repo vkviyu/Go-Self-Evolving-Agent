@@ -13,6 +13,8 @@ import (
 // this engine.
 func buildPolicy(additionalTools []tool.Binding) (policy.Engine, error) {
 	rules := []policy.Rule{
+		{ID: "allow-memory-query", ToolPattern: "memory_query", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "inspect persistent memories without adopting or changing them"},
+		{ID: "approve-memory-manage", ToolPattern: "memory_manage", CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "change persistent memory with durable provenance"},
 		{ID: "approve-strategy-propose", ToolPattern: "strategy_propose", CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "retain a bounded strategy candidate; no automatic activation"},
 		{ID: "allow-strategy-inspect", ToolPattern: "strategy_inspect", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "inspect this root session's candidate and test evidence"},
 		{ID: "approve-strategy-shadow", ToolPattern: "strategy_shadow", CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "run bounded model comparisons against user-registered fixtures; requests consume the current Team budget"},
@@ -22,8 +24,6 @@ func buildPolicy(additionalTools []tool.Binding) (policy.Engine, error) {
 		{ID: "approve-plugin-publish", ToolPattern: "plugin_publish", CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "review generated source/tests before promoting the exact candidate; activation changes future toolsets"},
 		{ID: "approve-extension-invoke", ToolPattern: "extension_*", CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "explicit invocation of a host-published generated WASM extension"},
 		{ID: "allow-runtime-diagnostics", ToolPattern: diagnosticsToolName, CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "built-in read-only health check"},
-		{ID: "allow-goal-report", ToolPattern: "goal_report", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "durable Goal Mode self-assessment"},
-		{ID: "allow-goal-start", ToolPattern: "goal_start", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "task contract registration; grants no execution authority"},
 		{ID: "allow-runtime-budget", ToolPattern: "runtime_budget", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "read-only durable Team budget"},
 		{ID: "approve-human-confirm", ToolPattern: "human_confirm", CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "Flow requested explicit human intervention"},
 		{ID: "allow-flow-list", ToolPattern: "flow_list", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "read-only host Flow catalog"},

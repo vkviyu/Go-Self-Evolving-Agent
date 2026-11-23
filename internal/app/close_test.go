@@ -19,8 +19,8 @@ import (
 func TestConcurrentCloseJoinsEvolutionEvidenceBeforeReleasingOwnership(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
-	a, err := Open(ctx, cfg)
+	cfg := testConfig(t, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestConcurrentCloseJoinsEvolutionEvidenceBeforeReleasingOwnership(t *testin
 		// must keep both the database and exclusive runtime ownership alive.
 		persist, cancel := context.WithTimeout(context.WithoutCancel(worker), 5*time.Second)
 		defer cancel()
-		ownership := requireOwned(a.config.SessionDatabasePath())
+		ownership := requireOwned(a.config.RuntimeDatabasePath())
 		write := a.Orchestration().RecordUsage(persist, tokenusage.Record{
 			TeamID: root.TeamID, AgentID: root.AgentID, RequestID: "shutdown-evidence",
 			Usage: tokenusage.Snapshot{Input: 3, Output: 2, Total: 5},
@@ -72,7 +72,7 @@ func TestConcurrentCloseJoinsEvolutionEvidenceBeforeReleasingOwnership(t *testin
 
 func TestEvolutionCloseTimeoutRetainsResources(t *testing.T) {
 	t.Parallel()
-	a, err := Open(context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,8 +124,12 @@ func (r *blockedCloseRepository) ListTeams(ctx context.Context) ([]orchestration
 
 func TestSupervisorCloseTimeoutRetainsResources(t *testing.T) {
 	t.Parallel()
-	a, err := Open(context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.EnsureRootThread(t.Context(), "supervisor-close"); err != nil {
+		_ = a.Close()
 		t.Fatal(err)
 	}
 	repository := &blockedCloseRepository{
@@ -194,8 +198,12 @@ func (r *failedRecoveryCloseRepository) ListTeams(ctx context.Context) ([]orches
 
 func TestFailedSupervisorAssemblyRetainsTimedOutWorker(t *testing.T) {
 	t.Parallel()
-	a, err := Open(context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
+	a, err := testOpen(t, context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.EnsureRootThread(t.Context(), "supervisor-assembly"); err != nil {
+		_ = a.Close()
 		t.Fatal(err)
 	}
 	repository := &failedRecoveryCloseRepository{
@@ -245,7 +253,7 @@ func assertTimedOutAppRetainsResources(t *testing.T, a *App, closeErr error) {
 	if err := a.Close(); err != closeErr {
 		t.Errorf("repeated Close changed its result: %v -> %v", closeErr, err)
 	}
-	if err := requireOwned(a.config.SessionDatabasePath()); err != nil {
+	if err := requireOwned(a.config.RuntimeDatabasePath()); err != nil {
 		t.Error(err)
 	}
 	if _, err := a.Orchestration().ListTeams(context.Background()); err != nil {
@@ -276,7 +284,18 @@ func closeRetainedTestResources(t *testing.T, a *App) {
 	if err := a.plugins.Close(context.Background()); err != nil {
 		t.Error(err)
 	}
+	if err := a.temporalProcess.Close(); err != nil {
+		t.Error(err)
+	}
 	closeOpenResources(a.database, a.wasm, a.approval, a.diagnostics)
+	for _, owner := range a.sessionOwners {
+		if err := owner.Close(); err != nil {
+			t.Error(err)
+		}
+	}
+	if err := a.domain.Close(); err != nil {
+		t.Error(err)
+	}
 	if err := a.owner.Close(); err != nil {
 		t.Error(err)
 	}

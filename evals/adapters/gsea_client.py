@@ -43,7 +43,7 @@ class GSEAConfig:
 
     @classmethod
     def from_environment(cls) -> "GSEAConfig":
-        binary = Path(os.environ.get("GSEA_BINARY", "local-agent")).expanduser()
+        binary = Path(os.environ.get("GSEA_BINARY", "gsea")).expanduser()
         data_root_value = os.environ.get("GSEA_BENCH_DATA_ROOT")
         if data_root_value:
             data_root = Path(data_root_value).expanduser()
@@ -178,7 +178,6 @@ def _command(
         config.request_timeout,
         "--max-iterations",
         str(config.max_iterations),
-        "--goal-mode=false",
     ]
     if system_prompt:
         command.extend(["--system", system_prompt])

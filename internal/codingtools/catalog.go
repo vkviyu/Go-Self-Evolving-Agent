@@ -32,7 +32,10 @@ func (workspace *Workspace) Bindings() []tool.Binding {
 }
 
 func (workspace *Workspace) readBinding() tool.Binding {
-	return bindingRevision("workspace_read", "builtin-v3", "Read a UTF-8 text file under the effective workspace root. Use a workspace-relative path such as internal/app/agent_factory.go; do not include the absolute workspace prefix or a parent-directory path. The result includes fingerprint_complete and sha256. Use sha256 as expected_sha256 only when fingerprint_complete is true. Files over 4 MiB return a bounded prefix without a full-file fingerprint; structured edits also have a 4 MiB limit.", `{"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string","description":"Workspace-relative file path, for example internal/app/agent_factory.go; use . only for a directory tool"},"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1},"max_bytes":{"type":"integer","minimum":1,"maximum":4194304}}}`, tool.RiskRead, tool.InvokeFunc(workspace.read))
+	return bindingRevision("workspace_read", "builtin-v4",
+		"Read a UTF-8 text file under the effective workspace root. Prefer this tool for reading local documents and source files. For a large document, read a section or a full page per call. Follow next_offset for sequential reading or next_start_line to continue a selected line range. Keep the default byte budget unless a specific range needs a different size. Use sha256 as expected_sha256 only when fingerprint_complete is true. Files over 4 MiB can still be paged but have no full-file fingerprint.",
+		`{"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string","description":"Workspace-relative file path, for example docs/design.md"},"start_line":{"type":"integer","minimum":1,"description":"First line, default 1"},"end_line":{"type":"integer","minimum":1,"description":"Last line, inclusive; omit to continue to the byte limit or end of file"},"offset":{"type":"integer","minimum":0,"description":"Byte position returned as next_offset; omit both line fields when using offset"},"max_bytes":{"type":"integer","minimum":1,"maximum":4194304,"description":"Maximum bytes in the selected page, default 16384. Larger results may be represented as artifact references"}}}`,
+		tool.RiskRead, tool.InvokeFunc(workspace.read))
 }
 
 func (workspace *Workspace) listBinding() tool.Binding {
@@ -60,7 +63,7 @@ func (workspace *Workspace) editBinding() tool.Binding {
 }
 
 func (workspace *Workspace) shellBinding() tool.Binding {
-	return bindingRevision(ShellToolName, "builtin-v4", "Run a shell command in the workspace or a workspace subdirectory and report bounded changes plus unified diffs.", `{"type":"object","additionalProperties":false,"required":["command"],"properties":{"command":{"type":"string","minLength":1},"working_directory":{"type":"string","description":"Workspace-relative directory path; omit for the workspace root"},"timeout_ms":{"type":"integer","minimum":1,"maximum":300000},"max_output_bytes":{"type":"integer","minimum":1,"maximum":2097152}}}`, tool.RiskExecute, tool.InvokeFunc(workspace.shell))
+	return bindingRevision(ShellToolName, "builtin-v5", "Run a shell command in the workspace or a workspace subdirectory and report bounded changes plus unified diffs. Each invocation may require approval and capture workspace changes. For local text, use workspace_read to read and workspace_grep to search.", `{"type":"object","additionalProperties":false,"required":["command"],"properties":{"command":{"type":"string","minLength":1},"working_directory":{"type":"string","description":"Workspace-relative directory path; omit for the workspace root"},"timeout_ms":{"type":"integer","minimum":1,"maximum":300000,"description":"Optional timeout for this command in milliseconds. Omit to run until the command exits or the caller cancels"},"max_output_bytes":{"type":"integer","minimum":1,"maximum":2097152}}}`, tool.RiskExecute, tool.InvokeFunc(workspace.shell))
 }
 
 func binding(name, description, schema string, risk tool.RiskClass, executor tool.Executor) tool.Binding {

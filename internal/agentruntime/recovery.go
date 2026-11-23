@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
@@ -13,22 +12,22 @@ import (
 // TurnRecord is a read-only projection. A checkpoint's presence is not proof
 // of compatibility; ResumeTurn still validates model, profile and registry.
 type TurnRecord struct {
-	TurnID         string
-	RunID          orchestration.RunID
-	GoalMode       bool
-	GoalActivation agentgoal.Activation
-	AdmissionToken string
-	Completed      bool
-	Abandoned      bool
-	Archived       bool
-	HasCheckpoint  bool
-	HasJournal     bool
+	TurnID                  string
+	RunID                   orchestration.RunID
+	ExecutionAdmissionToken string
+	LegacyAdmissionRecord   bool
+	Completed               bool
+	Abandoned               bool
+	Archived                bool
+	LoopStopped             bool
+	HasCheckpoint           bool
+	HasJournal              bool
 }
 
-// RequiresGoalBinding prevents a persisted Goal-mode turn from being resumed
-// as ordinary chat when a crash interrupted round registration.
-func (record TurnRecord) RequiresGoalBinding() bool {
-	return record.GoalMode && (record.GoalActivation == agentgoal.ActivationAlways || record.AdmissionToken != "")
+// RequiresExecutionRecovery prevents an old admitted turn from being silently
+// resumed as ordinary chat.
+func (record TurnRecord) RequiresExecutionRecovery() bool {
+	return record.LegacyAdmissionRecord || record.ExecutionAdmissionToken != ""
 }
 
 func (f *Factory) CheckTurnRecovery(ctx context.Context, id session.ID, turnID string) error {
@@ -55,20 +54,16 @@ func LoadTurnRecords(ctx context.Context, events session.EventStore, checkpoints
 				return errors.New("duplicate turn start in recovery history")
 			}
 			var metadata struct {
-				RunID          orchestration.RunID  `json:"run_id"`
-				Journal        *turnJournal         `json:"journal"`
-				GoalMode       bool                 `json:"goal_mode"`
-				GoalActivation agentgoal.Activation `json:"goal_activation"`
-				AdmissionToken string               `json:"admission_token"`
+				RunID           orchestration.RunID `json:"run_id"`
+				Journal         *turnJournal        `json:"journal"`
+				LegacyAdmission bool                `json:"goal_mode"`
+				AdmissionToken  string              `json:"admission_token"`
 			}
 			if err := json.Unmarshal(event.Payload, &metadata); err != nil {
 				return err
 			}
 			indices[event.CorrelationID] = len(records)
-			if metadata.GoalMode && metadata.GoalActivation == "" {
-				metadata.GoalActivation = agentgoal.ActivationAlways
-			}
-			records = append(records, TurnRecord{TurnID: event.CorrelationID, RunID: metadata.RunID, GoalMode: metadata.GoalMode, GoalActivation: metadata.GoalActivation, AdmissionToken: metadata.AdmissionToken, HasJournal: metadata.Journal != nil && metadata.Journal.Version == 1 && len(metadata.Journal.Input) > 0})
+			records = append(records, TurnRecord{TurnID: event.CorrelationID, RunID: metadata.RunID, LegacyAdmissionRecord: metadata.LegacyAdmission, ExecutionAdmissionToken: metadata.AdmissionToken, HasJournal: metadata.Journal != nil && metadata.Journal.Version == 1 && len(metadata.Journal.Input) > 0})
 		} else if index, exists := indices[event.CorrelationID]; exists {
 			switch event.Type {
 			case session.EventTurnCompleted:
@@ -77,6 +72,12 @@ func LoadTurnRecords(ctx context.Context, events session.EventStore, checkpoints
 				records[index].Abandoned = true
 			case session.EventTurnArchived:
 				records[index].Archived = true
+			case session.EventTurnFailed:
+				code, err := event.TurnFailureCode()
+				if err != nil {
+					return err
+				}
+				records[index].LoopStopped = records[index].LoopStopped || code == session.TurnFailureToolCycle
 			}
 		}
 		return nil
@@ -86,7 +87,7 @@ func LoadTurnRecords(ctx context.Context, events session.EventStore, checkpoints
 	}
 	if checkpoints != nil {
 		for index := range records {
-			if records[index].Completed || records[index].Abandoned || records[index].Archived {
+			if records[index].Completed || records[index].Abandoned || records[index].Archived || records[index].LoopStopped {
 				continue
 			}
 			_, records[index].HasCheckpoint, err = checkpoints.Get(ctx, checkpointID(id, records[index].TurnID))

@@ -8,7 +8,6 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/compose"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/einoadapter"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
@@ -17,11 +16,7 @@ import (
 // buildTurn is the single Eino assembly point for new and resumed Turns.
 // It does not select strategies or discover recovery metadata.
 func (f *Factory) buildTurn(ctx context.Context, sessionID session.ID, turnID, runtimeSnapshotID string, snapshot *tool.Snapshot, requestSequence uint64) (*Turn, error) {
-	return f.buildTurnWithAdmission(ctx, sessionID, turnID, runtimeSnapshotID, snapshot, requestSequence, "")
-}
-
-func (f *Factory) buildTurnWithAdmission(ctx context.Context, sessionID session.ID, turnID, runtimeSnapshotID string, snapshot *tool.Snapshot, requestSequence uint64, admissionToken string) (*Turn, error) {
-	einoTools, err := einoadapter.NewToolsWithActor(f.pipeline, snapshot, sessionID, runtimeSnapshotID, turnID, f.config.ActorScope)
+	einoTools, err := einoadapter.NewToolsWithExecution(f.pipeline, snapshot, sessionID, runtimeSnapshotID, turnID, f.config.ActorScope, f.config.Execution)
 	if err != nil {
 		return nil, err
 	}
@@ -32,17 +27,13 @@ func (f *Factory) buildTurnWithAdmission(ctx context.Context, sessionID session.
 			if err != nil {
 				return nil, fmt.Errorf("inspect turn tool: %w", err)
 			}
-			hideReport := info.Name == agentgoal.ReportToolName && !f.goalMode.Enabled
-			hideStart := info.Name == agentgoal.StartToolName && (!f.goalMode.Enabled || f.goalMode.Activation == agentgoal.ActivationAlways)
-			if !hideReport && !hideStart {
-				if f.profile != nil {
-					binding, ok := snapshot.Get(info.Name)
-					if !ok || !permitsProfileTool(*f.profile, binding.Descriptor) {
-						continue
-					}
+			if f.profile != nil {
+				binding, ok := snapshot.Get(info.Name)
+				if !ok || !permitsProfileTool(*f.profile, binding.Descriptor) {
+					continue
 				}
-				filtered = append(filtered, candidate)
 			}
+			filtered = append(filtered, candidate)
 		}
 		einoTools = filtered
 	}
@@ -53,6 +44,7 @@ func (f *Factory) buildTurnWithAdmission(ctx context.Context, sessionID session.
 		sessionID:         sessionID,
 		turnID:            turnID,
 		runtimeSnapshotID: runtimeSnapshotID,
+		toolSnapshot:      snapshot,
 	}
 	recordedModel.requestSequence.Store(requestSequence)
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
@@ -82,9 +74,6 @@ func (f *Factory) buildTurnWithAdmission(ctx context.Context, sessionID session.
 		modelProfile:      f.config.ModelProfile,
 		provider:          f.config.Provider,
 		model:             f.config.Model,
-		goalMode:          f.goalMode.Enabled,
-		goalActivation:    f.goalMode.Activation,
-		admissionToken:    admissionToken,
 		checkpointID:      checkpointID(sessionID, turnID),
 		checkpoints:       f.checkpoints,
 		executionConfigID: f.executionConfigID(),
@@ -94,13 +83,5 @@ func (f *Factory) buildTurnWithAdmission(ctx context.Context, sessionID session.
 }
 
 func (f *Factory) runtimeInstruction() string {
-	instruction := f.config.Instruction
-	if f.goalMode.Enabled {
-		protocol := agentgoal.ProtocolInstruction
-		if f.goalMode.Activation == agentgoal.ActivationAuto {
-			protocol = agentgoal.AdmissionInstruction
-		}
-		instruction = strings.TrimSpace(instruction) + "\n\n" + protocol
-	}
-	return instruction
+	return strings.TrimSpace(f.config.Instruction + "\n\n" + f.config.HostInstruction)
 }

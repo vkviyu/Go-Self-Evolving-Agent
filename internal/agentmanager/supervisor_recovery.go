@@ -21,6 +21,17 @@ func (supervisor *Supervisor) Recover(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Releasing startup must not race a synchronous recovery still using a
+	// storage batch. Ordinary recovery callers remain serialized as well.
+	select {
+	case supervisor.recoveryGate <- struct{}{}:
+		defer func() { <-supervisor.recoveryGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := supervisor.ensureOpen(); err != nil {
+		return err
+	}
 	if ledger, ok := supervisor.usageLedger.(tokenusage.DurableReservationLedger); ok {
 		if _, err := ledger.RecoverReservations(ctx); err != nil {
 			return fmt.Errorf("reconcile model reservations during recovery: %w", err)
@@ -179,7 +190,7 @@ func (supervisor *Supervisor) recoverPendingCompletions(ctx context.Context, tea
 		if executing {
 			continue
 		}
-		if err := supervisor.finish(agent, completion.Result, nil); err != nil {
+		if err := supervisor.finishContext(ctx, agent, completion.Result, nil); err != nil {
 			if errors.Is(err, orchestration.ErrTaskNotReady) {
 				continue
 			}

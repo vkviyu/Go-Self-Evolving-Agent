@@ -18,6 +18,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
+	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
@@ -30,17 +31,25 @@ const (
 
 // Model is the complete terminal UI state for one conversation.
 type Model struct {
-	ctx               context.Context
-	conversation      Conversation
-	modelName         string
-	provider          string
-	workspace         string
-	effort            string
-	sessionID         string
-	sessionTitle      string
-	showSessionInfo   bool
-	completedTurns    int
-	initialResumeTurn string
+	ctx                  context.Context
+	conversation         Conversation
+	modelName            string
+	provider             string
+	workspace            string
+	effort               string
+	sessionID            string
+	sessionTitle         string
+	showSessionInfo      bool
+	completedTurns       int
+	initialResumeTurn    string
+	startup              <-chan StartupState
+	startupPhase         StartupPhase
+	startupPhaseAt       time.Time
+	startupStorage       map[uint64]storageProgressMsg
+	startupErr           error
+	startupOperation     func(context.Context, chan<- tea.Msg) tea.Cmd
+	startupStage         string
+	startupTitleExplicit bool
 
 	viewport viewport.Model
 	input    textarea.Model
@@ -56,6 +65,8 @@ type Model struct {
 	busy                 bool
 	cancelling           bool
 	stage                string
+	stageStartedAt       time.Time
+	storageProgress      map[uint64]storageProgressMsg
 	showReasoning        bool
 	activeAssistant      int
 	lastAssistantMessage int
@@ -72,13 +83,16 @@ type Model struct {
 	activitySequence int
 	agentControl     AgentControl
 	transcripts      TranscriptReader
+	memoryBrowser    experience.MemoryBrowser
 	// panelFocused routes keys to the /agents panel instead of the input.
 	panelFocused  bool
 	panelSelected int
 	// panelConfirm holds the destructive action that waits for a second key.
 	panelConfirm string
 	// viewer replaces the root transcript with a child Agent's transcript.
-	viewer *transcriptViewer
+	viewer           *transcriptViewer
+	viewerGeneration uint64
+	rootReading      transcriptReadingState
 	// background is nil when the root Agent must not wake by itself.
 	background BackgroundConversation
 	// backgroundRunning marks the current operation as a wake turn.
@@ -92,29 +106,34 @@ type Model struct {
 	approvalPending  *approval.Request
 	// approvalQueue holds requests that arrived while another was shown;
 	// parallel child Agents can ask at the same time.
-	approvalQueue      []approval.Request
-	approvalBlock      int
-	approvalChoice     int
-	turnContext        context.Context
-	turnCancel         context.CancelFunc
-	turnEvents         chan tea.Msg
-	lastUsage          tokenusage.Snapshot
-	contextUsage       agentruntime.ContextUsage
-	transcriptContent  string
-	transcriptLayout   []transcriptSpan
-	queryAnchors       []queryAnchor
-	selection          transcriptSelection
-	inputSelection     inputTextSelection
-	clipboardNotice    string
-	inputScrollOffset  int
-	inputLayoutValue   string
-	inputLayoutWidth   int
-	inputLayout        []inputDisplayLine
-	inputLayoutReady   bool
-	inputHistory       []string
-	historyIndex       int
-	historyDraft       string
-	commandSuggestions []string
+	approvalQueue         []approval.Request
+	approvalBlock         int
+	approvalChoice        int
+	turnContext           context.Context
+	turnCancel            context.CancelFunc
+	turnEvents            chan tea.Msg
+	lastUsage             tokenusage.Snapshot
+	contextUsage          agentruntime.ContextUsage
+	transcriptContent     string
+	transcriptLayout      []transcriptSpan
+	queryAnchors          []queryAnchor
+	selection             transcriptSelection
+	inputSelection        inputTextSelection
+	clipboardNotice       string
+	inputScrollOffset     int
+	inputLayoutValue      string
+	inputLayoutWidth      int
+	inputLayout           []inputDisplayLine
+	inputLayoutReady      bool
+	inputHistory          []string
+	historyIndex          int
+	historyDraft          string
+	commandSuggestions    []string
+	memorySuggestions     []string
+	memorySuggestionItems []experience.MemoryResult
+	memorySuggestionIndex int
+	memoryQuery           string
+	memorySequence        int
 }
 
 // NewModel constructs testable UI state without taking terminal control.
@@ -126,7 +145,7 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 		ctx = context.Background()
 	}
 	input := textarea.New()
-	input.Placeholder = "Ask GSEA"
+	input.Placeholder = rootInputPlaceholder
 	input.Prompt = "› "
 	input.ShowLineNumbers = false
 	input.CharLimit = 1 << 20
@@ -143,8 +162,13 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 	input.BlurredStyle = input.FocusedStyle
 
 	spinnerModel := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(styles.status))
-	history := config.Conversation.History()
-	inputHistory := make([]string, 0, config.Conversation.CompletedTurns())
+	var history []*schema.Message
+	completedTurns := 0
+	if config.Startup == nil {
+		history = config.Conversation.History()
+		completedTurns = config.Conversation.CompletedTurns()
+	}
+	inputHistory := make([]string, 0, completedTurns)
 	lastUsage := tokenusage.Snapshot{}
 	for _, message := range history {
 		if message == nil {
@@ -166,8 +190,10 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 		effort:               strings.TrimSpace(config.ReasoningEffort),
 		sessionID:            string(config.Conversation.ID()),
 		sessionTitle:         singleLinePreview(config.SessionTitle, 80),
-		completedTurns:       config.Conversation.CompletedTurns(),
+		completedTurns:       completedTurns,
 		initialResumeTurn:    config.ResumeTurnID,
+		startup:              config.Startup,
+		startupTitleExplicit: strings.TrimSpace(config.SessionTitle) != "",
 		viewport:             viewport.New(0, 0),
 		input:                input,
 		spinner:              spinnerModel,
@@ -184,12 +210,18 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 		activityProvider:     config.Activity,
 		agentControl:         config.Agents,
 		transcripts:          config.Transcripts,
+		memoryBrowser:        config.Memory,
 		backgroundBlock:      -1,
 		approvalBlock:        -1,
 		lastUsage:            lastUsage,
 		inputHistory:         inputHistory,
 		historyIndex:         len(inputHistory),
 		stage:                "Ready",
+	}
+	if model.startup != nil {
+		model.stage = "Starting runtime"
+		model.stageStartedAt = time.Now()
+		model.completedTurns = 0
 	}
 	if model.sessionTitle == "" && len(inputHistory) > 0 {
 		model.sessionTitle = singleLinePreview(inputHistory[0], 80)
@@ -204,6 +236,17 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 }
 
 func (model *Model) Init() tea.Cmd {
+	if model.startup != nil {
+		var resume tea.Cmd
+		if model.initialResumeTurn != "" {
+			resume = model.startResume(model.initialResumeTurn)
+		}
+		return tea.Batch(
+			model.input.Focus(), model.windowTitleCommand(), resume,
+			waitForApproval(model.ctx, model.approvalBroker),
+			waitForStartup(model.ctx, model.startup), model.spinner.Tick,
+		)
+	}
 	var recovery tea.Cmd
 	if model.initialResumeTurn != "" {
 		recovery = model.startResume(model.initialResumeTurn)
@@ -218,8 +261,26 @@ func (model *Model) Init() tea.Cmd {
 }
 
 func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	previousStage := model.stage
+	defer func() {
+		if model.stage != previousStage {
+			model.stageStartedAt = time.Now()
+			if event, ok := message.(runtimeEventMsg); ok && !event.at.IsZero() {
+				model.stageStartedAt = event.at
+			}
+		}
+	}()
 	var commands []tea.Cmd
 	switch message := message.(type) {
+	case StartupMsg:
+		return model, model.applyStartup(message)
+	case memorySearchMsg:
+		if message.suggestions {
+			model.applyMemorySuggestions(message)
+		} else {
+			model.applyMemorySearch(message)
+		}
+		return model, nil
 	case recoveriesMsg:
 		model.showRecoveries(message)
 		return model, nil
@@ -233,6 +294,9 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		if model.ready {
 			if command, handled := model.handleHeaderMouse(message); handled {
+				return model, command
+			}
+			if command, handled := model.handleActivityMouse(message); handled {
 				return model, command
 			}
 			if command, handled := model.handleInputMouse(message); handled {
@@ -250,11 +314,16 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return model, command
 		}
-	case runtimeEventMsg:
-		model.applyRuntimeEvent(message.event)
-		model.refreshTranscript(false)
+	case storageProgressMsg:
+		model.applyStorageProgress(message)
 		return model, waitForTurnEvent(model.ctx, model.turnEvents)
+	case runtimeEventMsg:
+		activity := model.refreshAfterAgentTool(message.event)
+		model.applyRuntimeEvent(message.event)
+		model.refreshRootTranscript(false)
+		return model, tea.Batch(waitForTurnEvent(model.ctx, model.turnEvents), activity)
 	case approvalRequestMsg:
+		model.closeTranscriptViewer()
 		model.applyApprovalRequest(message.request)
 		model.refreshTranscript(true)
 		return model, waitForApproval(model.ctx, model.approvalBroker)
@@ -263,7 +332,7 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case compressDoneMsg:
 		return model.finishCompression(message)
 	case spinner.TickMsg:
-		if model.busy {
+		if model.busy || model.startup != nil {
 			var command tea.Cmd
 			model.spinner, command = model.spinner.Update(message)
 			commands = append(commands, command)
@@ -277,22 +346,18 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.refreshTranscript(false)
 		return model, nil
 	case activityRefreshMsg:
-		model.activity = message.snapshot
-		model.activityLoading = false
-		model.clampPanelSelection()
+		model.applyActivitySnapshot(message.snapshot)
 		model.resizeInput()
-		model.refreshTranscript(false)
-		return model, model.scheduleActivityRefresh()
+		return model, tea.Batch(model.scheduleActivityRefresh(), model.refreshAgentTranscript())
 	case activityTickMsg:
 		if message.sequence != model.activitySequence || model.activityProvider == nil {
 			return model, nil
 		}
-		model.activityLoading = true
-		return model, loadActivityCommand(model.ctx, model.activityProvider, model.teamID)
+		return model, model.startActivityRefresh()
 	case agentActionMsg:
 		return model, model.finishAgentAction(message)
 	case agentTranscriptMsg:
-		model.openTranscriptViewer(message)
+		model.applyAgentTranscript(message)
 		return model, nil
 	case backgroundTickMsg:
 		return model, model.checkBackground()
@@ -310,6 +375,9 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.clearInputSelection()
 		model.historyIndex = len(model.inputHistory)
 		model.updateCommandSuggestions()
+		if command := model.refreshMemorySuggestions(); command != nil {
+			commands = append(commands, command)
+		}
 		model.resizeInput()
 	} else {
 		model.updateInputScroll()

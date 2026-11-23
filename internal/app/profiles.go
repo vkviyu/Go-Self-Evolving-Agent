@@ -1,8 +1,6 @@
 package app
 
 import (
-	"time"
-
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 )
@@ -29,7 +27,6 @@ func newAgentProfiles(resolved config.Config) (*agentprofile.Registry, error) {
 		MaxIterations: maxIterations,
 		MaxChildren:   4,
 		MaxToolCalls:  maxIterations * 8,
-		MaxWallTime:   30 * time.Minute,
 	}
 	if _, err := registry.Activate(
 		agentprofile.Profile{

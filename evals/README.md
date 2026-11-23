@@ -1,6 +1,6 @@
 # GSEA Evaluation Suite
 
-`local-agent eval` evaluates GSEA as a black-box coding Agent. The task and
+`gsea eval` evaluates GSEA as a black-box coding Agent. The task and
 result protocols do not assume a programming language or test framework.
 
 ## Task protocol
@@ -84,7 +84,7 @@ backends are:
 - `sandbox` (default): the host OS Seatbelt/bubblewrap backend, with network
   disabled and writes restricted to the task worktree and temporary directory.
 - `docker`: `docker run --rm --pull never --network none --cap-drop ALL
-  --security-opt no-new-privileges --pids-limit 512`, with the task worktree
+--security-opt no-new-privileges --pids-limit 512`, with the task worktree
   mounted at `/workspace` and the command run by `/bin/sh -lc`. Images must be
   fetched and pinned before the evaluation.
 
@@ -105,7 +105,7 @@ Inspect the local runtime before launching a suite. This command is read-only:
 it does not install packages, pull images or contact a model.
 
 ```bash
-local-agent eval doctor
+gsea eval doctor
 ```
 
 The JSON report distinguishes command availability, a reachable Docker daemon,
@@ -123,9 +123,9 @@ Evaluation mode auto-approves only `workspace_write`, `workspace_edit`,
 `shell_exec` and snapshot `merge_apply`; other approval-gated calls are denied.
 
 ```bash
-local-agent eval validate --tasks tasks.jsonl
+gsea eval validate --tasks tasks.jsonl
 
-local-agent eval run \
+gsea eval run \
   --tasks tasks.jsonl \
   --root /tmp/gsea-eval/run-20260904 \
   --run-id run-20260904 \
@@ -160,7 +160,7 @@ than treating one stochastic run as definitive.
 Aggregate repeated attempts with:
 
 ```bash
-local-agent eval summarize \
+gsea eval summarize \
   --results /tmp/gsea-eval/run-1/results-run-1.jsonl \
   --results /tmp/gsea-eval/run-2/results-run-2.jsonl \
   --results /tmp/gsea-eval/run-3/results-run-3.jsonl
@@ -176,7 +176,7 @@ all attempts, and gives attempt/resolved counts by suite and by language.
 
 There are two adapter shapes, both of which keep the model/tool loop in GSEA:
 
-- repository patch suites use `local-agent eval` and its isolated worktree,
+- repository patch suites use `gsea eval` and its isolated worktree,
   patch, verifier and result protocol;
 - harness-owned environments use a thin Python adapter. Inspect maps samples
   to one-shot GSEA sessions, Terminal-Bench copies the Linux GSEA executable
@@ -202,7 +202,7 @@ The Inspect and AgentDojo adapters (`evals/adapters/gsea_client.py`) use
 `GSEA_MODEL`, `GSEA_BASE_URL`, `GSEA_API_KEY_ENV`, `GSEA_REASONING_EFFORT`,
 `GSEA_REQUEST_TIMEOUT`, `GSEA_PROCESS_TIMEOUT_SECONDS`, `GSEA_MAX_ITERATIONS`,
 `GSEA_ATTEMPTS`, and the normal named API-key environment variable. Each sample
-runs `local-agent chat --prompt-file - --headless-format json --goal-mode=false`
+runs `gsea chat --prompt-file - --headless-format json`
 in a fresh `--data-dir`/`--session` below the data root and expects exactly one
 `gsea.chat.result.v1` stdout record. The Harbor adapter takes the equivalent
 settings as `--agent-kwarg` values instead. No adapter puts the key value in a
@@ -216,10 +216,10 @@ solver launches the real GSEA executable and places its answer in
 headless approver denies write, edit and shell tools.
 
 ```bash
-go build -o /tmp/local-agent ./cmd/local-agent
+go build -o /tmp/gsea ./cmd/gsea
 
 PYTHONPATH="$PWD" \
-GSEA_BINARY=/tmp/local-agent \
+GSEA_BINARY=/tmp/gsea \
 GSEA_BENCH_DATA_ROOT=/tmp/gsea-inspect-data \
 /tmp/gsea-harnesses/bin/inspect eval \
   evals/inspect_local_smoke.py@local_biology \
@@ -235,12 +235,12 @@ Use `eval score` only on outputs produced by the benchmark owner's harness; it
 prints an indented `gsea.eval.scorecard.v1` JSON object:
 
 ```bash
-local-agent eval score \
+gsea eval score \
   --benchmark terminal-bench-2.1 \
   --input "$PWD/.local-agent/evals/harbor-jobs/gsea-tb21-official" \
   --reasoning-effort high
 
-local-agent eval score \
+gsea eval score \
   --benchmark swe-bench-verified \
   --input logs/run_evaluation/gsea-swebench/results.json
 ```
@@ -271,7 +271,7 @@ on the public Terminal-Bench leaderboard. Unknown trial IDs are rejected to
 prevent accidentally applying an audit from another job.
 
 ```bash
-local-agent eval score \
+gsea eval score \
   --benchmark terminal-bench-2.1 \
   --input "$PWD/.local-agent/evals/harbor-jobs/gsea-tb21-batch-01" \
   --input "$PWD/.local-agent/evals/harbor-jobs/gsea-tb21-batch-02" \
@@ -289,14 +289,14 @@ the prediction, then use the official Docker scorer as the authority:
   --output-root /tmp/gsea-swebench \
   --tasks /tmp/gsea-swebench/tasks.jsonl
 
-/tmp/local-agent eval run \
+/tmp/gsea eval run \
   --tasks /tmp/gsea-swebench/tasks.jsonl \
   --root /tmp/gsea-swebench/run \
   --output /tmp/gsea-swebench/run/results.jsonl \
   --run-id swebench-run --model-label gsea/gpt-5.6-sol -- \
   --provider openai --wire-api responses --model gpt-5.6-sol
 
-/tmp/local-agent eval export-swebench \
+/tmp/gsea eval export-swebench \
   --results /tmp/gsea-swebench/run/results.jsonl \
   --output /tmp/gsea-swebench/predictions.jsonl \
   --model gsea/gpt-5.6-sol
@@ -307,7 +307,7 @@ the prediction, then use the official Docker scorer as the authority:
   --predictions_path /tmp/gsea-swebench/predictions.jsonl \
   --run_id gsea-django-11099
 
-/tmp/local-agent eval score \
+/tmp/gsea eval score \
   --benchmark swe-bench-verified \
   --input logs/run_evaluation/gsea-django-11099/results.json
 ```
@@ -336,9 +336,9 @@ session events to an ATIF v1.7 trajectory for audit. It reads the API key by
 environment-variable name and never writes the secret value into job config or
 command arguments.
 
-`GSEAHarborAgent` uploads the binary to `/opt/gsea/local-agent`, runs
+`GSEAHarborAgent` uploads the binary to `/opt/gsea/gsea`, runs
 `chat --evaluation-mode --shell-sandbox container --workspace /app
---data-dir /tmp/gsea-data --goal-mode=false` with `GSEA_LSP_ENABLED=false`,
+--data-dir /tmp/gsea-data` with `GSEA_LSP_ENABLED=false`,
 retries the process only on transient model-stream failures
 (`max_process_attempts`, default 2), then downloads `sessions.db` and reads
 `usage_records` and `session_events` from it. A trial that exits 0 but cannot
@@ -353,7 +353,7 @@ harness environment).
 
 ```bash
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-  go build -o /tmp/local-agent-linux ./cmd/local-agent
+  go build -o /tmp/gsea-linux ./cmd/gsea
 
 export XAPI_API_KEY='...'
 
@@ -365,12 +365,12 @@ PYTHONPATH="$PWD" /tmp/gsea-harnesses/bin/harbor run --yes \
   --n-concurrent 1 \
   --jobs-dir "$PWD/.local-agent/evals/harbor-jobs" \
   --job-name gsea-tb21-official \
-  --agent-kwarg binary_path=/tmp/local-agent-linux \
+  --agent-kwarg binary_path=/tmp/gsea-linux \
   --agent-kwarg base_url=https://2xa.cc.cd/v1 \
   --agent-kwarg reasoning_effort=high \
   --agent-env 'XAPI_API_KEY=${XAPI_API_KEY}'
 
-go run ./cmd/local-agent eval score \
+go run ./cmd/gsea eval score \
   --benchmark terminal-bench-2.1 \
   --input "$PWD/.local-agent/evals/harbor-jobs/gsea-tb21-official" \
   --reasoning-effort high
@@ -412,7 +412,7 @@ below `--artifacts`, with AgentDojo's own logs in `<artifacts>/official`.
 
 ```bash
 PYTHONPATH="$PWD" \
-GSEA_BINARY=/tmp/local-agent \
+GSEA_BINARY=/tmp/gsea \
 GSEA_BENCH_DATA_ROOT=/tmp/gsea-agentdojo-data \
 /tmp/gsea-agentdojo/bin/python evals/run_agentdojo.py \
   --benchmark-version v1.2.2 --suite workspace \
@@ -421,7 +421,7 @@ GSEA_BENCH_DATA_ROOT=/tmp/gsea-agentdojo-data \
   --output /tmp/gsea-agentdojo/utility.json
 
 PYTHONPATH="$PWD" \
-GSEA_BINARY=/tmp/local-agent \
+GSEA_BINARY=/tmp/gsea \
 GSEA_BENCH_DATA_ROOT=/tmp/gsea-agentdojo-data \
 /tmp/gsea-agentdojo/bin/python evals/run_agentdojo.py \
   --benchmark-version v1.2.2 --suite workspace \
@@ -457,7 +457,7 @@ The common task protocol also covers other suites:
 Export SWE-bench predictions:
 
 ```bash
-local-agent eval export-swebench \
+gsea eval export-swebench \
   --results results.jsonl \
   --output predictions.jsonl \
   --model gsea/openai-gpt-5.6-sol

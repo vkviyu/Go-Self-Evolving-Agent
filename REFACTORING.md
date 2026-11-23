@@ -23,7 +23,7 @@ R1–R8 的受控功能边界已交付，本阶段只重构实现，不借机改
 
 - [x] F1：收敛 Composition Root。提取插件构建、验证发布和策略影子测试服务；使用窄依赖接口支持失败注入；按装配、生命周期、Agent 装配、控制面和只读访问拆分 `app.go`。
 - [x] F2：收敛输入适配层。拆开工具描述/参数校验/可信调用者归属与业务服务，拆开维护命令解析和执行；保留现有外部协议。
-- [x] F3：梳理运行时协议。以 Turn、Goal 验收、恢复和上下文管理为边界减少 Factory/Conversation 的交叉职责，保持副作用与恢复状态机不变。
+- [x] F3：梳理运行时协议。以 Turn、Task verification、恢复和上下文管理为边界减少 Factory/Conversation 的交叉职责，保持副作用与恢复状态机不变。
 - [x] F4：梳理持久层。按领域组织 store/迁移/事务辅助逻辑，收敛跨领域查询与校验边界；不重写已发布迁移或合并不相关事务。
 - [x] F5：全局回归与架构约束。固化依赖方向、关闭顺序和契约测试，复核文档与重复抽象，完成最终全量/静态/竞态检查。
 
@@ -53,9 +53,9 @@ F1–F5 已全部交付并通过最终全量、静态与竞态验收。本轮约
 - Factory 的配置、不可变视图、Turn 准入/恢复、Eino 装配与上下文管理分开；保留现有公开方法与唯一 Eino Loop，不增加新的运行时容器。
 - 上下文压力策略提取为无副作用的 `planContext`，大结果外置、摘要请求、transcript 处理、压缩 checkpoint 和管理事件按职责组织，保留阈值与持久格式。
 - Conversation 保留 session 锁与状态所有权；分开输入路由、Inner Turn 执行、恢复、上下文操作与历史视图。统一历史刷新边界，失败不发布部分投影，不越过回合准入顺序。
-- 实时 Goal 验收与已提交 verdict 的恢复共享 `applyGoalVerdict`，继续检查、终态提交和候选释放规则不再各自实现。原始执行 deadline 与终态持久化上下文保持区分。
+- 实时 Task verification 与已提交结果的恢复共享统一执行结果路径，继续检查、终态提交和候选释放规则不再各自实现。原始执行 deadline 与终态持久化上下文保持区分。
 - 新增上下文阈值、历史读失败、round 预留失败、完成后重开、实时/恢复 verdict 对照、过期终态和预算故障测试；所有模型调用使用本地替身。
-- Go 1.27.0（darwin/arm64）、`GOPROXY=off`：`go test ./... -count=1`、`go vet ./...` 通过；agentruntime/conversation/agentgoal/agentmanager/agentflow/app/cli/sqlitestore 的 `go test -race -short ... -count=1` 通过；新增策略与状态边界测试在竞态模式重复 5 次通过。没有付费模型请求、benchmark 下载、事件协议或 SQLite 迁移变更。
+- Go 1.27.0（darwin/arm64）、`GOPROXY=off`：这是旧版本的验证记录；当前清理后的状态必须重新运行 `go test ./...`、`go vet ./...` 和构建检查，不能沿用旧的 Goal/SQLite 结果。
 
 ### F4 交付与验收（2026-10-10）
 

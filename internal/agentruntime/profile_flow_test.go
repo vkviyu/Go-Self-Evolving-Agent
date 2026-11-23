@@ -10,7 +10,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentflow"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
@@ -18,7 +18,7 @@ func TestCatalogFlowInheritsProfileGrantAndSharedToolBudget(t *testing.T) {
 	for _, scenario := range []string{"forbidden-nested-write", "nested-budget"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
-			database, err := sqlitestore.Open(ctx, ":memory:")
+			database, err := testfixture.Open(t, ctx, ":memory:")
 			if err != nil {
 				t.Fatal(err)
 			}

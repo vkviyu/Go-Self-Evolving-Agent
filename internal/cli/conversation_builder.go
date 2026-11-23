@@ -8,7 +8,6 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
@@ -113,11 +112,17 @@ func newChildRunner(factory *agentruntime.Factory) agentmanager.Runner {
 		if err != nil {
 			return agentmanager.RunnerOutcome{}, err
 		}
+		childFactory, err = childFactory.WithExecutionBinding(request.Execution)
+		if err != nil {
+			return agentmanager.RunnerOutcome{}, err
+		}
+		childFactory, err = childFactory.WithExecutionContract(request.Contract)
+		if err != nil {
+			return agentmanager.RunnerOutcome{}, err
+		}
 		if request.Agent.CreatedAt.IsZero() {
 			return agentmanager.RunnerOutcome{}, errors.New("child Agent has no durable creation timestamp")
 		}
-		ctx, cancel := context.WithDeadline(ctx, request.Agent.CreatedAt.Add(profile.Limits.MaxWallTime))
-		defer cancel()
 		childConversation, err := conversation.Open(ctx, childFactory, request.Agent.SessionID)
 		if err != nil {
 			return agentmanager.RunnerOutcome{}, err
@@ -177,27 +182,7 @@ func childActivitySink(report func(string)) agentruntime.EventSink {
 
 func projectChildResult(result agentruntime.Result, summary string) orchestration.AgentResult {
 	projected := orchestration.AgentResult{Status: orchestration.ResultSucceeded, Summary: summary}
-	if result.GoalID == "" {
-		return projected
-	}
-	switch result.GoalState {
-	case agentgoal.StateBlocked:
-		projected.Status = orchestration.ResultBlocked
-		projected.Blockers = []string{result.GoalReason}
-	case agentgoal.StateExhausted:
-		projected.Status = orchestration.ResultPartial
-		projected.Risks = []string{"Goal Mode stopped at hard limit: " + string(result.GoalStopReason)}
-	case agentgoal.StateFailed:
-		projected.Status = orchestration.ResultFailed
-		projected.Error = result.GoalReason
-	case agentgoal.StateCanceled:
-		projected.Status = orchestration.ResultCanceled
-		projected.Error = result.GoalReason
-	}
-	projected.Payload, _ = json.Marshal(map[string]any{
-		"goal_id": result.GoalID, "goal_state": result.GoalState, "goal_decision": result.GoalDecision,
-		"goal_stop_reason": result.GoalStopReason, "goal_rounds": result.GoalRounds, "goal_reason": result.GoalReason,
-	})
+	projected.Payload, _ = json.Marshal(map[string]any{"turn_id": result.TurnID})
 	return projected
 }
 

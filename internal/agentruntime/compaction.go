@@ -14,6 +14,10 @@ import (
 // compactWithResult commits the summary and retained-history boundary before
 // returning prepared messages. Pending user input is never part of that checkpoint.
 func (f *Factory) compactWithResult(ctx context.Context, sessionID session.ID, messages []*schema.Message, retainTokens int, level contextPolicyLevel, hints ContextHints, pending int) ([]*schema.Message, bool, bool, error) {
+	return f.compactWithResultWithSink(ctx, sessionID, messages, retainTokens, level, hints, pending, nil)
+}
+
+func (f *Factory) compactWithResultWithSink(ctx context.Context, sessionID session.ID, messages []*schema.Message, retainTokens int, level contextPolicyLevel, hints ContextHints, pending int, sink EventSink) ([]*schema.Message, bool, bool, error) {
 	usedTokens := f.tokenizer.CountMessages(messages)
 	if usedTokens > f.config.ContextWindowTokens {
 		lastMessageTokens := f.tokenizer.CountMessages(messages[len(messages)-1:])
@@ -29,7 +33,7 @@ func (f *Factory) compactWithResult(ctx context.Context, sessionID session.ID, m
 	if len(prefix) == 0 {
 		return messages, false, false, nil
 	}
-	summary, err := f.summarize(ctx, sessionID, prefix, hints)
+	summary, err := f.summarizeWithSink(ctx, sessionID, prefix, hints, sink)
 	fallback := false
 	if err != nil {
 		if level != contextLevelCritical || !canFallbackSummary(ctx, err) {
@@ -43,7 +47,7 @@ func (f *Factory) compactWithResult(ctx context.Context, sessionID session.ID, m
 	}
 	source := summaryFormatSource(summary)
 	fallback = fallback || source == summarySourceExtractive
-	summary = anchorGoal(summary, hints)
+	summary = anchorContract(summary, hints)
 	result := make([]*schema.Message, 0, keep+1)
 	result = append(result, schema.SystemMessage("Conversation summary:\n"+summary))
 	result = append(result, messages[len(messages)-keep:]...)
@@ -67,8 +71,8 @@ func (f *Factory) compactWithResult(ctx context.Context, sessionID session.ID, m
 			"policy_level":               level,
 			"fallback":                   fallback,
 			"summary_source":             source,
-			"goal_id":                    hints.GoalID,
-			"goal_round":                 hints.GoalRound,
+			"contract_id":                hints.ContractID,
+			"attempt":                    hints.Attempt,
 			"context_checkpoint_version": 1,
 			"retained_messages":          durableContextMessages(messages[len(messages)-keep : len(messages)-pending]),
 		}),

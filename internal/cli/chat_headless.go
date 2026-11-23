@@ -166,9 +166,6 @@ func renderHeadlessOperation(ctx context.Context, stdout io.Writer, format strin
 			return err
 		}
 		result := headlessJSONResult{Schema: "gsea.chat.result.v1"}
-		if turnResult.GoalID != "" {
-			result.Goal = &headlessJSONGoal{ID: turnResult.GoalID, State: string(turnResult.GoalState), Decision: string(turnResult.GoalDecision), StopReason: string(turnResult.GoalStopReason), Reason: turnResult.GoalReason, Rounds: turnResult.GoalRounds}
-		}
 		if turnResult.Final != nil {
 			result.Content = turnResult.Final.Content
 			usage := tokenusage.FromMessage(turnResult.Final)
@@ -197,16 +194,6 @@ type headlessJSONResult struct {
 	Schema  string            `json:"schema"`
 	Content string            `json:"content"`
 	Usage   headlessJSONUsage `json:"usage"`
-	Goal    *headlessJSONGoal `json:"goal,omitempty"`
-}
-
-type headlessJSONGoal struct {
-	ID         string `json:"id"`
-	State      string `json:"state"`
-	Decision   string `json:"decision,omitempty"`
-	StopReason string `json:"stop_reason"`
-	Reason     string `json:"reason"`
-	Rounds     int    `json:"rounds"`
 }
 
 type headlessJSONUsage struct {

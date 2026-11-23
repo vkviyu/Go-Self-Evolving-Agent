@@ -850,6 +850,91 @@ func TestModelConsumesReasoningToolAndAssistantEvents(t *testing.T) {
 	}
 }
 
+func TestModelShowsProviderRequestStages(t *testing.T) {
+	model := newTestModel(t)
+	model.busy = true
+	model.stage = "Preparing request"
+
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventModelPreparationStarted})
+	if model.stage != "Preparing context" {
+		t.Fatalf("preparation stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventExperiencePreparationStarted})
+	if model.stage != "Preparing memory" {
+		t.Fatalf("memory stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventContextCompactionStarted})
+	if model.stage != "Compacting context" {
+		t.Fatalf("compaction stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventModelBudgetReservationStarted})
+	if model.stage != "Reserving model budget" {
+		t.Fatalf("budget stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventModelRequestPersistenceStarted})
+	if model.stage != "Persisting request" {
+		t.Fatalf("persistence stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventModelRequestStarted})
+	if model.stage != "Requesting model" {
+		t.Fatalf("request stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{
+		Type:    agentruntime.EventModelRequestStarted,
+		Purpose: "experience",
+	})
+	if model.stage != "Preparing memory · requesting model" {
+		t.Fatalf("auxiliary request stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventModelResponseStarted})
+	if model.stage != "Receiving response" {
+		t.Fatalf("response stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventAssistantTextDelta, Delta: "answer"})
+	if model.stage != "Responding" {
+		t.Fatalf("text stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventTurnFinalizing})
+	if model.stage != "Finalizing" {
+		t.Fatalf("finalizing stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{
+		Type: agentruntime.EventAssistantMessage,
+		Message: schema.AssistantMessage("", []schema.ToolCall{{
+			ID:       "call-1",
+			Function: schema.FunctionCall{Name: "workspace_read"},
+		}}),
+	})
+	if model.stage != "Running workspace_read" {
+		t.Fatalf("tool stage = %q", model.stage)
+	}
+	model.applyRuntimeEvent(agentruntime.Event{
+		Type:    agentruntime.EventToolResult,
+		Message: &schema.Message{Role: schema.Tool, ToolCallID: "call-1", ToolName: "workspace_read"},
+	})
+	if model.stage != "Processing tool result" {
+		t.Fatalf("tool result stage = %q", model.stage)
+	}
+	for _, test := range []struct {
+		event agentruntime.Event
+		want  string
+	}{
+		{event: agentruntime.Event{Type: agentruntime.EventToolProposed, ToolName: "workspace_write"}, want: "Preparing tool call · workspace_write"},
+		{event: agentruntime.Event{Type: agentruntime.EventToolPolicyChecking, ToolName: "workspace_write"}, want: "Checking tool policy · workspace_write"},
+		{event: agentruntime.Event{Type: agentruntime.EventToolApprovalWaiting, ToolName: "workspace_write"}, want: "Waiting for approval · workspace_write"},
+		{event: agentruntime.Event{Type: agentruntime.EventToolApprovalResolved, ToolName: "workspace_write", Approved: true}, want: "Approval granted · workspace_write"},
+		{event: agentruntime.Event{Type: agentruntime.EventToolExecutionStarted, ToolName: "workspace_write"}, want: "Running workspace_write"},
+		{event: agentruntime.Event{Type: agentruntime.EventToolExecutionSucceeded, ToolName: "workspace_write"}, want: "Tool completed · workspace_write"},
+		{event: agentruntime.Event{Type: agentruntime.EventToolExecutionFailed, ToolName: "workspace_write"}, want: "Tool failed · workspace_write"},
+		{event: agentruntime.Event{Type: agentruntime.EventToolOutcomeUnknown, ToolName: "workspace_write"}, want: "Tool outcome unknown; inspect state · workspace_write"},
+	} {
+		model.applyRuntimeEvent(test.event)
+		if model.stage != test.want {
+			t.Fatalf("event %q stage = %q, want %q", test.event.Type, model.stage, test.want)
+		}
+	}
+}
+
 func TestModelCancelsAnActiveTurn(t *testing.T) {
 	model := newTestModel(t)
 	turnContext, cancel := context.WithCancel(context.Background())

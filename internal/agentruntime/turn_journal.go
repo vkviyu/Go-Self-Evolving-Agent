@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/vkviyu/go-self-evolving-agent/internal/experienceport"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
@@ -24,16 +26,20 @@ type turnJournal struct {
 }
 
 type modelReceipt struct {
-	Version   int               `json:"version"`
-	RawDigest string            `json:"raw_digest"`
-	Covered   int               `json:"covered"`
-	Digest    [32]byte          `json:"digest"`
-	Input     []*schema.Message `json:"input"`
-	Response  *schema.Message   `json:"response"`
+	Version             int                     `json:"version"`
+	RawDigest           string                  `json:"raw_digest"`
+	Covered             int                     `json:"covered"`
+	Digest              [32]byte                `json:"digest"`
+	Input               []*schema.Message       `json:"input"`
+	Response            *schema.Message         `json:"response"`
+	FileReferencePrompt *fileReferencePrompt    `json:"file_reference_prompt,omitempty"`
+	Experience          *experienceport.Context `json:"experience,omitempty"`
+	ExperienceIndex     *int                    `json:"experience_index,omitempty"`
 }
 
 type journalReplay struct {
 	turnJournal
+	InputKind    string
 	Responses    []modelReceipt
 	Next         int
 	Completed    bool
@@ -50,7 +56,8 @@ func (f *Factory) loadTurnJournal(ctx context.Context, id session.ID, turnID str
 		switch event.Type {
 		case session.EventTurnStarted:
 			var payload struct {
-				Journal *turnJournal `json:"journal"`
+				Journal   *turnJournal `json:"journal"`
+				InputKind string       `json:"input"`
 			}
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return err
@@ -61,7 +68,7 @@ func (f *Factory) loadTurnJournal(ctx context.Context, id session.ID, turnID str
 			if payload.Journal.Version != 1 || len(payload.Journal.Input) == 0 {
 				return errors.New("unsupported or empty turn journal")
 			}
-			replay = &journalReplay{turnJournal: *payload.Journal}
+			replay = &journalReplay{turnJournal: *payload.Journal, InputKind: payload.InputKind}
 		case session.EventTurnPrepared:
 			if replay == nil {
 				return nil
@@ -73,31 +80,27 @@ func (f *Factory) loadTurnJournal(ctx context.Context, id session.ID, turnID str
 			if !prepared.Prepared {
 				return errors.New("invalid prepared turn journal")
 			}
-			switch prepared.Version {
-			case 1:
-				// Legacy prepared input was already processed by Eino. Never
-				// pass it back to Runner.Run, which adds its Instruction again.
-				if len(prepared.Input) == 0 {
-					return errors.New("invalid legacy prepared turn journal")
-				}
-			case 2:
-				if err := validateModelReceipt(prepared.Receipt); err != nil {
-					return err
-				}
-				replay.Pending = prepared.Receipt
-				replay.PendingAfter = len(replay.Responses)
-			default:
+			if prepared.Version != 2 {
 				return errors.New("unsupported prepared turn journal")
 			}
+			if err := validateModelReceipt(prepared.Receipt); err != nil {
+				return err
+			}
+			replay.Pending = prepared.Receipt
+			replay.PendingAfter = len(replay.Responses)
 		case session.EventAssistantMessage:
 			if replay == nil {
 				return nil
 			}
 			var payload struct {
 				Receipt *modelReceipt `json:"receipt"`
+				Purpose string        `json:"purpose"`
 			}
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return err
+			}
+			if payload.Purpose != "" {
+				return nil
 			}
 			if payload.Receipt == nil || payload.Receipt.Response == nil || payload.Receipt.RawDigest == "" {
 				return errors.New("turn contains a model response without a recovery receipt")
@@ -129,7 +132,7 @@ func (f *Factory) loadPreparedRequest(ctx context.Context, id session.ID, turnID
 			return err
 		}
 		if prepared.Version != 2 {
-			return nil // Legacy checkpoints did not persist this host view.
+			return errors.New("unsupported prepared turn journal")
 		}
 		if err := validateModelReceipt(prepared.Receipt); err != nil {
 			return err
@@ -204,6 +207,12 @@ func validateModelReceipt(receipt *modelReceipt) error {
 	if receipt == nil || receipt.Version != 2 || receipt.RawDigest == "" || receipt.Covered <= 0 || len(receipt.Input) == 0 {
 		return errors.New("turn contains an incomplete or unsupported model recovery receipt")
 	}
+	if receipt.FileReferencePrompt != nil && !receipt.FileReferencePrompt.valid(receipt.Input) {
+		return errors.New("turn contains an invalid file reference prompt")
+	}
+	if err := validateExperienceReceipt(receipt); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -236,13 +245,34 @@ func (m *recordingModel) replayResponse(input []*schema.Message, options []model
 // raw history. Confirmed decisions must not claim new mailbox input, run a
 // summarizer again, or spend another model reservation during reconstruction.
 func (m *recordingModel) restoreModelReceipt(receipt modelReceipt, options []model.Option) error {
+	if err := validateExperienceReceipt(&receipt); err != nil {
+		return err
+	}
 	stable, err := cloneJournalInput(receipt.Input)
+	if err != nil {
+		return err
+	}
+	view := stable
+	if marker := receipt.FileReferencePrompt; marker != nil {
+		if !marker.valid(stable) {
+			return errors.New("turn contains an invalid file reference prompt")
+		}
+		view = slices.Clone(stable)
+		message := *view[marker.Index]
+		message.Content = message.Content[:marker.OriginalBytes]
+		view[marker.Index] = &message
+	}
+	if receipt.ExperienceIndex != nil {
+		index := *receipt.ExperienceIndex
+		view = append(slices.Clone(view[:index]), view[index+1:]...)
+	}
+	m.experienceContext, err = cloneExperienceContext(receipt.Experience)
 	if err != nil {
 		return err
 	}
 	m.contextState.mu.Lock()
 	m.contextState.covered, m.contextState.digest = receipt.Covered, receipt.Digest
-	m.contextState.prepared = stable
+	m.contextState.prepared = view
 	m.contextState.mu.Unlock()
 	m.receipt = receipt
 	return m.captureRequest(stable, options)

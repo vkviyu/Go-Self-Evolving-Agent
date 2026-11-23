@@ -12,16 +12,16 @@ import (
 // NewTurn captures one immutable runtime snapshot and constructs Eino's Agent
 // and Runner around it.
 func (f *Factory) NewTurn(ctx context.Context, sessionID session.ID) (*Turn, error) {
-	return f.NewTurnWithAdmission(ctx, sessionID, "")
-}
-
-func (f *Factory) NewTurnWithAdmission(ctx context.Context, sessionID session.ID, admissionToken string) (*Turn, error) {
+	sink := EventSinkFromContext(ctx)
+	if !f.strategyPinned && f.config.Strategies != nil {
+		_ = emitEvent(ctx, sink, Event{Type: EventTurnStrategySelectionStarted})
+	}
 	selected, err := f.withActiveStrategy(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if selected != f {
-		return selected.NewTurnWithAdmission(ctx, sessionID, admissionToken)
+		return selected.NewTurn(ctx, sessionID)
 	}
 	if f.profile != nil && sessionID != f.profileSession {
 		return nil, &ProfileConstraintError{Reason: "session differs from bound Agent"}
@@ -31,6 +31,9 @@ func (f *Factory) NewTurnWithAdmission(ctx context.Context, sessionID session.ID
 	}
 	// Earlier turns have finished; settle the messages they held so the new
 	// turn can claim those that were never committed.
+	if f.mailbox != nil {
+		_ = emitEvent(ctx, sink, Event{Type: EventTurnBackgroundReconciliationStarted})
+	}
 	if err := f.settleBackground(ctx, sessionID, true); err != nil {
 		return nil, err
 	}
@@ -43,14 +46,17 @@ func (f *Factory) NewTurnWithAdmission(ctx context.Context, sessionID session.ID
 	if err != nil {
 		return nil, err
 	}
+	_ = emitEvent(ctx, sink, Event{Type: EventTurnSnapshotRetentionStarted, TurnID: turnID})
 	if err := f.registry.RetainSnapshot(ctx, snapshot, tool.SnapshotReference{Kind: "turn", Scope: string(sessionID), ID: turnID}); err != nil {
 		return nil, fmt.Errorf("retain turn runtime: %w", err)
 	}
+	_ = emitEvent(ctx, sink, Event{Type: EventTurnSessionSequenceReadStarted, TurnID: turnID})
 	current, err := f.events.CurrentSequence(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("read session before turn: %w", err)
 	}
 	if current == 0 {
+		_ = emitEvent(ctx, sink, Event{Type: EventTurnSessionCreationStarted, TurnID: turnID})
 		if _, err := f.events.Append(ctx, sessionID, 0, session.PendingEvent{
 			Type:              session.EventSessionCreated,
 			CorrelationID:     turnID,
@@ -62,7 +68,8 @@ func (f *Factory) NewTurnWithAdmission(ctx context.Context, sessionID session.ID
 			return nil, fmt.Errorf("create Agent session: %w", err)
 		}
 	}
-	return f.buildTurnWithAdmission(ctx, sessionID, turnID, runtimeSnapshotID, snapshot, 0, admissionToken)
+	_ = emitEvent(ctx, sink, Event{Type: EventTurnAgentConstructionStarted, TurnID: turnID})
+	return f.buildTurn(ctx, sessionID, turnID, runtimeSnapshotID, snapshot, 0)
 }
 
 // ResumeTurn reconstructs the exact turn-scoped agent and resumes its Eino
@@ -148,17 +155,7 @@ func (f *Factory) ResumeTurn(ctx context.Context, sessionID session.ID, turnID s
 	if err != nil {
 		return nil, err
 	}
-	goalMode, err := f.goalModeForTurn(ctx, sessionID, turnID)
-	if err != nil {
-		return nil, err
-	}
-	resumed := *f
-	resumed.goalMode.Enabled = goalMode
-	resumed.goalMode.Activation, err = f.activationForTurn(ctx, sessionID, turnID)
-	if err != nil {
-		return nil, err
-	}
-	turn, err := resumed.buildTurnWithAdmission(ctx, sessionID, turnID, runtimeSnapshotID, snapshot, requestSequence, "")
+	turn, err := f.buildTurn(ctx, sessionID, turnID, runtimeSnapshotID, snapshot, requestSequence)
 	if err != nil {
 		return nil, err
 	}

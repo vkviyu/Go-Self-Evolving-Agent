@@ -46,15 +46,19 @@ func extractiveCompactionSummary(messages []*schema.Message) (string, error) {
 }
 
 func (f *Factory) summarize(ctx context.Context, sessionID session.ID, messages []*schema.Message, hints ContextHints) (string, error) {
+	return f.summarizeWithSink(ctx, sessionID, messages, hints, nil)
+}
+
+func (f *Factory) summarizeWithSink(ctx context.Context, sessionID session.ID, messages []*schema.Message, hints ContextHints, liveSink EventSink) (string, error) {
 	transcript, err := compactionTranscript(messages)
 	if err != nil {
 		return "", err
 	}
 	instruction := compactionInstruction
-	if strings.TrimSpace(hints.GoalText) != "" {
-		// Goal/contract text is pinned by anchorGoal outside model output. Do not
+	if strings.TrimSpace(hints.ContractText) != "" {
+		// Contract text is pinned by anchorContract outside model output. Do not
 		// spend a second copy of that potentially large contract in this request.
-		instruction += "\nAn active Goal/contract is pinned separately by the host; do not replace or invent it."
+		instruction += "\nAn active execution contract is pinned separately by the host; do not replace or invent it."
 	}
 	input := []*schema.Message{
 		schema.SystemMessage(instruction),
@@ -69,7 +73,7 @@ func (f *Factory) summarize(ctx context.Context, sessionID session.ID, messages 
 	if err != nil {
 		return "", err
 	}
-	recorded := &recordingModel{inner: f.model, factory: f, events: f.events, sessionID: sessionID, turnID: "compact-" + operation, runtimeSnapshotID: "context-summary-v2", purpose: "compaction"}
+	recorded := &recordingModel{inner: f.model, factory: f, events: f.events, sessionID: sessionID, turnID: "compact-" + operation, runtimeSnapshotID: "context-summary-v2", purpose: "compaction", liveSink: liveSink}
 	options := []model.Option{model.WithTools(nil), model.WithMaxTokens(outputLimit)}
 	response, err := recorded.Generate(ctx, input, options...)
 	if err != nil {
@@ -148,10 +152,10 @@ func summaryExcerpt(text []rune, keep int) string {
 	return string(text[:keep/2]) + "\n[summary input shortened; full transcript remains in durable history]\n" + string(text[len(text)-(keep-keep/2):])
 }
 
-func anchorGoal(summary string, hints ContextHints) string {
-	goal := strings.TrimSpace(hints.GoalText)
-	if goal == "" {
+func anchorContract(summary string, hints ContextHints) string {
+	contract := strings.TrimSpace(hints.ContractText)
+	if contract == "" {
 		return summary
 	}
-	return fmt.Sprintf("Active Goal (authoritative, id=%s, round=%d):\n%s\n\n%s", hints.GoalID, hints.GoalRound, goal, summary)
+	return fmt.Sprintf("Active execution contract (authoritative, id=%s, attempt=%d):\n%s\n\n%s", hints.ContractID, hints.Attempt, contract, summary)
 }

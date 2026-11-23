@@ -2,17 +2,46 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/cloudwego/eino/schema"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
-	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
+	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
 )
 
 type runtimeEventMsg struct {
 	event agentruntime.Event
+	at    time.Time
+}
+
+type memorySearchMsg struct {
+	query       string
+	items       []experience.MemoryResult
+	err         error
+	suggestions bool
+	sequence    int
+}
+
+// StartupMsg is the public UI message for a startup channel notification.
+type StartupMsg struct {
+	State  StartupState
+	Closed bool
+}
+
+func waitForStartup(ctx context.Context, startup <-chan StartupState) tea.Cmd {
+	if startup == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		select {
+		case state, ok := <-startup:
+			return StartupMsg{State: state, Closed: !ok}
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }
 
 type turnDoneMsg struct {
@@ -49,13 +78,6 @@ type agentActionMsg struct {
 	err    error
 }
 
-// agentTranscriptMsg carries a child Agent's transcript for the viewer.
-type agentTranscriptMsg struct {
-	agentID  orchestration.AgentID
-	messages []*schema.Message
-	err      error
-}
-
 type backgroundTickMsg struct{}
 
 // backgroundPendingMsg reports how many Agent messages a wake would receive.
@@ -78,9 +100,10 @@ func runTurnCommand(
 
 func runOperationCommand(ctx context.Context, run func(context.Context, agentruntime.EventSink) (agentruntime.Result, error), events chan<- tea.Msg, lifetime context.Context) tea.Cmd {
 	return func() tea.Msg {
+		ctx = observeStorage(ctx, lifetime, events)
 		result, err := run(ctx, func(eventContext context.Context, event agentruntime.Event) error {
 			select {
-			case events <- runtimeEventMsg{event: event}:
+			case events <- runtimeEventMsg{event: event, at: time.Now()}:
 				return nil
 			case <-eventContext.Done():
 				return eventContext.Err()
@@ -125,9 +148,30 @@ func waitForApproval(ctx context.Context, broker *approval.Broker) tea.Cmd {
 	}
 }
 
-func runCompressCommand(ctx context.Context, conversation ContextConversation) tea.Cmd {
+func runCompressCommand(ctx context.Context, conversation ContextConversation, events chan<- tea.Msg, lifetime context.Context) tea.Cmd {
 	return func() tea.Msg {
-		changed, usage, err := conversation.Compress(ctx)
-		return compressDoneMsg{changed: changed, usage: usage, err: err}
+		ctx = observeStorage(ctx, lifetime, events)
+		sink := func(eventContext context.Context, event agentruntime.Event) error {
+			select {
+			case events <- runtimeEventMsg{event: event, at: time.Now()}:
+				return nil
+			case <-eventContext.Done():
+				return eventContext.Err()
+			}
+		}
+		var changed bool
+		var usage agentruntime.ContextUsage
+		var err error
+		if eventConversation, ok := conversation.(ContextEventConversation); ok {
+			changed, usage, err = eventConversation.CompressWithSink(ctx, sink)
+		} else {
+			changed, usage, err = conversation.Compress(ctx)
+		}
+		completion := compressDoneMsg{changed: changed, usage: usage, err: err}
+		select {
+		case events <- completion:
+		case <-lifetime.Done():
+		}
+		return nil
 	}
 }

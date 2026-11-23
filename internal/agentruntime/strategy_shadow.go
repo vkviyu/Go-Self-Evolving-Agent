@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
@@ -61,9 +60,6 @@ func (f *Factory) shadowFixture(ctx context.Context, fixture strategy.Fixture) s
 			return err
 		}
 		cfg := f.config
-		cfg.GoalMode = agentgoal.Config{}
-		cfg.GoalStore = nil
-		cfg.GoalEvaluator = nil
 		cfg.ContextArtifacts = nil
 		cfg.Strategies = nil
 		factory, err := NewFactory(cfg, f.model, registry, pipeline, events, events)

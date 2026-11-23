@@ -11,13 +11,14 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentflow"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
 func TestFlowSnapshotRecoveryReopensExactViewAndReplaysPriorWrite(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "flow.db")
+	openAuthority := flowAuthorityOpener(t)
 	var oldCalls, newCalls, attempts atomic.Int32
 	oldBinding := testFlowBinding("write_once", tool.RiskWrite, func(context.Context, json.RawMessage) (json.RawMessage, error) {
 		oldCalls.Add(1)
@@ -29,13 +30,14 @@ func TestFlowSnapshotRecoveryReopensExactViewAndReplaysPriorWrite(t *testing.T) 
 		newCalls.Add(1)
 		return json.RawMessage(`{"revision":"new"}`), nil
 	})
-	open := func(binding tool.Binding) (*sqlitestore.Database, *tool.Registry, *agentflow.Runtime, orchestration.RootThread) {
-		database, err := sqlitestore.Open(ctx, path)
+	open := func(binding tool.Binding) (*runtimestore.Database, *tool.Registry, *agentflow.Runtime, orchestration.RootThread) {
+		database, err := runtimestore.OpenRuntime(ctx, path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = database.Close() })
-		root, _, err := database.Orchestration().EnsureRootThread(ctx, orchestration.RootThreadSeed{SessionID: "flow-snapshot-session"})
+		repositories, events := openAuthority(database)
+		root, _, err := repositories.EnsureRootThread(ctx, orchestration.RootThreadSeed{SessionID: "flow-snapshot-session"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,18 +45,19 @@ func TestFlowSnapshotRecoveryReopensExactViewAndReplaysPriorWrite(t *testing.T) 
 		if _, err := registry.Activate(binding); err != nil {
 			t.Fatal(err)
 		}
-		if err := registry.ConfigurePersistence(database.RuntimeSnapshots(), func(context.Context, tool.SnapshotEntry) (tool.Binding, error) { return oldBinding, nil }); err != nil {
+		snapshots := database.RuntimeSnapshots().WithReferenceGuard(repositories.CheckSnapshotReference)
+		if err := registry.ConfigurePersistence(snapshots, func(context.Context, tool.SnapshotEntry) (tool.Binding, error) { return oldBinding, nil }); err != nil {
 			t.Fatal(err)
 		}
 		engine, err := policy.DefaultDeny(policy.Rule{ID: "allow-fixture", ToolPattern: "write_once", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow})
 		if err != nil {
 			t.Fatal(err)
 		}
-		pipeline, err := tool.NewPipeline(tool.PipelineConfig{Registry: registry, Policy: engine, Events: database.SessionEvents()})
+		pipeline, err := tool.NewPipeline(tool.PipelineConfig{Registry: registry, Policy: engine, Events: events})
 		if err != nil {
 			t.Fatal(err)
 		}
-		runtime, err := agentflow.NewRuntime(agentflow.RuntimeConfig{Pipeline: pipeline, Registry: registry, Store: database.Orchestration()})
+		runtime, err := agentflow.NewRuntime(agentflow.RuntimeConfig{Pipeline: pipeline, Registry: registry, Store: repositories})
 		if err != nil {
 			t.Fatal(err)
 		}

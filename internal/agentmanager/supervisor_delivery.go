@@ -57,8 +57,13 @@ func (supervisor *Supervisor) deliverSnapshot(ctx context.Context, agent orchest
 			return false, err
 		}
 	}
+	executionID, contractHash, attempt, err := executionDeliveryBinding(agent, task)
+	if err != nil {
+		return false, err
+	}
 	result.Delivery = &orchestration.WorkspaceDelivery{
-		ViewID: view.ID, CandidateDigest: candidate.Digest, MergeID: merge.ID, ChangedPaths: len(candidate.Entries),
+		ViewID: view.ID, TaskID: task.ID, ExecutionID: executionID, ContractHash: contractHash, Attempt: attempt,
+		CandidateDigest: candidate.Digest, MergeID: merge.ID, ChangedPaths: len(candidate.Entries),
 	}
 	return true, nil
 }
@@ -116,8 +121,13 @@ func (supervisor *Supervisor) enqueueCandidate(ctx context.Context, agent orches
 	if err != nil {
 		return workspacecoord.MergeRequest{}, err
 	}
+	executionID, contractHash, attempt, err := executionDeliveryBinding(agent, task)
+	if err != nil {
+		return workspacecoord.MergeRequest{}, err
+	}
 	merge, err := supervisor.workspace.Repository.EnqueueMerge(ctx, workspacecoord.MergeSpec{
 		TeamID: agent.TeamID, AgentID: agent.ID, TaskID: task.ID, ViewID: view.ID,
+		ExecutionID: executionID, ContractHash: contractHash, Attempt: attempt,
 		BaseRevision: view.BaseRevision, PatchArtifact: reference, Kind: workspacecoord.MergeSnapshot,
 		CandidateDigest: candidate.Digest, Supersedes: supersedes, CorrelationID: string(agent.CurrentRunID),
 		IdempotencyKey: "merge:" + string(view.ID) + ":" + string(agent.CurrentRunID) + ":" + candidate.Digest,
@@ -126,6 +136,16 @@ func (supervisor *Supervisor) enqueueCandidate(ctx context.Context, agent orches
 		return workspacecoord.MergeRequest{}, fmt.Errorf("queue candidate of view %s: %w", view.ID, err)
 	}
 	return merge, nil
+}
+
+func executionDeliveryBinding(agent orchestration.AgentSnapshot, task orchestration.TaskSnapshot) (string, string, int, error) {
+	if task.ID == "" || task.Contract.IsZero() {
+		return "", "", 0, nil
+	}
+	if agent.CurrentRunID == "" || task.ContractHash == "" {
+		return "", "", 0, fmt.Errorf("task %s delivery is missing its execution binding", task.ID)
+	}
+	return string(agent.CurrentRunID), task.ContractHash, task.Attempt + 1, nil
 }
 
 // supersededMerge names the open merge a new candidate of task replaces.
@@ -180,8 +200,13 @@ func (supervisor *Supervisor) deliverPatch(ctx context.Context, agent orchestrat
 		}
 	}
 	if merge.ID == "" {
+		executionID, contractHash, attempt, bindingErr := executionDeliveryBinding(agent, task)
+		if bindingErr != nil {
+			return false, bindingErr
+		}
 		merge, err = supervisor.workspace.Repository.EnqueueMerge(ctx, workspacecoord.MergeSpec{
 			TeamID: agent.TeamID, AgentID: agent.ID, TaskID: task.ID, ViewID: view.ID,
+			ExecutionID: executionID, ContractHash: contractHash, Attempt: attempt,
 			BaseRevision: view.BaseRevision, PatchArtifact: reference, Kind: workspacecoord.MergeGitPatch,
 			Supersedes: supersedes.ID, CorrelationID: string(agent.CurrentRunID),
 			IdempotencyKey: "merge:" + string(view.ID) + ":" + string(agent.CurrentRunID) + ":" + reference,
@@ -190,8 +215,13 @@ func (supervisor *Supervisor) deliverPatch(ctx context.Context, agent orchestrat
 			return false, fmt.Errorf("queue patch of view %s: %w", view.ID, err)
 		}
 	}
+	executionID, contractHash, attempt, err := executionDeliveryBinding(agent, task)
+	if err != nil {
+		return false, err
+	}
 	result.Delivery = &orchestration.WorkspaceDelivery{
-		ViewID: view.ID, CandidateDigest: reference, MergeID: merge.ID, ChangedPaths: len(workspacecoord.PatchPaths(patch)),
+		ViewID: view.ID, TaskID: task.ID, ExecutionID: executionID, ContractHash: contractHash, Attempt: attempt,
+		CandidateDigest: reference, MergeID: merge.ID, ChangedPaths: len(workspacecoord.PatchPaths(patch)),
 	}
 	return true, nil
 }
@@ -204,7 +234,11 @@ func (supervisor *Supervisor) scheduleMerges(teamID orchestration.TeamID) {
 	}
 	supervisor.mu.Lock()
 	defer supervisor.mu.Unlock()
-	if supervisor.closed {
+	if supervisor.closed || supervisor.ctx.Err() != nil {
+		return
+	}
+	if supervisor.deferRecoveryDispatch {
+		supervisor.pendingMerges[teamID] = struct{}{}
 		return
 	}
 	if _, running := supervisor.mergeRuns[teamID]; running {

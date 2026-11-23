@@ -29,12 +29,16 @@ func (conversation *Conversation) ContextUsageFor(input string) agentruntime.Con
 // a turn. It is safe to call while the UI is idle and refreshes the projection
 // immediately after the compaction event is recorded.
 func (conversation *Conversation) Compress(ctx context.Context) (bool, agentruntime.ContextUsage, error) {
+	return conversation.CompressWithSink(ctx, nil)
+}
+
+func (conversation *Conversation) CompressWithSink(ctx context.Context, sink agentruntime.EventSink) (bool, agentruntime.ContextUsage, error) {
 	conversation.mutex.Lock()
 	defer conversation.mutex.Unlock()
 	if len(conversation.history) == 0 {
 		return false, conversation.factory.ContextUsage(nil), nil
 	}
-	_, changed, err := conversation.factory.Compact(ctx, conversation.sessionID, cloneMessages(conversation.history))
+	_, changed, err := conversation.factory.CompactWithSink(ctx, conversation.sessionID, cloneMessages(conversation.history), sink)
 	if err != nil {
 		return false, conversation.factory.ContextUsage(conversation.history), err
 	}

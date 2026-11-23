@@ -12,11 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacedomain"
 )
@@ -264,7 +265,7 @@ func TestWorkspaceWriteHonorsCancellationBeforeSideEffect(t *testing.T) {
 
 func TestWorkspaceRoutesAgentViewAndRejectsReadonlyWrites(t *testing.T) {
 	workspaceRoot := t.TempDir()
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,11 +341,16 @@ func TestWorkspaceRoutesAgentViewAndRejectsReadonlyWrites(t *testing.T) {
 	}
 }
 
-type scopeRecordingRunner struct{ request sandbox.Request }
+type scopeRecordingRunner struct {
+	request     sandbox.Request
+	deadline    time.Time
+	hasDeadline bool
+}
 
 func (*scopeRecordingRunner) Name() string { return "scope-recorder" }
-func (runner *scopeRecordingRunner) Run(_ context.Context, request sandbox.Request, _, _ io.Writer) error {
+func (runner *scopeRecordingRunner) Run(ctx context.Context, request sandbox.Request, _, _ io.Writer) error {
 	runner.request = request
+	runner.deadline, runner.hasDeadline = ctx.Deadline()
 	return nil
 }
 
@@ -385,7 +391,7 @@ func TestShellPassesDescendantLivenessToCommand(t *testing.T) {
 
 func TestWorkspaceLeaseWithoutToolCallIDIsReacquiredForEachMutation(t *testing.T) {
 	workspaceRoot := t.TempDir()
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,6 +478,31 @@ func TestWorkspaceShellReturnsExitCodeAndTimeout(t *testing.T) {
 	cancel()
 	if _, err := workspace.shell(ctx, json.RawMessage(`{"command":"true"}`)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel error = %v", err)
+	}
+}
+
+func TestWorkspaceShellOmittedTimeoutUsesCallerContext(t *testing.T) {
+	workspace, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &scopeRecordingRunner{}
+	workspace.shellRunner, workspace.shellSandboxErr = runner, nil
+	args := json.RawMessage(`{"command":"true"}`)
+	if _, err := workspace.shell(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	if runner.hasDeadline {
+		t.Fatalf("omitted timeout installed a deadline: %v", runner.deadline)
+	}
+	callerDeadline := time.Now().Add(time.Hour)
+	ctx, cancel := context.WithDeadline(context.Background(), callerDeadline)
+	defer cancel()
+	if _, err := workspace.shell(ctx, args); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.hasDeadline || !runner.deadline.Equal(callerDeadline) {
+		t.Fatalf("command deadline = %v, want caller deadline %v", runner.deadline, callerDeadline)
 	}
 }
 

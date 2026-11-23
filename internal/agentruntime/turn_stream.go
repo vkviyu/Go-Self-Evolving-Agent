@@ -41,6 +41,9 @@ func (t *Turn) consumeIterator(ctx context.Context, iterator *adk.AsyncIterator[
 					if err := t.recordJournalCheckpoint(ctx); err != nil {
 						return Result{}, t.fail(ctx, err)
 					}
+					if err := t.recordedModel.syncExperience(ctx); err != nil {
+						return Result{}, t.fail(ctx, err)
+					}
 					return Result{}, suspended
 				}
 			}
@@ -61,6 +64,9 @@ func (t *Turn) consumeIterator(ctx context.Context, iterator *adk.AsyncIterator[
 	if final == nil || final.Content == "" || len(final.ToolCalls) > 0 {
 		return Result{}, t.fail(ctx, errors.New("Eino Agent completed without an assistant message"))
 	}
+	if t.recordedModel != nil {
+		t.recordedModel.emitLive(ctx, Event{Type: EventTurnFinalizing, TurnID: t.turnID})
+	}
 	if err := tool.CheckTurnCompletion(ctx, t.sessionID, t.turnID); err != nil {
 		return Result{}, t.fail(ctx, err)
 	}
@@ -69,10 +75,14 @@ func (t *Turn) consumeIterator(ctx context.Context, iterator *adk.AsyncIterator[
 	if assessment != nil {
 		payload["context_assessment"] = assessment
 	}
-	if _, err := t.events.Append(ctx, t.sessionID, session.AnySequence, session.PendingEvent{
+	pending := []session.PendingEvent{{
 		Type: session.EventTurnCompleted, CorrelationID: t.turnID, RuntimeSnapshotID: t.runtimeSnapshotID,
 		Payload: session.MustJSONPayload(payload),
-	}); err != nil {
+	}}
+	if t.recordedModel.experienceEnabled() {
+		pending = append(pending, t.recordedModel.experiencePending(ExperienceOutcome{Succeeded: true}))
+	}
+	if _, err := t.events.Append(ctx, t.sessionID, session.AnySequence, pending...); err != nil {
 		return Result{}, t.fail(ctx, fmt.Errorf("record Agent turn completion: %w", err))
 	}
 	// Completion is already durable. Cleanup failure must not turn successful
@@ -87,7 +97,12 @@ func (t *Turn) consumeIterator(ctx context.Context, iterator *adk.AsyncIterator[
 		// bound to it, and the next settlement acknowledges them.
 		_ = t.mailbox.Acknowledge(cleanupContext, t.turnID)
 	}
-	return Result{TurnID: t.turnID, RuntimeSnapshotID: t.runtimeSnapshotID, Final: final, Streamed: streamedAny, ContextUsage: assessment}, nil
+	var maintenance *ExperienceMaintenance
+	if t.recordedModel.experienceEnabled() {
+		maintenance = t.recordedModel.maintainExperience(ctx, ExperienceOutcome{Succeeded: true})
+		t.recordedModel.runExperienceRetry(ctx)
+	}
+	return Result{TurnID: t.turnID, RuntimeSnapshotID: t.runtimeSnapshotID, Final: final, Streamed: streamedAny, ContextUsage: assessment, ExperienceMaintenance: maintenance}, nil
 }
 
 func consumeMessageVariant(ctx context.Context, variant *adk.MessageVariant, turnID string, sink EventSink) (*schema.Message, bool, error) {

@@ -11,13 +11,17 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vkviyu/go-self-evolving-agent/internal/app"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sessionregistry"
 )
 
 func runSession(ctx context.Context, arguments []string, stdout, stderr io.Writer) error {
 	if len(arguments) == 0 {
-		return errors.New("session requires a subcommand: create, list, show or remove")
+		return errors.New("session requires a subcommand: create, list, show, remove or reconcile")
+	}
+	if arguments[0] == "reconcile" {
+		return reconcileSession(ctx, arguments[1:], stdout, stderr)
 	}
 	resolved, err := config.Default()
 	if err != nil {
@@ -91,7 +95,7 @@ func createSession(ctx context.Context, resolved config.Config, arguments []stri
 		ToolState:     filepath.Join(runtimeDirectory, "tool-state"),
 		Model:         strings.TrimSpace(*model), Provider: strings.TrimSpace(*provider),
 	}
-	registry, err := sessionregistry.Open(ctx, resolved.SessionRegistryPath())
+	registry, err := app.OpenSessionRegistry(ctx, resolved)
 	if err != nil {
 		return err
 	}
@@ -115,7 +119,7 @@ func listSessions(ctx context.Context, resolved config.Config, arguments []strin
 	if flags.NArg() != 0 {
 		return errors.New("session list does not accept positional arguments")
 	}
-	registry, err := sessionregistry.Open(ctx, resolved.SessionRegistryPath())
+	registry, err := app.OpenSessionRegistry(ctx, resolved)
 	if err != nil {
 		return err
 	}
@@ -136,7 +140,7 @@ func showSession(ctx context.Context, resolved config.Config, arguments []string
 	if flags.NArg() != 1 {
 		return errors.New("session show requires exactly one Session ID")
 	}
-	registry, err := sessionregistry.Open(ctx, resolved.SessionRegistryPath())
+	registry, err := app.OpenSessionRegistry(ctx, resolved)
 	if err != nil {
 		return err
 	}
@@ -157,7 +161,7 @@ func removeSession(ctx context.Context, resolved config.Config, arguments []stri
 	if flags.NArg() != 1 {
 		return errors.New("session remove requires exactly one Session ID")
 	}
-	registry, err := sessionregistry.Open(ctx, resolved.SessionRegistryPath())
+	registry, err := app.OpenSessionRegistry(ctx, resolved)
 	if err != nil {
 		return err
 	}
@@ -183,9 +187,11 @@ func writeSessionJSON(writer io.Writer, value any) error {
 }
 
 func printSessionUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "usage: local-agent session <create|list|show|remove>")
+	fmt.Fprintln(writer, "usage: gsea session <create|list|show|remove|reconcile>")
 	fmt.Fprintln(writer, "  create  register a Session and allocate central runtime resources")
 	fmt.Fprintln(writer, "  list    list registered Sessions")
 	fmt.Fprintln(writer, "  show    inspect one Session")
 	fmt.Fprintln(writer, "  remove  remove a stopped Session from the catalog")
+	fmt.Fprintln(writer, "  reconcile <session-id> [--data-dir DIR] [--workspace DIR] [--profile NAME]")
+	fmt.Fprintln(writer, "          recover saved Session requests without starting Agent execution")
 }

@@ -63,7 +63,7 @@ type BuildEvidence struct {
 	Toolchain       string `json:"toolchain"`
 	ToolchainSHA256 string `json:"toolchain_sha256"`
 	// Older evidence only hashed bin/go. This scope explicitly covers the
-	// configured host compiler inputs; it is not a bundled-toolchain claim.
+	// selected toolchain's compiler and standard-library inputs.
 	ToolchainHashScope string `json:"toolchain_hash_scope,omitempty"`
 	MemoryLimitMode    string `json:"memory_limit_mode,omitempty"`
 	SDKSHA256          string `json:"sdk_sha256"`

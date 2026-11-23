@@ -3,10 +3,10 @@ package cli
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"strings"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/modelgateway"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
@@ -21,6 +21,10 @@ type chatOptions struct {
 	workspaceDirectory      string
 	workspaceExplicit       bool
 	sessionExplicit         bool
+	requireExistingSession  bool
+	resumeList              bool
+	resumeAll               bool
+	resumeLast              bool
 	evaluationMode          bool
 	model                   modelgateway.Config
 	modelExplicit           bool
@@ -35,7 +39,6 @@ type chatOptions struct {
 	contextWindowTokens     int
 	compactionTriggerTokens int
 	maxRunningAgents        int
-	goalMode                agentgoal.Config
 	headlessFormat          string
 	promptFile              string
 	shellSandbox            sandbox.Mode
@@ -49,7 +52,15 @@ const (
 )
 
 func parseChatOptions(arguments []string, defaults config.Config, stderr io.Writer) (chatOptions, error) {
-	flags := flag.NewFlagSet("chat", flag.ContinueOnError)
+	return parseConversationOptions(arguments, defaults, stderr, false)
+}
+
+func parseConversationOptions(arguments []string, defaults config.Config, stderr io.Writer, resume bool) (chatOptions, error) {
+	command := "chat"
+	if resume {
+		command = "resume"
+	}
+	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	profile := flags.String("profile", "", "configuration profile loaded from GSEA_HOME/<profile>.config.toml")
 	flags.StringVar(profile, "p", "", "configuration profile loaded from GSEA_HOME/<profile>.config.toml")
@@ -63,12 +74,11 @@ func parseChatOptions(arguments []string, defaults config.Config, stderr io.Writ
 	baseURL := flags.String("base-url", defaults.Model.BaseURL, "provider base URL")
 	apiKeyEnvironment := flags.String("api-key-env", defaults.Model.APIKeyEnvironment, "environment variable containing the provider API key")
 	reasoningEffort := flags.String("reasoning-effort", defaults.Model.ReasoningEffort, "Responses reasoning effort: none, minimal, low, medium, high, or xhigh")
-	requestTimeout := flags.Duration("timeout", defaults.Model.Timeout, "per model request timeout")
+	requestTimeout := flags.Duration("timeout", defaults.Model.Timeout, "model timeout (full non-stream request, stream connect and read stalls)")
 	sessionValue := flags.String("session", "", "session history to load; omitted creates a new session")
 	resumeTurnID := flags.String("resume-turn", "", "explicitly resume one original turn; requires --session")
 	listRecoveries := flags.Bool("list-recoveries", false, "list interrupted turns without executing them; requires --session")
-	abandonTurn := flags.String("abandon-turn", "", "offline: abandon recovery of an interrupted root turn (or its running Goal)")
-	abandonGoal := flags.String("abandon-goal", "", "offline: abandon a running root Goal, including an unstarted Goal")
+	abandonTurn := flags.String("abandon-turn", "", "offline: abandon recovery of an interrupted root turn")
 	abandonReason := flags.String("abandon-reason", "", "required reason for explicit abandonment")
 	confirmAbandon := flags.Bool("confirm-abandon", false, "acknowledge prior effects were inspected and are not undone; recovery will be disabled")
 	instruction := flags.String("system", defaults.Agent.Instruction, "Agent system instruction")
@@ -77,26 +87,48 @@ func parseChatOptions(arguments []string, defaults config.Config, stderr io.Writ
 	contextWindowTokens := flags.Int("context-window-tokens", defaults.Agent.ContextWindowTokens, "model context capacity in tokens (0 = automatic)")
 	compactionTriggerTokens := flags.Int("compaction-trigger-tokens", defaults.Agent.CompactionTriggerTokens, "context compaction threshold (0 = automatic)")
 	maxRunningAgents := flags.Int("max-running-agents", defaults.Agents.MaxRunning, "maximum concurrently running child Agents; children that write the shared workspace still run one at a time")
-	goalEnabled := flags.Bool("goal-mode", defaults.Goal.Enabled, "enable task-level Outer Loop and Goal Mode")
-	goalActivation := flags.String("goal-activation", string(defaults.Goal.WithDefaults().Activation), "Goal Mode admission: auto (explicit task contract) or always")
-	goalAssessment := flags.String("goal-assessment", string(defaults.Goal.Assessment), "Goal Mode assessment: adaptive, self, independent, or hybrid")
-	goalMaxRounds := flags.Int("goal-max-rounds", defaults.Goal.MaxRounds, "maximum Inner Loop rounds per goal")
-	goalMaxWallTime := flags.Duration("goal-max-wall-time", defaults.Goal.MaxWallTime, "maximum wall time per goal")
-	goalEvaluationTimeout := flags.Duration("goal-evaluation-timeout", defaults.Goal.WithDefaults().EvaluationTimeout, "maximum duration of one completion assessment")
 	headlessFormat := flags.String("headless-format", headlessFormatStream, "non-interactive output format: stream or json")
 	promptFile := flags.String("prompt-file", "", "run one non-interactive prompt from a file; use - for stdin")
 	shellSandbox := flags.String("shell-sandbox", string(sandbox.ModeOS), "shell isolation boundary: os or container")
 	toolBridgeManifest := flags.String("tool-bridge-manifest", "", "evaluation-only JSON manifest for invocation-scoped tools")
 	toolBridgeSocket := flags.String("tool-bridge-socket", "", "evaluation-only Unix socket for invocation-scoped tools")
+	var resumeList, resumeAll, resumeLast bool
+	var leadingID string
+	if resume {
+		flags.BoolVar(&resumeList, "list", false, "list sessions without opening a conversation")
+		flags.BoolVar(&resumeAll, "all", false, "include sessions from all workspaces and older sessions without a recorded workspace")
+		flags.BoolVar(&resumeLast, "last", false, "open the most recent session in scope")
+		flags.Usage = func() {
+			fmt.Fprintln(stderr, "usage: gsea resume [SESSION_ID] [--list|--last] [--all] [chat options]")
+			flags.PrintDefaults()
+		}
+		if len(arguments) > 0 && !strings.HasPrefix(arguments[0], "-") {
+			leadingID, arguments = arguments[0], arguments[1:]
+		}
+	}
 	if err := flags.Parse(arguments); err != nil {
 		return chatOptions{}, err
 	}
-	if flags.NArg() != 0 {
+	if resume {
+		if flags.NArg() > 1 || (leadingID != "" && flags.NArg() != 0) || *sessionValue != "" {
+			return chatOptions{}, errors.New("resume accepts one positional Session ID")
+		}
+		if leadingID == "" && flags.NArg() == 1 {
+			leadingID = flags.Arg(0)
+		}
+		if (resumeList && resumeLast) || (leadingID != "" && (resumeList || resumeLast)) || *evaluationMode {
+			return chatOptions{}, errors.New("resume accepts one selection mode: a Session ID, --last, --list, or the picker")
+		}
+		if leadingID == "" && (*resumeTurnID != "" || *listRecoveries || *abandonTurn != "") {
+			return chatOptions{}, errors.New("turn recovery with resume requires a positional Session ID")
+		}
+		*sessionValue = leadingID
+	} else if flags.NArg() != 0 {
 		return chatOptions{}, errors.New("chat does not accept positional arguments")
 	}
 	workspaceExplicit := false
 	dataExplicit := false
-	sessionExplicit := false
+	sessionExplicit := resume && leadingID != ""
 	modelExplicit, providerExplicit := false, false
 	flags.Visit(func(item *flag.Flag) {
 		switch item.Name {
@@ -152,27 +184,17 @@ func parseChatOptions(arguments []string, defaults config.Config, stderr io.Writ
 	if *headlessFormat != headlessFormatStream && *headlessFormat != headlessFormatJSON {
 		return chatOptions{}, errors.New("headless-format must be stream or json")
 	}
-	goalMode := agentgoal.Config{
-		Enabled: *goalEnabled, Assessment: agentgoal.AssessmentStrategy(strings.TrimSpace(*goalAssessment)),
-		Activation: agentgoal.Activation(strings.TrimSpace(*goalActivation)),
-		MaxRounds:  *goalMaxRounds, MaxWallTime: *goalMaxWallTime,
-		EvaluationTimeout: *goalEvaluationTimeout,
-	}
-	if err := goalMode.Validate(); err != nil {
-		return chatOptions{}, err
-	}
-
 	sessionID := session.ID(*sessionValue)
 	*resumeTurnID = strings.TrimSpace(*resumeTurnID)
-	*abandonTurn, *abandonGoal, *abandonReason = strings.TrimSpace(*abandonTurn), strings.TrimSpace(*abandonGoal), strings.TrimSpace(*abandonReason)
+	*abandonTurn, *abandonReason = strings.TrimSpace(*abandonTurn), strings.TrimSpace(*abandonReason)
 	var abandonment *session.AbandonRequest
-	if *abandonTurn != "" || *abandonGoal != "" {
-		abandonment = &session.AbandonRequest{SessionID: sessionID, TurnID: *abandonTurn, GoalID: *abandonGoal, Reason: *abandonReason, EffectsReviewed: *confirmAbandon}
+	if *abandonTurn != "" {
+		abandonment = &session.AbandonRequest{SessionID: sessionID, TurnID: *abandonTurn, Reason: *abandonReason, EffectsReviewed: *confirmAbandon}
 		if err := abandonment.Validate(); err != nil {
 			return chatOptions{}, err
 		}
 	} else if *abandonReason != "" || *confirmAbandon {
-		return chatOptions{}, errors.New("abandon-reason and confirm-abandon require abandon-turn or abandon-goal")
+		return chatOptions{}, errors.New("abandon-reason and confirm-abandon require abandon-turn")
 	}
 	if *resumeTurnID != "" || *listRecoveries || abandonment != nil {
 		if sessionID == "" {
@@ -199,14 +221,18 @@ func parseChatOptions(arguments []string, defaults config.Config, stderr io.Writ
 		return chatOptions{}, errors.New("session ID must start with an alphanumeric character and contain only letters, digits, '.', '_' or '-'")
 	}
 	return chatOptions{
-		dataDirectory:      *dataDirectory,
-		dataExplicit:       dataExplicit,
-		workspaceDirectory: *workspaceDirectory,
-		workspaceExplicit:  workspaceExplicit,
-		sessionExplicit:    sessionExplicit,
-		evaluationMode:     *evaluationMode,
-		modelExplicit:      modelExplicit,
-		providerExplicit:   providerExplicit,
+		dataDirectory:          *dataDirectory,
+		dataExplicit:           dataExplicit,
+		workspaceDirectory:     *workspaceDirectory,
+		workspaceExplicit:      workspaceExplicit,
+		sessionExplicit:        sessionExplicit,
+		requireExistingSession: resume,
+		resumeList:             resumeList,
+		resumeAll:              resumeAll,
+		resumeLast:             resumeLast,
+		evaluationMode:         *evaluationMode,
+		modelExplicit:          modelExplicit,
+		providerExplicit:       providerExplicit,
 		model: modelgateway.Config{
 			Provider:          modelgateway.Provider(*provider),
 			WireAPI:           modelgateway.WireAPI(*wireAPI),
@@ -227,7 +253,6 @@ func parseChatOptions(arguments []string, defaults config.Config, stderr io.Writ
 		contextWindowTokens:     *contextWindowTokens,
 		compactionTriggerTokens: *compactionTriggerTokens,
 		maxRunningAgents:        *maxRunningAgents,
-		goalMode:                goalMode,
 		headlessFormat:          *headlessFormat,
 		promptFile:              strings.TrimSpace(*promptFile),
 		shellSandbox:            sandbox.Mode(*shellSandbox),

@@ -33,7 +33,8 @@ func diagnosticsBinding(resolved config.Config) tool.Binding {
 				"eino_openai_version": dependencyVersion("github.com/cloudwego/eino-ext/components/model/openai"),
 				"eino_ollama_version": dependencyVersion("github.com/cloudwego/eino-ext/components/model/ollama"),
 				"wazero_version":      dependencyVersion("github.com/tetratelabs/wazero"),
-				"session_database":    resolved.SessionDatabasePath(),
+				"runtime_database":    resolved.RuntimeDatabasePath(),
+				"ate_directory":       resolved.ATE.Directory,
 			})
 		}),
 	}
@@ -79,7 +80,7 @@ type (
 	}
 )
 
-// Doctor exercises SQLite, the default-deny policy, registry snapshot and
+// Doctor exercises ATE persistence, the default-deny policy, registry snapshot and
 // unified tool pipeline without contacting a model provider.
 func (a *App) Doctor(ctx context.Context) (DoctorReport, error) {
 	if a == nil {
@@ -93,7 +94,7 @@ func (a *App) Doctor(ctx context.Context) (DoctorReport, error) {
 	registry := a.registry
 	eventsStore := a.events
 	pipeline := a.pipeline
-	databasePath := a.config.SessionDatabasePath()
+	databasePath := a.config.RuntimeDatabasePath()
 	coordination := a.domain.Status()
 	a.stateMu.Unlock()
 	if registry == nil || eventsStore == nil || pipeline == nil {

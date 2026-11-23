@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
@@ -22,7 +22,7 @@ func (git *mergeGit) Run(_ context.Context, _ string, arguments ...string) ([]by
 }
 
 func TestMergeExecutorAppliesPendingPatchAndIsIdempotent(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestMergeExecutorAppliesPendingPatchAndIsIdempotent(t *testing.T) {
 }
 
 func TestMergeExecutorCreatesResolutionTaskOnConflict(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestMergeExecutorCreatesResolutionTaskOnConflict(t *testing.T) {
 }
 
 func TestMergeExecutorResumesRunningMergeAfterRestart(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestMergeExecutorResumesRunningMergeAfterRestart(t *testing.T) {
 }
 
 func TestMergeExecutorRequeuesOnlyCompletedResolutionTask(t *testing.T) {
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

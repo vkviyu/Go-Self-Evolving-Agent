@@ -18,7 +18,7 @@ func StrategyBindings(store StrategyStore, caller ResolveStrategyCaller) []tool.
 				Revision:    "builtin-v1",
 				RiskClass:   tool.RiskWrite,
 				InputSchema: specSchema,
-				Description: "Propose a version:1 LoopSpec for this root session. Only instruction_suffix and lower iteration/output caps; no model, tools, permissions or Goal gate changes. Requires approval and never activates. New revision is required for repairs.",
+				Description: "Propose a version:1 LoopSpec for this root session. Only instruction_suffix and lower iteration/output caps; no model, tools, permissions or execution gate changes. Requires approval and never activates. New revision is required for repairs.",
 			},
 			Executor: tool.InvokeFunc(adapter.propose),
 		},

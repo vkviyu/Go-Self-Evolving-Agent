@@ -12,8 +12,10 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
 )
 
-// checkOutputBytes bounds the output a failed check reports.
-const checkOutputBytes = 4 << 10
+const (
+	checkOutputBytes    = 4 << 10
+	defaultCheckTimeout = 120 * time.Second
+)
 
 // RunCheck runs a host-configured command in the sandbox of the main
 // workspace and fails when it exits nonzero or times out. It takes no lease
@@ -33,7 +35,7 @@ func (workspace *Workspace) RunCheck(ctx context.Context, command string, timeou
 		return err
 	}
 	if timeout <= 0 {
-		timeout = defaultShellTimeout
+		timeout = defaultCheckTimeout
 	}
 	commandContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -63,6 +64,88 @@ func TestPipelineExecutesAllowedToolAndRecordsBoundaries(t *testing.T) {
 		if recorded[index].Type != want {
 			t.Fatalf("event %d = %q, want %q", index, recorded[index].Type, want)
 		}
+	}
+}
+
+func TestPipelineEmitsLiveLifecycleAfterDurableBoundaries(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if _, err := registry.Activate(testBinding("rev-1", "ok")); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := policy.DefaultDeny(policy.Rule{
+		ID: "allow-pure-tools", ToolPattern: "echo",
+		CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline := mustPipeline(t, registry, engine, nil, memorystore.New())
+	var live []LiveEventType
+	ctx := WithLiveEventSink(context.Background(), func(_ context.Context, event LiveEvent) error {
+		live = append(live, event.Type)
+		return nil
+	})
+	if _, err := pipeline.Execute(ctx, Call{
+		SessionID: "live-session", TurnID: "live-turn", CallID: "live-call",
+		ToolName: "echo", Arguments: json.RawMessage(`{"text":"hello"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []LiveEventType{
+		LiveToolProposed,
+		LivePolicyChecking,
+		LivePolicyDecided,
+		LiveToolStarted,
+		LiveToolSucceeded,
+	}
+	if !slices.Equal(live, want) {
+		t.Fatalf("live lifecycle = %#v, want %#v", live, want)
+	}
+}
+
+func TestPipelineEmitsApprovalLifecycle(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	binding := testBinding("rev-1", "changed")
+	binding.Descriptor.Name = "workspace_edit"
+	binding.Descriptor.RiskClass = RiskWrite
+	if _, err := registry.Activate(binding); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := policy.DefaultDeny(policy.Rule{
+		ID: "approval", ToolPattern: "workspace_edit",
+		CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline := mustPipeline(t, registry, engine, &testApprover{approved: true}, memorystore.New())
+	var live []LiveEventType
+	ctx := WithLiveEventSink(context.Background(), func(_ context.Context, event LiveEvent) error {
+		live = append(live, event.Type)
+		return nil
+	})
+	if _, err := pipeline.Execute(ctx, Call{
+		SessionID: "approval-session", TurnID: "approval-turn", CallID: "approval-call",
+		ToolName: "workspace_edit", Arguments: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []LiveEventType{
+		LiveToolProposed,
+		LivePolicyChecking,
+		LivePolicyDecided,
+		LiveApprovalRequested,
+		LiveApprovalWaiting,
+		LiveApprovalResolved,
+		LiveToolStarted,
+		LiveToolSucceeded,
+	}
+	if !slices.Equal(live, want) {
+		t.Fatalf("approval lifecycle = %#v, want %#v", live, want)
 	}
 }
 

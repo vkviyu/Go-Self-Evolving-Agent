@@ -18,7 +18,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
 	pluginwasm "github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
@@ -29,7 +29,8 @@ func TestDurablePluginLifecycle(t *testing.T) {
 	source := durableFixture(t)
 	ctx := context.Background()
 	t.Run("application restart retirement and rollback", func(t *testing.T) {
-		cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir(), WASM: pluginwasm.Config{DefaultTimeout: 3 * time.Second}}
+		cfg := nativePluginConfig(t)
+		cfg.WASM = pluginwasm.Config{DefaultTimeout: 3 * time.Second}
 		open := func() *app.App {
 			application, err := app.Open(ctx, cfg)
 			if err != nil {
@@ -328,6 +329,20 @@ func TestDurablePluginLifecycle(t *testing.T) {
 	})
 }
 
+// nativePluginConfig keeps plugin resources local while runtime facts use ATE.
+func nativePluginConfig(t *testing.T) config.Config {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "ate")
+	command := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "github.com/vkviyu/agent-temporal-engine/cmd/ate")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build native authority: %v\n%s", err, output)
+	}
+	return config.Config{
+		HomeDirectory: t.TempDir(), DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir(),
+		ATE: config.ATEConfig{Enabled: true, Binary: binary, Directory: filepath.Join(t.TempDir(), "ate"), Timeout: 30 * time.Second},
+	}
+}
+
 type failingSaveCatalog struct{ plugin.Catalog }
 
 func (c *failingSaveCatalog) Save(ctx context.Context, record plugin.RevisionRecord, source []byte) error {
@@ -354,9 +369,9 @@ func (c *failingCatalog) SetActive(ctx context.Context, name, expected, next str
 	return errors.New("injected storage failure")
 }
 
-func durableDatabase(t *testing.T) *sqlitestore.Database {
+func durableDatabase(t *testing.T) *runtimestore.Database {
 	t.Helper()
-	database, err := sqlitestore.Open(context.Background(), filepath.Join(t.TempDir(), "state.db"))
+	database, err := runtimestore.OpenRuntime(context.Background(), filepath.Join(t.TempDir(), "runtime.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

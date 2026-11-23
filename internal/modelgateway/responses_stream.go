@@ -9,17 +9,15 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/vkviyu/go-self-evolving-agent/internal/modeltelemetry"
 )
 
-var ErrResponsesStreamTruncated = errors.New("Responses stream ended before response.completed")
+var ErrResponsesStreamTruncated = fmt.Errorf("Responses stream ended before response.completed: %w", io.ErrUnexpectedEOF)
 
 // streamResponsesBody parses SSE frames and forwards normalized message
 // chunks. It owns only stream state; HTTP setup is handled by the transport
 // layer and request conversion remains in responses.go.
-func streamResponsesBody(body io.ReadCloser, writer *schema.StreamWriter[*schema.Message]) {
-	defer body.Close()
-	defer writer.Close()
-
+func streamResponsesBody(body io.Reader, writer *schema.StreamWriter[*schema.Message], observation *modeltelemetry.Stream) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 4<<10), maxResponsesBodyBytes)
 	var eventName string
@@ -29,51 +27,44 @@ func streamResponsesBody(body io.ReadCloser, writer *schema.StreamWriter[*schema
 	reasoningSeen := false
 	outputIndex := 0
 
-	flush := func() bool {
+	flush := func() (bool, error) {
 		if data.Len() == 0 {
 			eventName = ""
-			return false
+			return false, nil
 		}
 		payload := strings.TrimSpace(data.String())
 		data.Reset()
 		if payload == "[DONE]" {
-			writer.Send(nil, fmt.Errorf("%w: unexpected [DONE] sentinel", ErrResponsesStreamTruncated))
-			return true
+			return true, fmt.Errorf("%w: unexpected [DONE] sentinel", ErrResponsesStreamTruncated)
 		}
 		var event responsesStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			writer.Send(nil, fmt.Errorf("decode Responses stream event %q: %w", eventName, err))
-			eventName = ""
-			return true
+			return true, fmt.Errorf("decode Responses stream event %q: %w", eventName, err)
 		}
 		if event.Type == "" {
 			event.Type = eventName
 		} else if eventName != "" && eventName != event.Type {
-			writer.Send(nil, errors.New("Responses SSE event name and payload type disagree"))
-			return true
+			return true, errors.New("Responses SSE event name and payload type disagree")
 		}
+		observation.LastEvent = responsesEventLabel(event.Type)
 		stop, err := emitResponsesStreamEvent(event, writer, callStates, &textSeen, &reasoningSeen, &outputIndex)
-		if err != nil {
-			writer.Send(nil, err)
-			stop = true
-		}
+		observation.Completed = event.Type == "response.completed" && err == nil
 		eventName = ""
-		return stop
+		return stop, err
 	}
 
 	for scanner.Scan() {
 		line := strings.TrimSuffix(scanner.Text(), "\r")
 		switch {
 		case line == "":
-			if flush() {
-				return
+			if stop, err := flush(); stop || err != nil {
+				return err
 			}
 		case strings.HasPrefix(line, "event:"):
 			eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		case strings.HasPrefix(line, "data:"):
 			if data.Len()+len(line) > maxResponsesBodyBytes {
-				writer.Send(nil, errors.New("Responses stream frame exceeds size limit"))
-				return
+				return errors.New("Responses stream frame exceeds size limit")
 			}
 			if data.Len() > 0 {
 				data.WriteByte('\n')
@@ -82,12 +73,12 @@ func streamResponsesBody(body io.ReadCloser, writer *schema.StreamWriter[*schema
 		}
 	}
 	if scanner.Err() != nil {
-		writer.Send(nil, fmt.Errorf("read Responses stream: %w", scanner.Err()))
-		return
+		return fmt.Errorf("read Responses stream: %w", scanner.Err())
 	}
-	if !flush() {
-		writer.Send(nil, ErrResponsesStreamTruncated)
+	if stop, err := flush(); stop || err != nil {
+		return err
 	}
+	return ErrResponsesStreamTruncated
 }
 
 func emitResponsesStreamEvent(event responsesStreamEvent, writer *schema.StreamWriter[*schema.Message], callStates map[string]*responseStreamCallState, textSeen, reasoningSeen *bool, outputIndex *int) (bool, error) {

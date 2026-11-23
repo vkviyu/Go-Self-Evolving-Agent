@@ -10,12 +10,12 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 )
 
-func newReassignmentSupervisorTest(t *testing.T, runner Runner) (*Supervisor, *sqlitestore.OrchestrationStore, orchestration.RootThread, session.EventStore) {
+func newReassignmentSupervisorTest(t *testing.T, runner Runner) (*Supervisor, *testfixture.OrchestrationStore, orchestration.RootThread, session.EventStore) {
 	t.Helper()
-	database, err := sqlitestore.Open(context.Background(), ":memory:")
+	database, err := testfixture.Open(t, context.Background(), ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

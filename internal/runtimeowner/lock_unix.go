@@ -4,8 +4,9 @@ package runtimeowner
 
 import (
 	"errors"
-	"golang.org/x/sys/unix"
 	"os"
+
+	"golang.org/x/sys/unix"
 )
 
 func tryLock(file *os.File) error {
@@ -14,4 +15,8 @@ func tryLock(file *os.File) error {
 		return ErrOwned
 	}
 	return err
+}
+
+func unlock(file *os.File) error {
+	return unix.Flock(int(file.Fd()), unix.LOCK_UN)
 }

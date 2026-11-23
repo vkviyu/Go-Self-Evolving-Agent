@@ -317,7 +317,7 @@ shared_writes = false         # Enable the owned-path optimization (P4, not impl
 
 - 新增一等输入类型：`Turn.Run` 需要从“最后一条必须是用户消息”泛化为“用户输入”和“后台输入”两种，后台输入使用独立的事件类型，不写成用户消息。
 - 规则：后台唤醒 Turn 不参与 Goal 准入；计入团队预算，并限制唤醒频率；用户主动取消后，在用户下一次输入之前不自动唤醒。
-- P3 已实现：后台输入写成 `background.input` 事件，以 `Untrusted Agent messages…` 开头的用户角色消息进入模型输入，TUI 显示为 `◆ Agent messages` 块，不进入输入历史。TUI 空闲时每 2 秒检查一次待处理消息；只有在没有进行中的 Turn、没有待处理审批、输入框为空、距上次唤醒至少 5 秒、连续唤醒少于 3 次时才唤醒，用户输入后重置计数。团队预算耗尽或消息已被其他 Turn 取走时，唤醒静默跳过，不留下记录。唤醒 Turn 不计入用户 Turn 数。实现方式与设计的差异：`Turn.Run` 仍要求最后一条是用户消息，后台输入另走 `Turn.RunBackground`（`turn.started` 的 `input` 为 `background`）。`RunBackgroundTurn` 用 `WithoutGoalMode()` 跳过 Goal 准入（`internal/conversation/background.go`）。唤醒策略在 `internal/tui/background.go`。
+- P3 已实现：后台输入写成 `background.input` 事件，以 `Untrusted Agent messages…` 开头的用户角色消息进入模型输入，TUI 显示为 `◆ Agent messages` 块，不进入输入历史。TUI 空闲时每 2 秒检查一次待处理消息；只有在没有进行中的 Turn、没有待处理审批、输入框为空、距上次唤醒至少 5 秒、连续唤醒少于 3 次时才唤醒，用户输入后重置计数。团队预算耗尽或消息已被其他 Turn 取走时，唤醒静默跳过，不留下记录。唤醒 Turn 不计入用户 Turn 数。实现方式与设计的差异：`Turn.Run` 仍要求最后一条是用户消息，后台输入另走 `Turn.RunBackground`（`turn.started` 的 `input` 为 `background`）。`RunBackgroundTurn` 使用普通 Turn，后台输入不创建执行契约（`internal/conversation/background.go`）。唤醒策略在 `internal/tui/background.go`。
 
 ### 11.3 邮箱消费协议
 
@@ -444,11 +444,11 @@ P0–P3 的验收条件均已满足，`go test ./... -count=1` 于 2026-10-26 �
 - 操作租约的等待上限为 10 秒（`operationLeaseWait`，`internal/codingtools/workspace.go`）
 
 
-## 2026-10-29 动态任务、恢复结算与 Goal admission 增量
+## 2026-10-29 动态任务、恢复结算与 Execution admission 增量
 
 动态计划阶段现已落地：`task_update` 提供执行前版本化编辑，`task_refine` 以 v40 `task_refinement_members` 持久化原子细化成员，`task_reassign` 对可信 iteration-limit 失败执行有副作用证明的有限重试。普通 `ParentTaskID` 仍是分组关系，自动派发绑定 Task version，细化子任务从 draft 开始，必须显式转为 ready。
 
 恢复阶段新增 completion receipt 的摘要、JSON 契约和 RunID 校验；worker 返回后先冻结结果，Task/交付/通知/资源结算失败只进入 pending 结算队列，不重新运行 worker。父细化成员未完成时释放已结束 worker 的 lease、保留 delivery view，子任务完成后恢复扫描补结算。已确认模型拒绝、已知工具错误、wait checkpoint 后的后续响应都按 journal/checkpoint marker 重放；未知副作用继续 fail closed。
 
 
-Goal admission 现由 v41 durable token 保护：`reserved → turn_started → round_started → consumed` 使用 CAS 和输入/契约/配置摘要校验；缺失 Turn 或首轮绑定的 token 进入 `unavailable`，恢复不会降级为普通聊天。
+Execution admission 现由 durable token 保护：`reserved → turn_started → execution_started → consumed` 使用 CAS 和输入/契约/配置摘要校验；缺失 Turn 或 Execution/Step 绑定的 token 进入 `unavailable`，恢复不会降级为普通聊天。

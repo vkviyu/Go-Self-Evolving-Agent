@@ -42,18 +42,29 @@ func (model *Model) showRecoveries(message recoveriesMsg) {
 	if len(message.items) == 0 && !message.explicit {
 		return
 	}
+	if !message.explicit {
+		model.notice(blockSystem, fmt.Sprintf("Interrupted work in this session (%d) · /recoveries to inspect", len(message.items)))
+		return
+	}
 	text := "No interrupted turns"
 	if len(message.items) > 0 {
 		var output strings.Builder
-		output.WriteString("Interrupted work (not executed automatically):\n")
+		output.WriteString("Interrupted work in this session")
+		canResume := false
 		for _, item := range message.items {
-			fmt.Fprintf(&output, "%s  goal=%s  %s", item.TurnID, item.GoalID, item.Phase)
+			output.WriteString("\n  ")
+			if item.TurnID != "" {
+				fmt.Fprintf(&output, "turn %s  ", item.TurnID)
+				canResume = canResume || item.Phase != "unavailable"
+			}
+			output.WriteString(item.Phase)
 			if item.Reason != "" {
 				fmt.Fprintf(&output, " — %s", item.Reason)
 			}
-			output.WriteByte('\n')
 		}
-		output.WriteString("Use /resume <turn-id>; missing checkpoints require manual inspection.")
+		if canResume {
+			output.WriteString("\nUse /resume <turn-id> to try continuing the selected turn.")
+		}
 		text = output.String()
 	}
 	model.notice(blockSystem, text)

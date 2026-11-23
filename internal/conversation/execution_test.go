@@ -146,6 +146,43 @@ func TestInnerTurnAdmissionCallbackPrecedesExecution(t *testing.T) {
 	}
 }
 
+func TestFreshSessionSkipsHistoryLoadingPhase(t *testing.T) {
+	store := &historyFailureStore{Store: memorystore.New()}
+	chat, _ := executionFixture(t, store)
+	var events []agentruntime.EventType
+	_, err := chat.RunTurn(context.Background(), "first input", func(_ context.Context, event agentruntime.Event) error {
+		events = append(events, event.Type)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event == agentruntime.EventConversationHistoryLoading {
+			t.Fatal("fresh session emitted conversation history loading")
+		}
+	}
+	// Construction happens before RunWithBefore installs its own live sink.
+	// Verify the public conversation path exposes those storage waits too.
+	position := 0
+	for _, expected := range []agentruntime.EventType{
+		agentruntime.EventTurnSnapshotRetentionStarted,
+		agentruntime.EventTurnSessionSequenceReadStarted,
+		agentruntime.EventTurnSessionCreationStarted,
+		agentruntime.EventTurnAgentConstructionStarted,
+		agentruntime.EventTurnPersistenceStarted,
+		agentruntime.EventModelRequestStarted,
+	} {
+		for position < len(events) && events[position] != expected {
+			position++
+		}
+		if position == len(events) {
+			t.Fatalf("missing ordered phase %s: %v", expected, events)
+		}
+		position++
+	}
+}
+
 func TestPostExecutionProjectionFailureKeepsDurableOutcome(t *testing.T) {
 	failure := errors.New("projection unavailable")
 	store := &historyFailureStore{Store: memorystore.New(), failure: failure, failAfterCompleted: true}

@@ -7,7 +7,7 @@
 > 目标形态：本地优先、单用户、可离线运行的 CLI/TUI Agent  
 > 核心技术：Go 1.27.0、Eino ADK、wazero、WASI Preview 1
 
-实现状态补充（2026-10-26）：受控工具生成、隔离编译/行为验证/审批发布、版本化策略 shadow/CAS 晋升/失败隔离、完成消费者归档和离线插件 GC 已落地（2026-09-26）；此后又落地了 Multi-Agent 控制面（durable Supervisor、Task DAG、mailbox 消费账本、快照隔离写入与 merge queue）、Goal Mode、Flow、LSP 诊断和 benchmark 评测协议。当前可执行边界和命令以 [EVOLUTION.md](./EVOLUTION.md)、[ARCHITECTURE.md](./ARCHITECTURE.md) 与 [MULTI_AGENT_ARCHITECTURE.md](./MULTI_AGENT_ARCHITECTURE.md) 为准；本文路线图中的任意 WASM Driver/宿主自重写、插件 Host Capability、MCP、Skills/AGENTS.md 不属于已实现能力。完整自进化闭环仍受宿主权限、人工发布与 Eino Loop 边界约束。
+实现状态补充（2026-10-26）：受控工具生成、隔离编译/行为验证/审批发布、版本化策略 shadow/CAS 晋升/失败隔离、完成消费者归档和离线插件 GC 已落地（2026-09-26）；此后又落地了 Multi-Agent 控制面（durable Supervisor、Task DAG、mailbox 消费账本、快照隔离写入与 merge queue）、统一 ExecutionContract、Flow、LSP 诊断和 benchmark 评测协议。当前可执行边界和命令以 [EVOLUTION.md](./EVOLUTION.md)、[ARCHITECTURE.md](./ARCHITECTURE.md) 与 [MULTI_AGENT_ARCHITECTURE.md](./MULTI_AGENT_ARCHITECTURE.md) 为准；本文路线图中的任意 WASM Driver/宿主自重写、插件 Host Capability、MCP、Skills/AGENTS.md 不属于已实现能力。完整自进化闭环仍受宿主权限、人工发布与 Eino Loop 边界约束。
 
 ---
 
@@ -73,10 +73,10 @@
 - 沙箱化 Compiler Worker（`internal/pluginbuild`）、SQLite 持久化插件目录（`plugin_blobs`/`plugin_revisions`/`plugin_builds`/`plugin_test_reports`）、行为测试与确认发布、离线精确 GC；
 - 版本化 LoopSpec（`internal/strategy`）、影子比较、CAS 发布与失败隔离回退；
 - Multi-Agent：durable Supervisor（`internal/agentmanager`）、Task DAG、mailbox、快照隔离写入与 merge queue（`internal/workspacecoord`、`internal/workspacedomain`）；
-- Goal Mode（`internal/agentgoal`）、宿主命名 Flow（`internal/agentflow`）、LSP 诊断（`internal/lsp`）、Team 预算与用量预留（`internal/tokenusage`）；
+- ExecutionContract/Task verification、宿主命名 Flow（`internal/agentflow`）、LSP 诊断（`internal/lsp`）、Team 预算与用量预留（`internal/tokenusage`）；
 - benchmark 任务/结果协议与 `local-agent eval`（`internal/evaluation`，见 [evals/README.md](./evals/README.md)）。
 
-仍未落地：WASM 插件的 FS/HTTP/Shell/KV/Secret Host Capability、MCP、Skills/AGENTS.md 注入、Plan Task、模型重试/Failover、Revision 排空租约、Full/Lite 工具链分发与 WASM Driver。当前实现明确把这些能力留在宿主控制面，不会让插件或模型绕过现有 Policy、Approval 和 Event Store。
+仍未落地：WASM 插件的 FS/HTTP/Shell/KV/Secret Host Capability、MCP、Skills/AGENTS.md 注入、Plan Task、模型重试/Failover、Revision 排空租约与 WASM Driver。当前实现明确把这些能力留在宿主控制面，不会让插件或模型绕过现有 Policy、Approval 和 Event Store。
 
 ---
 
@@ -84,12 +84,12 @@
 
 ### 2.1 固定版本
 
-| 组件 | 基线版本 | 使用原则 |
-| --- | --- | --- |
-| Go | **go1.27.0** | 宿主和 Tool 编译器均使用该版本 |
-| Eino | **v0.9.22** | 使用当前稳定版本，不采用 v0.10 alpha（基线原定 v0.9.14，`go.mod` 现为 v0.9.22） |
-| wazero | **v1.12.0** | 使用稳定 API，启用编译执行模式 |
-| WASM Target | `GOOS=wasip1 GOARCH=wasm` | 使用 WASI Preview 1 reactor |
+| 组件        | 基线版本                  | 使用原则                                                                        |
+| ----------- | ------------------------- | ------------------------------------------------------------------------------- |
+| Go          | **go1.27.0**              | 宿主和 Tool 编译器均使用该版本                                                  |
+| Eino        | **v0.9.22**               | 使用当前稳定版本，不采用 v0.10 alpha（基线原定 v0.9.14，`go.mod` 现为 v0.9.22） |
+| wazero      | **v1.12.0**               | 使用稳定 API，启用编译执行模式                                                  |
+| WASM Target | `GOOS=wasip1 GOARCH=wasm` | 使用 WASI Preview 1 reactor                                                     |
 
 `go.mod` 固定语言/最低工具链版本；开发机与发布流水线另外固定实际 Go 工具链为 go1.27.0：
 
@@ -111,16 +111,11 @@ go 1.27.0
 - 第一版不启用实验性的 `GOEXPERIMENT=simd`，保证生成插件的可移植性。
 - Tool ABI 使用严格 JSON；可以在内部评估 `encoding/json/v2`，但协议行为必须通过固定测试定义，不能依赖错误文本等实现细节。
 
-### 2.3 发布形式
+### 2.3 安装与插件工具链
 
-提供两种发行包，但运行语义完全一致：
+宿主可用 `go build ./cmd/gsea` 构建为独立二进制，也可用 `go run ./cmd/gsea` 从源码运行。
 
-- **Full**：宿主二进制附带压缩后的官方 Go 1.27.0 工具链。
-- **Lite**：首次需要生成插件时，从官方来源下载 Go 1.27.0，并校验平台对应的 SHA-256。
-
-工具链安装后，Agent 的日常运行和已有 WASM Tool 执行均可离线完成。
-
-实际实现：Full/Lite 发行包未实现（计划中）。编译器直接使用宿主进程自身的 `runtime.GOROOT()/bin/go`，要求 `go version go1.27.0`，并在构建证据中记录该可执行文件的 SHA-256；不附带、不下载工具链，也没有配置键可改。
+生成新插件时，用户通过启动环境变量 `GSEA_GO_ROOT` 提供可信 Go 1.27.0 安装根目录的绝对路径。编译器使用该目录下的 `bin/go` 离线构建 WASM。普通会话和内置运行时执行已有 WASM Tool 都无需配置编译器。
 
 ---
 
@@ -130,7 +125,7 @@ go 1.27.0
 
 - 本地 CLI/TUI 多轮对话和流式输出。
 - 支持远程 OpenAI-compatible（Chat Completions / Responses）模型与本地 Ollama 模型。
-- Eino Base Agent 支持工具调用、上下文压缩、计划任务、Skills 和人工审批。（实际实现：工具调用、自研上下文压缩和人工审批已落地；Plan Task、Skills 未实现，任务拆解由 durable `task_*` 工具与 Goal Mode 承担。）
+- Eino Base Agent 支持工具调用、上下文压缩、计划任务、Skills 和人工审批。（实际实现：工具调用、自研上下文压缩和人工审批已落地；Plan Task、Skills 未实现，任务拆解由 durable `task_*` 工具与 ExecutionContract 承担。）
 - 所有会话可以在进程崩溃或用户中断后恢复。
 - 原生 Tool 和 WASM Tool 通过相同 Tool Registry 暴露给 Eino。
 - 手工编写和 Agent 生成的 Go Tool 均可编译、测试、热激活和回滚。
@@ -187,13 +182,13 @@ go 1.27.0
 
 实际实现与上图的对应与偏离：
 
-- CLI/TUI = `cmd/local-agent` → `internal/cli`（`internal/tui`、`internal/render`）；Composition Root = `internal/app`（唯一允许构造 `sqlitestore.Open`、`workspacedomain.Open`、`wasm.NewRuntime`、`tool.NewPipeline` 的包，`strategy_shadow.go` 另可构造影子 Pipeline）。
+- CLI/TUI = `cmd/gsea` → `internal/cli`（`internal/tui`、`internal/render`）；Composition Root = `internal/app`（唯一允许构造 `sqlitestore.Open`、`workspacedomain.Open`、`wasm.NewRuntime`、`tool.NewPipeline` 的包，`strategy_shadow.go` 另可构造影子 Pipeline）。
 - Eino Agent Runtime = `internal/agentruntime`（唯一导入 `eino/adk` 的包）+ `internal/conversation`（Session 串行化、Goal 循环）；Tool Registry/管线 = `internal/tool`，Eino 绑定 = `internal/einoadapter`。
 - Session & Checkpoint Store = `internal/session` 协议 + `internal/session/sqlitestore`（唯一 SQLite owner，另有 `sessionregistry`、`workspacedomain` 两个独立库）；没有派生 Snapshot 缓存（见 6.2）。
 - Policy & Approval = `internal/policy` + `internal/approval`；预算 = `internal/tokenusage`。
 - Plugin Manager = `internal/plugin`，wazero = `internal/plugin/wasm`（唯一导入 wazero 的包），Compiler Worker = `internal/pluginbuild` 经 `internal/sandbox` 运行的 `go build` 子进程。
 - “MCP”与“Host Capability Adapters（FS/Shell/HTTP/KV/Secret）”未实现；FS/Shell 只以原生 workspace 工具（`internal/codingtools`）形式提供给模型，不提供给 WASM。
-- 图外新增：`internal/agentmanager`/`internal/orchestration`（Multi-Agent）、`internal/agentgoal`、`internal/agentflow`、`internal/strategy`、`internal/evolutiontools`、`internal/lsp`、`internal/evaluation`、`internal/toolbridge`、`internal/modelgateway`、`internal/modelcontext`。
+- 图外新增：`internal/agentmanager`/`internal/orchestration`（Multi-Agent）、`internal/agentflow`、`internal/strategy`、`internal/evolutiontools`、`internal/lsp`、`internal/evaluation`、`internal/toolbridge`、`internal/modelgateway`、`internal/modelcontext`。
 - 依赖方向以 `internal/architecture/architecture_test.go` 为准：例如 `eino-ext` 仅限 `internal/modelgateway`，`database/sql` 仅限 `sqlitestore`/`sessionregistry`/`workspacedomain`，`internal/evolutiontools` 不得依赖 Eino，`sdk/pluginabi` 不依赖任何内部包。
 
 ### 4.1 可信计算基（TCB）
@@ -418,7 +413,7 @@ idempotency_key = hash(session_id, tool_call_id, tool_revision, normalized_args)
 
 因此，“回退”是恢复控制流，而不是假装物理世界已经回滚。
 
-实际实现：Tool 执行错误、审批拒绝和前置条件错误作为结构化 Tool 结果返回模型，由同一 Eino Loop 自行修正；致命错误使 Turn 失败（`turn.failed`），中断的 Turn 可经 checkpoint `Resume`（`chat --resume-turn`）恢复，或经 `chat --abandon-turn/--abandon-goal … --confirm-abandon` 显式关闭。策略候选的 Turn 失败（非用户取消）只把后续 Turn 退回宿主基线并隔离该候选，不重放请求、不恢复文件。
+实际实现：Tool 执行错误、审批拒绝和前置条件错误作为结构化 Tool 结果返回模型，由同一 Eino Loop 自行修正；致命错误使 Turn 失败（`turn.failed`），中断的 Turn 可经 checkpoint `Resume`（`chat --resume-turn`）恢复，或经 `chat --abandon-turn … --confirm-abandon` 显式关闭。策略候选的 Turn 失败（非用户取消）只把后续 Turn 退回宿主基线并隔离该候选，不重放请求、不恢复文件。
 
 ### 6.5 存储实现
 
@@ -438,7 +433,7 @@ approvals
 loop_specs
 ```
 
-实际实现：`internal/session/sqlitestore` 的 forward-only 迁移 v1–v36（`schema.go`；账本 `schema_migrations` 逐版本事务应用并校验 checksum）。与上表对应：`session_events`、`runtime_snapshots`、`plugin_revisions`、`plugin_builds` 存在；`control_events` 不存在（Multi-Agent 用 `orchestration_events`，策略用 `strategy_events`）；`session_snapshots` 不存在（Eino checkpoint 在 `agent_checkpoints`）；`tool_registry` 不存在（Registry 在内存，身份经 `runtime_snapshots` 持久化）；`approvals` 不存在（只有 `approval.*` 事件）；`loop_specs` 的对应物是 `strategy_specs/suites/reports/active/events/quarantine`。另有 `runtime_snapshot_refs`、`runtime_consumer_closures`、`recovery_abandonments`、`plugin_blobs`、`plugin_test_reports`、`plugin_revision_tombstones`、`maintenance_receipts`，以及 Multi-Agent/Goal/Flow/用量/LSP 表（`teams`、`agents`、`tasks`、`mailbox_messages`、`workspace_leases`、`merge_queue`、`goal_runs`、`flow_runs`、`usage_records`、`team_budgets`、`lsp_diagnostic_projections` 等）。另有两个独立 SQLite 库：`<GSEA_HOME>/control.db`（`internal/sessionregistry`，`agent_sessions` 表）与 `<GSEA_HOME>/workspaces/<identity>/coord.db`（`internal/workspacedomain`，`meta/instances/leases`）。
+实际实现：当前生产路径使用 ATE 原生 Session、Task、Agent、Flow、用量和策略事实；本地 runtime SQLite 只保留 checkpoint、工具快照、插件资源、LSP 缓存、Workspace 租约和未完成请求等运行时资源。旧业务表、Goal/round 适配器和历史迁移不再由新版本读取或迁移，旧数据库按 clean cutover 原地保留。
 
 写入规则：
 
@@ -531,9 +526,9 @@ type SnapshotManifest struct { Version int; Host string; Tools []SnapshotEntry }
   "ok": true,
   "output": {},
   "artifacts": [
-    {"sha256": "...", "mediaType": "text/plain", "name": "result.txt"}
+    { "sha256": "...", "mediaType": "text/plain", "name": "result.txt" }
   ],
-  "metrics": {"durationMs": 12}
+  "metrics": { "durationMs": 12 }
 }
 ```
 
@@ -591,7 +586,7 @@ type SnapshotManifest struct { Version int; Host string; Tools []SnapshotEntry }
     "inputSchema": {
       "type": "object",
       "properties": {
-        "location": {"type": "string", "maxLength": 200}
+        "location": { "type": "string", "maxLength": 200 }
       },
       "required": ["location"],
       "additionalProperties": false
@@ -629,15 +624,15 @@ Manifest 中的权限是申请，不是授权。最终授权由 Policy Engine �
 
 Host Capability 使用最小权限设计：
 
-| Capability | 示例约束 |
-| --- | --- |
-| `fs.read` | 工作区根目录、Glob、最大字节数 |
-| `fs.write` | 指定路径范围、最大文件大小、是否要求审批 |
-| `net.http` | Method、Host、端口、响应大小、重定向策略 |
-| `process.exec` | 命令白名单、工作目录、超时、环境变量白名单 |
-| `kv.read/write` | 插件命名空间和配额 |
-| `clock.now` | 是否允许真实时间 |
-| `random.secure` | 最大读取字节数 |
+| Capability      | 示例约束                                   |
+| --------------- | ------------------------------------------ |
+| `fs.read`       | 工作区根目录、Glob、最大字节数             |
+| `fs.write`      | 指定路径范围、最大文件大小、是否要求审批   |
+| `net.http`      | Method、Host、端口、响应大小、重定向策略   |
+| `process.exec`  | 命令白名单、工作目录、超时、环境变量白名单 |
+| `kv.read/write` | 插件命名空间和配额                         |
+| `clock.now`     | 是否允许真实时间                           |
+| `random.secure` | 最大读取字节数                             |
 
 以下数据永不直接暴露给 WASM：
 
@@ -860,7 +855,7 @@ Compiler Worker 由宿主启动为独立进程，并设置：
 - 整个进程组取消；Windows 使用 Job Object 或等价机制。
 - 无网络构建。
 
-实际实现：没有常驻 Compiler Worker；`pluginbuild.Compiler` 每次构建通过 `sandbox.New` 获取 OS 沙箱（macOS Seatbelt / Linux bubblewrap，无可用后端时拒绝而非降级），在其中经 shell 执行 `ulimit -t 90 && ulimit -f 131072 && exec go build …`，整体 2 分钟超时，取消时杀进程组。使用宿主 `runtime.GOROOT()` 下的 `go`（必须为 go1.27.0，并记录二进制 SHA-256），工具链只读可见；沙箱把 `HOME/TMPDIR/GOCACHE/XDG_CACHE_HOME` 指向每次调用私有临时目录，并剥离名称含 KEY/TOKEN/SECRET 等的环境变量；未单独设置 `GOMODCACHE`（无外部依赖，`GOPROXY=off`）。内存只有 `GOMEMLIMIT=256MiB` 软限制与 `GOMAXPROCS=2`，没有进程数限制；Windows Job Object 未实现。同一时刻只运行一个构建。
+`pluginbuild.Compiler` 使用 `GSEA_GO_ROOT` 指定的本机工具链，每次构建启动独立的 OS 沙箱进程（macOS Seatbelt / Linux bubblewrap）。工具链只读，Go 版本与平台在沙箱中校验，驱动、编译器和标准库等构建输入纳入构建前后指纹。编译使用私有 `HOME/TMPDIR/GOCACHE/XDG_CACHE_HOME` 和 `GOPROXY=off`，并执行 `ulimit -t 90 && ulimit -f 131072 && exec go build …`。整体时限 2 分钟，取消时清理进程组。同一时刻只运行一个构建。`GOMEMLIMIT=256MiB` 是软内存目标，`GOMAXPROCS=2` 限制 Go 调度并行度。
 
 ### 11.2 源码策略
 
@@ -893,7 +888,7 @@ GOFLAGS=-mod=vendor -trimpath -buildvcs=false
 
 不得让构建自动访问公网下载依赖。新增 SDK 依赖必须随宿主版本审核和发布。
 
-实际实现：没有 `GOFLAGS` 与 vendor 模式；构建参数直接写在命令行（`-mod=readonly -trimpath -buildvcs=false -buildmode=c-shared`）。完整环境为 `PATH=<GOROOT>/bin:/usr/bin:/bin GOROOT=<host> GOTOOLCHAIN=local GOENV=off GOWORK=off GOPROXY=off GOSUMDB=off CGO_ENABLED=0 GOOS=wasip1 GOARCH=wasm GOMAXPROCS=2 GOMEMLIMIT=256MiB`，沙箱再追加私有 `HOME/TMPDIR/GOCACHE/XDG_CACHE_HOME`。
+实际实现：没有 `GOFLAGS` 与 vendor 模式；构建参数直接写在命令行（`-mod=readonly -trimpath -buildvcs=false -buildmode=c-shared`）。完整环境为 `PATH=<go-root>/bin:/usr/bin:/bin GOROOT=<go-root> GOTOOLCHAIN=local GOENV=off GOWORK=off GOPROXY=off GOSUMDB=off CGO_ENABLED=0 GOOS=wasip1 GOARCH=wasm GOMAXPROCS=2 GOMEMLIMIT=256MiB`，其中 `<go-root>` 来自 `GSEA_GO_ROOT`，沙箱再追加私有 `HOME/TMPDIR/GOCACHE/XDG_CACHE_HOME`。
 
 ### 11.4 构建记录
 
@@ -992,13 +987,13 @@ Build Candidate
 
 建议默认规则：
 
-| 风险等级 | 示例 | 是否允许自动晋升 |
-| --- | --- | --- |
-| Pure | 格式化、解析、纯计算 | 测试通过后可配置自动晋升 |
-| Read | 工作区只读、受限 HTTP GET | 首次人工审批，后续按策略 |
-| Write | 文件写入、数据库变更 | 必须人工审批 |
-| Execute | Shell、进程、Git push | 必须逐次或严格规则审批 |
-| Secret | 代表用户访问第三方账户 | 默认禁止动态插件直接获得 |
+| 风险等级 | 示例                      | 是否允许自动晋升         |
+| -------- | ------------------------- | ------------------------ |
+| Pure     | 格式化、解析、纯计算      | 测试通过后可配置自动晋升 |
+| Read     | 工作区只读、受限 HTTP GET | 首次人工审批，后续按策略 |
+| Write    | 文件写入、数据库变更      | 必须人工审批             |
+| Execute  | Shell、进程、Git push     | 必须逐次或严格规则审批   |
+| Secret   | 代表用户访问第三方账户    | 默认禁止动态插件直接获得 |
 
 授权绑定插件 Revision Hash。插件更新后不得继承旧版本的敏感授权。
 
@@ -1203,8 +1198,6 @@ ${AGENT_HOME}/
 ├── state/
 │   ├── agent.db
 │   └── blobs/
-├── toolchains/
-│   └── go1.27.0/
 ├── plugins/
 │   └── <plugin-id>/
 │       ├── revisions/
@@ -1268,19 +1261,19 @@ ${GSEA_HOME}/
 
 ## 18. 故障处理矩阵
 
-| 故障 | 处理方式 | 是否自动重试 |
-| --- | --- | --- |
-| 模型 429/临时网络失败 | 退避、同 Provider 重试、可选 Failover | 是，受预算限制 |
-| 模型认证失败 | 停止并提示更新凭证 | 否 |
-| WASM Trap | 关闭 Instance，记录失败，返回结构化 Tool Error | 默认否 |
-| WASM Timeout | Context 取消并关闭 Instance | 仅纯函数可按策略重试 |
-| WASM 内存超限 | Trap，禁用或降级插件 | 否 |
-| Host Capability 失败 | 返回明确错误码 | 取决于错误分类 |
-| 副作用结果未知 | Reconcile 或询问用户 | 否 |
-| LoopSpec 构造失败 | 使用内置 Base LoopSpec | 是，继续当前会话 |
-| Session Snapshot 损坏 | 从事件日志重建 | 是 |
-| 事件日志损坏 | 停止写入并进入只读恢复模式 | 否 |
-| 候选插件构建失败 | 保留诊断，不影响 Active Revision | 可由 Agent 修复后新建候选 |
+| 故障                  | 处理方式                                       | 是否自动重试              |
+| --------------------- | ---------------------------------------------- | ------------------------- |
+| 模型 429/临时网络失败 | 退避、同 Provider 重试、可选 Failover          | 是，受预算限制            |
+| 模型认证失败          | 停止并提示更新凭证                             | 否                        |
+| WASM Trap             | 关闭 Instance，记录失败，返回结构化 Tool Error | 默认否                    |
+| WASM Timeout          | Context 取消并关闭 Instance                    | 仅纯函数可按策略重试      |
+| WASM 内存超限         | Trap，禁用或降级插件                           | 否                        |
+| Host Capability 失败  | 返回明确错误码                                 | 取决于错误分类            |
+| 副作用结果未知        | Reconcile 或询问用户                           | 否                        |
+| LoopSpec 构造失败     | 使用内置 Base LoopSpec                         | 是，继续当前会话          |
+| Session Snapshot 损坏 | 从事件日志重建                                 | 是                        |
+| 事件日志损坏          | 停止写入并进入只读恢复模式                     | 否                        |
+| 候选插件构建失败      | 保留诊断，不影响 Active Revision               | 可由 Agent 修复后新建候选 |
 
 自动重试必须基于错误语义和幂等性，不能对所有失败统一重跑。
 
@@ -1310,9 +1303,9 @@ ${GSEA_HOME}/
 7. 审批等待期间退出进程，重启后可以继续 Resume。
 8. 恶意网页内容不能绕过 Policy 获得文件写入或 Shell 权限。
 9. Go 编译过程无法访问网络、宿主敏感环境变量或 Staging Root 之外的源码。
-10. 工具链安装完成后，离线环境能够编译标准模板并执行插件。
+10. `GSEA_GO_ROOT` 指向有效的 Go 1.27.0 安装目录时，离线环境能够编译标准模板并执行插件。
 
-实际实现：第 7 条的前提不成立（审批不跨进程保留，见 13.3），中断 Turn 需经 `--resume-turn` 恢复；第 10 条没有工具链安装步骤，构建直接使用宿主 Go 1.27.0。
+实际实现：审批不跨进程保留（见 13.3），中断 Turn 需经 `--resume-turn` 恢复。
 
 ### 19.3 Fuzz 与安全测试
 

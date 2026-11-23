@@ -83,6 +83,10 @@ type AgentResult struct {
 // request that carries it to the main workspace.
 type WorkspaceDelivery struct {
 	ViewID          WorkspaceViewID `json:"view_id"`
+	TaskID          TaskID          `json:"task_id,omitempty"`
+	ExecutionID     string          `json:"execution_id,omitempty"`
+	ContractHash    string          `json:"contract_hash,omitempty"`
+	Attempt         int             `json:"attempt,omitempty"`
 	CandidateDigest string          `json:"candidate_digest"`
 	MergeID         MergeID         `json:"merge_id"`
 	ChangedPaths    int             `json:"changed_paths"`

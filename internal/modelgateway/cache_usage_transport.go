@@ -8,26 +8,20 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // cacheUsageHTTPClient normalizes provider-specific OpenAI-compatible usage
 // fields before the Eino adapter decodes them. OpenAI already emits
 // prompt_tokens_details.cached_tokens; DeepSeek emits
 // prompt_cache_hit_tokens/prompt_cache_miss_tokens.
-func cacheUsageHTTPClient(client *http.Client, timeout time.Duration) *http.Client {
-	if client == nil {
-		client = &http.Client{Timeout: timeout}
-	} else {
-		clone := *client
-		client = &clone
-	}
-	transport := client.Transport
+func cacheUsageHTTPClient(client *http.Client) *http.Client {
+	clone := *client
+	transport := clone.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	client.Transport = cacheUsageTransport{inner: transport}
-	return client
+	clone.Transport = cacheUsageTransport{inner: transport}
+	return &clone
 }
 
 type cacheUsageTransport struct {

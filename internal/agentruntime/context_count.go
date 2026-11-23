@@ -5,7 +5,6 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/vkviyu/go-self-evolving-agent/internal/agentgoal"
 )
 
 type contextToolSchema struct {
@@ -54,9 +53,7 @@ func (f *Factory) countContextInput(messages []*schema.Message, tools []contextT
 func (f *Factory) contextToolSchemas() []contextToolSchema {
 	var schemas []contextToolSchema
 	for _, descriptor := range f.registry.Snapshot().Descriptors() {
-		if (descriptor.Name == agentgoal.ReportToolName && !f.goalMode.Enabled) ||
-			(descriptor.Name == agentgoal.StartToolName && (!f.goalMode.Enabled || f.goalMode.Activation == agentgoal.ActivationAlways)) ||
-			(f.profile != nil && !permitsProfileTool(*f.profile, descriptor)) {
+		if f.profile != nil && !permitsProfileTool(*f.profile, descriptor) {
 			continue
 		}
 		schemas = append(schemas, contextToolSchema{Name: descriptor.Name, Description: descriptor.Description, Parameters: descriptor.InputSchema})

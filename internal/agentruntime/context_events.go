@@ -33,8 +33,8 @@ func (f *Factory) recordContextManagement(
 			"messages_before": messagesBefore,
 			"messages_after":  messagesAfter,
 			"artifacts":       artifacts,
-			"goal_id":         hints.GoalID,
-			"goal_round":      hints.GoalRound,
+			"contract_id":     hints.ContractID,
+			"attempt":         hints.Attempt,
 			"fallback":        fallback,
 		}),
 	})

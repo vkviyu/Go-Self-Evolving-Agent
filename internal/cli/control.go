@@ -59,15 +59,6 @@ func runControl(ctx context.Context, arguments []string, stdin io.Reader, stdout
 	if *workspaceDirectory != "" {
 		resolved.WorkspaceDirectory = *workspaceDirectory
 	}
-	application, err := app.Open(ctx, resolved)
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, application.Close()) }()
-	supervisor, err := application.NewSupervisor(agentmanager.Config{})
-	if err != nil {
-		return err
-	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetEscapeHTML(false)
 	scanner := bufio.NewScanner(stdin)
@@ -85,10 +76,12 @@ func runControl(ctx context.Context, arguments []string, stdin io.Reader, stdout
 			continue
 		}
 		if command.Protocol != "" && command.Protocol != "gsea.command.v1" {
-			_ = writeControl(encoder, map[string]any{"protocol": controlProtocol, "type": "error", "error": "unsupported command protocol"})
+			if err := writeControl(encoder, map[string]any{"protocol": controlProtocol, "type": "error", "error": "unsupported command protocol"}); err != nil {
+				return err
+			}
 			continue
 		}
-		if err := executeControlCommand(ctx, supervisor, application.Orchestration(), command, encoder); err != nil {
+		if err := runControlCommand(ctx, resolved, command, encoder); err != nil {
 			if writeErr := writeControl(encoder, map[string]any{"protocol": controlProtocol, "type": "error", "command": command.Command, "error": err.Error()}); writeErr != nil {
 				return writeErr
 			}
@@ -103,7 +96,53 @@ type controlProjection interface {
 	LoadTeam(context.Context, orchestration.TeamID, orchestration.Cursor, int) ([]orchestration.Event, error)
 }
 
+type controlReader interface {
+	agentmanager.TeamSnapshotReader
+	ListAgents(context.Context, orchestration.AgentQuery) ([]orchestration.AgentSnapshot, error)
+	ListTasks(context.Context, orchestration.TaskQuery) ([]orchestration.TaskSnapshot, error)
+	ListWorkspaceViews(context.Context, workspacecoord.ViewQuery) ([]workspacecoord.View, error)
+	ListMerges(context.Context, workspacecoord.MergeQuery) ([]workspacecoord.MergeRequest, error)
+}
+
+func runControlCommand(ctx context.Context, cfg config.Config, command controlCommand, encoder *json.Encoder) (resultErr error) {
+	readOnly, err := validateControlCommand(command)
+	if err != nil {
+		return err
+	}
+	application, err := app.OpenControl(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, application.Close()) }()
+	if readOnly {
+		return executeControl(ctx, application, nil, application.Orchestration(), command, encoder)
+	}
+	teamID, err := resolveControlTeam(ctx, application.Orchestration(), command)
+	if err != nil {
+		return err
+	}
+	if err := application.AttachExistingTeam(ctx, teamID); err != nil {
+		return err
+	}
+	// Revalidate under ownership, before Supervisor recovery can write.
+	if resolved, err := resolveControlTeam(ctx, application.Orchestration(), command); err != nil {
+		return err
+	} else if resolved != teamID {
+		return errors.New("control target Team changed while acquiring ownership")
+	}
+	supervisor, err := application.NewControlSupervisor(ctx, teamID)
+	if err != nil {
+		return err
+	}
+	command.TeamID = string(teamID)
+	return executeControlCommand(ctx, supervisor, application.Orchestration(), command, encoder)
+}
+
 func executeControlCommand(ctx context.Context, supervisor *agentmanager.Supervisor, store controlProjection, command controlCommand, encoder *json.Encoder) error {
+	return executeControl(ctx, supervisor, supervisor, store, command, encoder)
+}
+
+func executeControl(ctx context.Context, reader controlReader, supervisor *agentmanager.Supervisor, store controlProjection, command controlCommand, encoder *json.Encoder) error {
 	if command.Command == "" {
 		return errors.New("command is required")
 	}
@@ -114,16 +153,16 @@ func executeControlCommand(ctx context.Context, supervisor *agentmanager.Supervi
 		}
 	}
 	queryAgents := func() ([]orchestration.AgentSnapshot, error) {
-		return supervisor.ListAgents(ctx, orchestration.AgentQuery{TeamID: teamID})
+		return reader.ListAgents(ctx, orchestration.AgentQuery{TeamID: teamID})
 	}
 	queryTasks := func() ([]orchestration.TaskSnapshot, error) {
-		return supervisor.ListTasks(ctx, orchestration.TaskQuery{TeamID: teamID})
+		return reader.ListTasks(ctx, orchestration.TaskQuery{TeamID: teamID})
 	}
 	queryViews := func() ([]workspacecoord.View, error) {
-		return supervisor.ListWorkspaceViews(ctx, workspacecoord.ViewQuery{TeamID: teamID})
+		return reader.ListWorkspaceViews(ctx, workspacecoord.ViewQuery{TeamID: teamID})
 	}
 	queryMerges := func() ([]workspacecoord.MergeRequest, error) {
-		return supervisor.ListMerges(ctx, workspacecoord.MergeQuery{TeamID: teamID})
+		return reader.ListMerges(ctx, workspacecoord.MergeQuery{TeamID: teamID})
 	}
 	switch command.Command {
 	case "snapshot":
@@ -133,13 +172,13 @@ func executeControlCommand(ctx context.Context, supervisor *agentmanager.Supervi
 				return err
 			}
 			for _, id := range teams {
-				if err := emitSnapshot(ctx, supervisor, id, encoder); err != nil {
+				if err := emitSnapshot(ctx, reader, id, encoder); err != nil {
 					return err
 				}
 			}
 			return nil
 		}
-		return emitSnapshot(ctx, supervisor, teamID, encoder)
+		return emitSnapshot(ctx, reader, teamID, encoder)
 	case "agent.list":
 		agents, err := queryAgents()
 		return emitResult(encoder, command.Command, teamID, agents, err)

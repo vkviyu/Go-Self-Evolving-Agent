@@ -109,7 +109,6 @@ func parseStrategyOptions(args []string, stderr io.Writer) (parsed strategyOptio
 		}
 		cfg.DataDirectory = options.dataDirectory
 		cfg.WorkspaceDirectory = options.workspaceDirectory
-		cfg.Goal = options.goalMode
 		cfg.Model.Name = options.model.Model
 		cfg.Agent.Instruction = options.instruction
 		cfg.Agent.MaxIterations = options.maxIterations

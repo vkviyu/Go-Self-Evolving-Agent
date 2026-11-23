@@ -49,18 +49,20 @@ const (
 )
 
 type ReservationRequest struct {
-	TeamID       orchestration.TeamID
-	AgentID      orchestration.AgentID
-	RunID        orchestration.RunID
-	TurnID       string
-	RequestID    string
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
-	CostMicros   int64
-	ModelProfile string
-	Provider     string
-	Model        string
+	TeamID          orchestration.TeamID
+	AgentID         orchestration.AgentID
+	RunID           orchestration.RunID
+	TurnID          string
+	RequestID       string
+	ContractHash    string
+	ExecutionBudget BudgetLimits
+	InputTokens     int
+	OutputTokens    int
+	TotalTokens     int
+	CostMicros      int64
+	ModelProfile    string
+	Provider        string
+	Model           string
 }
 
 type Reservation struct {

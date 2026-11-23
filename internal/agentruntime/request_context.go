@@ -30,9 +30,12 @@ type requestContextState struct {
 }
 
 func (m *recordingModel) prepareModelInput(ctx context.Context, input []*schema.Message, options []model.Option) ([]*schema.Message, []model.Option, error) {
-	options, err := m.goalToolOptions(ctx, options)
-	if err != nil {
-		return nil, nil, err
+	m.emitLive(ctx, m.modelLifecycleEvent(EventModelPreparationStarted))
+	var err error
+	if m.purpose == "" {
+		if err := checkToolProgress(input); err != nil {
+			return nil, nil, err
+		}
 	}
 	if replay := m.replay; replay != nil && replay.Next == len(replay.Responses) && replay.Pending != nil && replay.PendingAfter == len(replay.Responses) {
 		// The last dispatch may have stopped after its prompt was prepared.
@@ -48,6 +51,12 @@ func (m *recordingModel) prepareModelInput(ctx context.Context, input []*schema.
 		if err != nil {
 			return nil, nil, err
 		}
+		if m.experienceEnabled() && m.receipt.Experience == nil {
+			return nil, nil, errors.New("prepared request has no experience context; refusing semantic reselection")
+		}
+		if err := m.checkDispatchCapacity(input, options); err != nil {
+			return nil, nil, err
+		}
 		options, err = m.profileOptions(ctx, input, options)
 		if err == nil {
 			err = m.captureRequest(input, options)
@@ -55,6 +64,10 @@ func (m *recordingModel) prepareModelInput(ctx context.Context, input []*schema.
 		replay.Pending = nil
 		return input, options, err
 	}
+	if err := m.prepareExperience(ctx, input); err != nil {
+		return nil, nil, err
+	}
+	opening := m.takeOpeningInput(input)
 	input, err = m.prepareBackgroundInput(ctx, input)
 	if err != nil {
 		return nil, nil, err
@@ -64,15 +77,32 @@ func (m *recordingModel) prepareModelInput(ctx context.Context, input []*schema.
 	if err != nil {
 		return nil, nil, err
 	}
+	input, err = m.attachExperience(input, options)
+	if err != nil {
+		return nil, nil, err
+	}
 	// Profile quotas are charged against the prompt actually dispatched,
 	// including tool schemas, rather than the uncompressed Eino checkpoint.
-	options, err = m.profileOptions(ctx, input, options)
+	baseInput, baseOptions := input, options
+	input, err = m.attachFileReferences(ctx, input, opening, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	options, err = m.profileOptions(ctx, input, baseOptions)
+	if _, constrained := errors.AsType[*ProfileConstraintError](err); constrained && m.receipt.FileReferencePrompt != nil {
+		// Optional context should never consume the last of a Profile's
+		// input quota and prevent a prompt that otherwise fits.
+		m.receipt.FileReferencePrompt = nil
+		input = baseInput
+		options, err = m.profileOptions(ctx, input, baseOptions)
+	}
 	if err == nil {
 		err = m.captureRequest(input, options)
 		if err == nil {
 			m.receipt.Input, err = cloneJournalInput(input)
 		}
 		if err == nil && m.purpose == "" && m.receipt.RawDigest != "" {
+			m.emitLive(ctx, m.modelLifecycleEvent(EventTurnPreparedPersistenceStarted))
 			durable, cancel := durabilityContext(ctx)
 			_, journalErr := m.events.Append(durable, m.sessionID, session.AnySequence, session.PendingEvent{
 				Type: session.EventTurnPrepared, CorrelationID: m.turnID, RuntimeSnapshotID: m.runtimeSnapshotID,
@@ -93,6 +123,7 @@ func (m *recordingModel) prepareRequestContext(ctx context.Context, input []*sch
 	}
 	f := m.factory
 	limit := modelcontext.InputLimit(f.config.ContextWindowTokens, requestOutputLimit(f, options))
+	m.emitLive(ctx, m.modelLifecycleEvent(EventContextTokenCountingStarted))
 	// Auxiliary requests have purpose-specific structured input. They may not
 	// recursively summarize themselves or silently remove evaluator evidence.
 	if m.purpose != "" {
@@ -114,10 +145,15 @@ func (m *recordingModel) prepareRequestContext(ctx context.Context, input []*sch
 		return nil, err
 	}
 	before := m.countRequestInput(managed, options)
-	trigger := min(f.config.CompactionTriggerTokens, limit)
+	reserve, err := m.experienceTokenReserve(managed, options)
+	if err != nil {
+		return nil, err
+	}
+	trigger := max(1, min(f.config.CompactionTriggerTokens, limit)-reserve)
 	changed := len(artifacts) > 0 || state.covered > 0
 	compacted := false
 	if before >= trigger {
+		m.emitLive(ctx, Event{Type: EventContextCompactionStarted, TurnID: m.turnID, Purpose: m.purpose})
 		var prepared []*schema.Message
 		prepared, compacted, err = m.compactRequest(ctx, managed, options, trigger)
 		if err != nil {
@@ -128,7 +164,11 @@ func (m *recordingModel) prepareRequestContext(ctx context.Context, input []*sch
 			changed = true
 		}
 	}
-	if err := m.checkContextLimit(managed, options, limit); err != nil {
+	reserve, err = m.experienceTokenReserve(managed, options)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.checkContextLimit(managed, options, limit-reserve); err != nil {
 		return nil, err
 	}
 	if !compacted && (len(artifacts) > 0 || (hadView && !reusedView)) {
@@ -190,28 +230,12 @@ func (m *recordingModel) compactRequest(ctx context.Context, input []*schema.Mes
 		return input, false, nil // No new older work to summarize; avoid compaction thrashing.
 	}
 	hints := ContextHints{}
-	if f.goalStore != nil && f.goalMode.Enabled {
-		goal, round, found, err := f.goalStore.GoalForTurn(ctx, m.sessionID, m.turnID)
-		if err != nil {
-			return nil, false, err
-		}
-		if found {
-			hints = ContextHints{GoalID: goal.ID, GoalText: goal.Text, GoalRound: round.Number}
-			if goal.Contract != nil {
-				contract, err := json.Marshal(goal.Contract)
-				if err != nil {
-					return nil, false, err
-				}
-				hints.GoalText += "\nTask contract: " + string(contract)
-			}
-		}
-	}
-	summary, err := f.summarize(ctx, m.sessionID, prefix, hints)
+	summary, err := f.summarizeWithSink(ctx, m.sessionID, prefix, hints, m.liveSink)
 	if err != nil {
 		return nil, false, err
 	}
 	summarySource := summaryFormatSource(summary)
-	summary = anchorGoal(summary, hints)
+	summary = anchorContract(summary, hints)
 	prepared := append(append([]*schema.Message(nil), pinned...), schema.SystemMessage("Conversation summary:\n"+summary))
 	prepared = append(prepared, retained...)
 	before, after := m.countRequestInput(input, options), m.countRequestInput(prepared, options)
@@ -219,7 +243,11 @@ func (m *recordingModel) compactRequest(ctx context.Context, input []*schema.Mes
 		return input, false, nil // The final capacity guard still rejects an oversized prompt.
 	}
 	limit := modelcontext.InputLimit(f.config.ContextWindowTokens, requestOutputLimit(f, options))
-	if err := m.checkContextLimit(prepared, options, limit); err != nil {
+	reserve, err := m.experienceTokenReserve(prepared, options)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := m.checkContextLimit(prepared, options, limit-reserve); err != nil {
 		return nil, false, err
 	}
 	if err := m.recordRequestContext(ctx, summary, retained, before, after, trigger, summarySource); err != nil {

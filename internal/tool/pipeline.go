@@ -47,6 +47,7 @@ func (err *ExecutionError) Unwrap() error {
 // Call is a tool invocation bound to an immutable turn snapshot.
 type Call struct {
 	Actor             orchestration.ActorScope
+	Execution         orchestration.ExecutionBinding
 	SessionID         session.ID
 	TurnID            string
 	RuntimeSnapshotID string
@@ -65,12 +66,13 @@ type Result struct {
 
 // Pipeline centralizes recording, policy and execution for every tool kind.
 type Pipeline struct {
-	registry *Registry
-	policy   policy.Engine
-	approver policy.Approver
-	events   session.EventStore
-	calls    *callCoordinator
-	guards   []ExecutionGuard
+	registry          *Registry
+	policy            policy.Engine
+	approver          policy.Approver
+	events            session.EventStore
+	calls             *callCoordinator
+	guards            []ExecutionGuard
+	durabilityTimeout time.Duration
 }
 
 // PipelineConfig contains the trusted services required by Pipeline. Keeping
@@ -81,16 +83,28 @@ type PipelineConfig struct {
 	Policy   policy.Engine
 	Approver policy.Approver
 	Events   session.EventStore
+	// DurabilityTimeout bounds detached outcome and audit writes. The host
+	// supplies its storage batch budget, including startup and lock contention.
+	// Zero selects 30 seconds.
+	DurabilityTimeout time.Duration
 }
 
 // NewPipeline validates and constructs the single tool execution boundary.
 func NewPipeline(config PipelineConfig) (*Pipeline, error) {
+	if config.DurabilityTimeout < 0 {
+		return nil, errors.New("tool durability timeout must be positive")
+	}
+	if config.DurabilityTimeout == 0 {
+		config.DurabilityTimeout = 30 * time.Second
+	}
 	pipeline := &Pipeline{
-		registry: config.Registry,
-		policy:   config.Policy,
-		approver: config.Approver,
-		events:   config.Events,
-		calls:    newCallCoordinator(),
+		registry:          config.Registry,
+		policy:            config.Policy,
+		approver:          config.Approver,
+		events:            config.Events,
+		calls:             newCallCoordinator(),
+		guards:            []ExecutionGuard{ExecutionBoundary{}},
+		durabilityTimeout: config.DurabilityTimeout,
 	}
 	if err := pipeline.validate(); err != nil {
 		return nil, err
@@ -189,6 +203,11 @@ func (p *Pipeline) Execute(ctx context.Context, call Call) (Result, error) {
 	if err := p.admitStart(ctx, call, binding); err != nil {
 		return Result{}, err
 	}
+	// Receipt reconciliation may outlive the caller's cancellation. A durable
+	// start record grants auditability, never permission to execute afterward.
+	if err := ctx.Err(); err != nil {
+		return Result{}, errors.Join(err, p.recordFailure(ctx, call, binding, err))
+	}
 	return p.invokeAndRecord(ctx, call, binding, snapshot)
 }
 
@@ -260,6 +279,7 @@ func (p *Pipeline) recordProposal(ctx context.Context, call Call, binding Bindin
 		RuntimeSnapshotID: call.RuntimeSnapshotID,
 		Payload: session.MustJSONPayload(map[string]any{
 			"actor":               call.Actor,
+			"execution":           call.Execution,
 			"turn_id":             call.TurnID,
 			"call_id":             call.CallID,
 			"tool":                binding.Descriptor.Name,
@@ -272,12 +292,17 @@ func (p *Pipeline) recordProposal(ctx context.Context, call Call, binding Bindin
 	if err != nil {
 		return fmt.Errorf("record proposed tool call: %w", err)
 	}
+	emitLiveEvent(ctx, LiveEvent{
+		Type: LiveToolProposed, CallID: call.CallID, TurnID: call.TurnID,
+		ToolName: binding.Descriptor.Name,
+	})
 	return nil
 }
 
 func makePolicyRequest(call Call, binding Binding) policy.Request {
 	return policy.Request{
 		Actor:         call.Actor,
+		Execution:     call.Execution,
 		CallID:        call.CallID,
 		SessionID:     string(call.SessionID),
 		ToolName:      binding.Descriptor.Name,
@@ -290,6 +315,10 @@ func makePolicyRequest(call Call, binding Binding) policy.Request {
 }
 
 func (p *Pipeline) evaluate(ctx context.Context, call Call, request policy.Request) (policy.Decision, error) {
+	emitLiveEvent(ctx, LiveEvent{
+		Type: LivePolicyChecking, CallID: call.CallID, TurnID: call.TurnID,
+		ToolName: request.ToolName,
+	})
 	decision, err := p.policy.Evaluate(ctx, request)
 	if err != nil {
 		return policy.Decision{}, fmt.Errorf("evaluate tool policy: %w", err)
@@ -310,6 +339,10 @@ func (p *Pipeline) evaluate(ctx context.Context, call Call, request policy.Reque
 	if err != nil {
 		return policy.Decision{}, fmt.Errorf("record policy decision: %w", err)
 	}
+	emitLiveEvent(ctx, LiveEvent{
+		Type: LivePolicyDecided, CallID: call.CallID, TurnID: call.TurnID,
+		ToolName: request.ToolName,
+	})
 	return decision, nil
 }
 
@@ -333,6 +366,14 @@ func (p *Pipeline) authorize(ctx context.Context, call Call, binding Binding, re
 		}); err != nil {
 			return fmt.Errorf("record approval request: %w", err)
 		}
+		emitLiveEvent(ctx, LiveEvent{
+			Type: LiveApprovalRequested, CallID: call.CallID, TurnID: call.TurnID,
+			ToolName: request.ToolName,
+		})
+		emitLiveEvent(ctx, LiveEvent{
+			Type: LiveApprovalWaiting, CallID: call.CallID, TurnID: call.TurnID,
+			ToolName: request.ToolName,
+		})
 		approved, err := p.approver.Approve(ctx, request, decision)
 		if err != nil {
 			return errors.Join(fmt.Errorf("resolve tool approval: %w", err), p.recordFailure(ctx, call, binding, err))
@@ -345,6 +386,10 @@ func (p *Pipeline) authorize(ctx context.Context, call Call, binding Binding, re
 		}); err != nil {
 			return fmt.Errorf("record approval result: %w", err)
 		}
+		emitLiveEvent(ctx, LiveEvent{
+			Type: LiveApprovalResolved, CallID: call.CallID, TurnID: call.TurnID,
+			ToolName: request.ToolName, Approved: approved,
+		})
 		if !approved {
 			return errors.Join(ErrApprovalDenied, p.recordFailure(ctx, call, binding, ErrApprovalDenied))
 		}
@@ -358,7 +403,7 @@ func (p *Pipeline) authorize(ctx context.Context, call Call, binding Binding, re
 // This does not grant execution after cancellation: policy/approver/executor
 // still receive the original context and tool.started remains cancelable.
 func (p *Pipeline) recordAudit(ctx context.Context, call Call, event session.PendingEvent) error {
-	durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	durable, cancel := p.durableContext(ctx)
 	defer cancel()
 	_, err := p.events.Append(durable, call.SessionID, session.AnySequence, event)
 	return err
@@ -370,16 +415,21 @@ func (p *Pipeline) recordStart(ctx context.Context, call Call, binding Binding) 
 		CorrelationID:     call.CallID,
 		RuntimeSnapshotID: call.RuntimeSnapshotID,
 		Payload: session.MustJSONPayload(map[string]any{
-			"actor":    call.Actor,
-			"turn_id":  call.TurnID,
-			"call_id":  call.CallID,
-			"tool":     binding.Descriptor.Name,
-			"revision": binding.Descriptor.Revision,
+			"actor":     call.Actor,
+			"execution": call.Execution,
+			"turn_id":   call.TurnID,
+			"call_id":   call.CallID,
+			"tool":      binding.Descriptor.Name,
+			"revision":  binding.Descriptor.Revision,
 		}),
 	})
 	if err != nil {
 		return fmt.Errorf("record tool start: %w", err)
 	}
+	emitLiveEvent(ctx, LiveEvent{
+		Type: LiveToolStarted, CallID: call.CallID, TurnID: call.TurnID,
+		ToolName: binding.Descriptor.Name,
+	})
 	return nil
 }
 
@@ -389,7 +439,7 @@ func (p *Pipeline) invoke(ctx context.Context, call Call, binding Binding, snaps
 	ctx = orchestration.WithTurnID(ctx, call.TurnID)
 	ctx = withPipeline(ctx, p)
 	ctx = withInvocation(ctx, Invocation{
-		SessionID: call.SessionID, TurnID: call.TurnID,
+		SessionID: call.SessionID, TurnID: call.TurnID, Execution: call.Execution,
 		RuntimeSnapshotID: call.RuntimeSnapshotID, CallID: call.CallID,
 		RegistryGeneration: snapshot.Generation(),
 	})
@@ -435,26 +485,35 @@ func (p *Pipeline) invoke(ctx context.Context, call Call, binding Binding, snaps
 
 func (p *Pipeline) recordSuccess(ctx context.Context, call Call, binding Binding, data json.RawMessage) error {
 	// Successful side effects must remain recordable after user cancellation.
-	durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	durable, cancel := p.durableContext(ctx)
 	defer cancel()
 	_, err := p.events.Append(durable, call.SessionID, session.AnySequence, session.PendingEvent{
 		Type:              session.EventToolSucceeded,
 		CorrelationID:     call.CallID,
 		RuntimeSnapshotID: call.RuntimeSnapshotID,
 		Payload: session.MustJSONPayload(map[string]any{
-			"actor":    call.Actor,
-			"turn_id":  call.TurnID,
-			"call_id":  call.CallID,
-			"tool":     binding.Descriptor.Name,
-			"revision": binding.Descriptor.Revision,
-			"result":   json.RawMessage(data),
+			"actor":     call.Actor,
+			"execution": call.Execution,
+			"turn_id":   call.TurnID,
+			"call_id":   call.CallID,
+			"tool":      binding.Descriptor.Name,
+			"revision":  binding.Descriptor.Revision,
+			"result":    json.RawMessage(data),
 		}),
 	})
 	if err != nil {
 		// Execution succeeded but durability is unknown. Surface an explicit error;
 		// callers must not retry a possibly side-effecting tool automatically.
+		emitLiveEvent(ctx, LiveEvent{
+			Type: LiveToolOutcomeUnknown, CallID: call.CallID, TurnID: call.TurnID,
+			ToolName: binding.Descriptor.Name, Err: err,
+		})
 		return &OutcomeUnknownError{CallID: call.CallID, Tool: binding.Descriptor.Name, Cause: err}
 	}
+	emitLiveEvent(ctx, LiveEvent{
+		Type: LiveToolSucceeded, CallID: call.CallID, TurnID: call.TurnID,
+		ToolName: binding.Descriptor.Name,
+	})
 	return nil
 }
 
@@ -471,29 +530,32 @@ func (p *Pipeline) replayOutcome(ctx context.Context, call Call, binding Binding
 		return Result{}, false, fmt.Errorf("recover durable tool call: %w", err)
 	}
 	var proposed struct {
-		Tool      string          `json:"tool"`
-		Revision  string          `json:"revision"`
-		Arguments json.RawMessage `json:"arguments"`
-		TurnID    string          `json:"turn_id"`
+		Tool      string                         `json:"tool"`
+		Revision  string                         `json:"revision"`
+		Arguments json.RawMessage                `json:"arguments"`
+		TurnID    string                         `json:"turn_id"`
+		Execution orchestration.ExecutionBinding `json:"execution"`
 	}
 	proposalFound := false
 	started := false
 	for _, event := range events {
 		if event.Type == session.EventToolStarted {
 			var identity struct {
-				TurnID string `json:"turn_id"`
+				TurnID    string                         `json:"turn_id"`
+				Execution orchestration.ExecutionBinding `json:"execution"`
 			}
 			if err := json.Unmarshal(event.Payload, &identity); err != nil {
 				return Result{}, false, fmt.Errorf("decode started tool call: %w", err)
 			}
-			started = started || identity.TurnID == call.TurnID
+			started = started || identity.TurnID == call.TurnID && identity.Execution == call.Execution
 		}
 		if event.Type == session.EventToolProposed {
 			var candidate struct {
-				Tool      string          `json:"tool"`
-				Revision  string          `json:"revision"`
-				Arguments json.RawMessage `json:"arguments"`
-				TurnID    string          `json:"turn_id"`
+				Tool      string                         `json:"tool"`
+				Revision  string                         `json:"revision"`
+				Arguments json.RawMessage                `json:"arguments"`
+				TurnID    string                         `json:"turn_id"`
+				Execution orchestration.ExecutionBinding `json:"execution"`
 			}
 			if err := json.Unmarshal(event.Payload, &candidate); err != nil {
 				return Result{}, false, fmt.Errorf("decode durable tool proposal: %w", err)
@@ -501,20 +563,24 @@ func (p *Pipeline) replayOutcome(ctx context.Context, call Call, binding Binding
 			if candidate.TurnID != call.TurnID {
 				continue
 			}
+			if candidate.Execution != call.Execution {
+				return Result{}, false, fmt.Errorf("%w: %s", ErrCallConflict, call.CallID)
+			}
 			proposed = candidate
 			proposalFound = true
 		}
 		if event.Type == session.EventToolFailed {
 			var failed struct {
-				Tool     string          `json:"tool"`
-				Revision string          `json:"revision"`
-				TurnID   string          `json:"turn_id"`
-				Receipt  *failureReceipt `json:"recovery"`
+				Tool      string                         `json:"tool"`
+				Revision  string                         `json:"revision"`
+				TurnID    string                         `json:"turn_id"`
+				Execution orchestration.ExecutionBinding `json:"execution"`
+				Receipt   *failureReceipt                `json:"recovery"`
 			}
 			if err := json.Unmarshal(event.Payload, &failed); err != nil {
 				return Result{}, false, fmt.Errorf("decode durable tool failure: %w", err)
 			}
-			if failed.TurnID != call.TurnID || failed.Receipt == nil {
+			if failed.TurnID != call.TurnID || failed.Execution != call.Execution || failed.Receipt == nil {
 				continue
 			}
 			if !proposalFound || proposed.Tool != binding.Descriptor.Name || proposed.Revision != binding.Descriptor.Revision ||
@@ -531,15 +597,16 @@ func (p *Pipeline) replayOutcome(ctx context.Context, call Call, binding Binding
 			continue
 		}
 		var succeeded struct {
-			Tool     string          `json:"tool"`
-			Revision string          `json:"revision"`
-			Result   json.RawMessage `json:"result"`
-			TurnID   string          `json:"turn_id"`
+			Tool      string                         `json:"tool"`
+			Revision  string                         `json:"revision"`
+			Result    json.RawMessage                `json:"result"`
+			TurnID    string                         `json:"turn_id"`
+			Execution orchestration.ExecutionBinding `json:"execution"`
 		}
 		if err := json.Unmarshal(event.Payload, &succeeded); err != nil {
 			return Result{}, false, fmt.Errorf("decode durable tool result: %w", err)
 		}
-		if succeeded.TurnID != call.TurnID {
+		if succeeded.TurnID != call.TurnID || succeeded.Execution != call.Execution {
 			continue
 		}
 		if !proposalFound || proposed.Tool != binding.Descriptor.Name || proposed.Revision != binding.Descriptor.Revision ||
@@ -619,10 +686,10 @@ func (coordinator *callCoordinator) lock(key string) func() {
 }
 
 func (p *Pipeline) recordFailure(ctx context.Context, call Call, binding Binding, cause error) error {
-	recordContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	recordContext, cancel := p.durableContext(ctx)
 	defer cancel()
 	payload := map[string]any{
-		"actor": call.Actor, "turn_id": call.TurnID, "call_id": call.CallID,
+		"actor": call.Actor, "execution": call.Execution, "turn_id": call.TurnID, "call_id": call.CallID,
 		"tool": binding.Descriptor.Name, "revision": binding.Descriptor.Revision, "error": cause.Error(),
 	}
 	if precondition, ok := errors.AsType[*PreconditionError](cause); ok {
@@ -640,7 +707,17 @@ func (p *Pipeline) recordFailure(ctx context.Context, call Call, binding Binding
 	if err != nil {
 		return fmt.Errorf("record tool failure: %w", err)
 	}
+	emitLiveEvent(ctx, LiveEvent{
+		Type: LiveToolFailed, CallID: call.CallID, TurnID: call.TurnID,
+		ToolName: binding.Descriptor.Name, Err: cause,
+	})
 	return nil
+}
+
+// durableContext preserves trusted invocation values after cancellation while
+// retaining the host's finite storage budget.
+func (p *Pipeline) durableContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), p.durabilityTimeout)
 }
 
 func callID() (string, error) {

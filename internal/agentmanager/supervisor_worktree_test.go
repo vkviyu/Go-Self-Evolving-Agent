@@ -13,7 +13,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
 	"github.com/vkviyu/go-self-evolving-agent/internal/artifact"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
@@ -46,7 +46,7 @@ func TestWorktreeWorkerPatchMergesAfterItsTaskAwaitsMerge(t *testing.T) {
 	writeTeamFile(t, filepath.Join(main, ".gitignore"), "/.gsea/\n")
 	runTeamGit(t, main, "add", ".")
 	runTeamGit(t, main, "commit", "-qm", "base")
-	database, err := sqlitestore.Open(ctx, ":memory:")
+	database, err := testfixture.Open(t, ctx, ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

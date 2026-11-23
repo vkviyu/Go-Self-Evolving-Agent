@@ -3,15 +3,16 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 )
 
-func closeOpenResources(database *sqlitestore.Database, wasmRuntime *wasm.Runtime, approvalBroker *approval.Broker, diagnostics *lsp.Manager) {
+func closeOpenResources(database *runtimestore.Database, wasmRuntime *wasm.Runtime, approvalBroker *approval.Broker, diagnostics *lsp.Manager) {
 	if diagnostics != nil {
 		_ = diagnostics.Close()
 	}
@@ -65,24 +66,57 @@ func (a *App) Close() error {
 				a.closeErr = err
 				return
 			}
-			closeErrs = append(closeErrs, err)
+			if err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close Agent supervisor: %w", err))
+			}
 		}
 		if plugins != nil {
-			closeErrs = append(closeErrs, plugins.Close(context.Background()))
+			if err := plugins.Close(context.Background()); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close plugins: %w", err))
+			}
 		}
 		if diagnostics != nil {
-			closeErrs = append(closeErrs, diagnostics.Close())
+			if err := diagnostics.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close diagnostics: %w", err))
+			}
 		}
 		if approvalBroker != nil {
-			closeErrs = append(closeErrs, approvalBroker.Close())
+			if err := approvalBroker.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close approval broker: %w", err))
+			}
 		}
 		if wasmRuntime != nil {
-			closeErrs = append(closeErrs, wasmRuntime.Close(context.Background()))
+			if err := wasmRuntime.Close(context.Background()); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close WASM runtime: %w", err))
+			}
+		}
+		if a.temporalProcess != nil {
+			if err := a.temporalProcess.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close ATE process: %w", err))
+			}
 		}
 		if database != nil {
-			closeErrs = append(closeErrs, database.Close())
+			if err := database.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close runtime database: %w", err))
+			}
 		}
-		closeErrs = append(closeErrs, a.domain.Close(), a.owner.Close())
+		for _, owner := range a.sessionOwners {
+			if owner != nil {
+				if err := owner.Close(); err != nil {
+					closeErrs = append(closeErrs, fmt.Errorf("release session owner: %w", err))
+				}
+			}
+		}
+		if a.domain != nil {
+			if err := a.domain.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close workspace domain: %w", err))
+			}
+		}
+		if a.owner != nil {
+			if err := a.owner.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("release runtime owner: %w", err))
+			}
+		}
 		a.closeErr = errors.Join(closeErrs...)
 	})
 	return a.closeErr
@@ -91,6 +125,15 @@ func (a *App) Close() error {
 // retainUntilExit keeps runtime ownership and workspace leases until the
 // process exits, because a worker that ignored cancellation may still write.
 func (a *App) retainUntilExit() {
-	a.owner.RetainUntilExit()
-	a.domain.RetainUntilExit()
+	if a.owner != nil {
+		a.owner.RetainUntilExit()
+	}
+	if a.domain != nil {
+		a.domain.RetainUntilExit()
+	}
+	for _, owner := range a.sessionOwners {
+		if owner != nil {
+			owner.RetainUntilExit()
+		}
+	}
 }

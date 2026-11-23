@@ -2,7 +2,13 @@ package orchestration
 
 import "fmt"
 
-type TeamState string
+type (
+	TeamState     string
+	AgentState    string
+	TaskState     string
+	ApprovalState string
+	LeaseState    string
+)
 
 const (
 	TeamActive    TeamState = "active"
@@ -12,8 +18,6 @@ const (
 	TeamFailed    TeamState = "failed"
 	TeamCanceled  TeamState = "canceled"
 )
-
-type AgentState string
 
 const (
 	AgentCreated   AgentState = "created"
@@ -25,8 +29,6 @@ const (
 	AgentFailed    AgentState = "failed"
 	AgentCanceled  AgentState = "canceled"
 )
-
-type TaskState string
 
 const (
 	TaskDraft        TaskState = "draft"
@@ -43,8 +45,6 @@ const (
 	TaskCanceled      TaskState = "canceled"
 )
 
-type ApprovalState string
-
 const (
 	ApprovalRequested ApprovalState = "requested"
 	ApprovalApproved  ApprovalState = "approved"
@@ -52,8 +52,6 @@ const (
 	ApprovalExpired   ApprovalState = "expired"
 	ApprovalCanceled  ApprovalState = "canceled"
 )
-
-type LeaseState string
 
 const (
 	LeaseRequested  LeaseState = "requested"

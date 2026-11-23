@@ -28,7 +28,7 @@ func TestResponsesCompleteCallReadsActualWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "runtime.go"), []byte("package agentflow\n// workspace fixture\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	application, err := Open(ctx, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: workspace})
+	application, err := testOpen(t, ctx, config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,12 +59,28 @@ func TestResponsesCompleteCallReadsActualWorkspace(t *testing.T) {
 			if !strings.Contains(string(encoded), application.workspace.Root()) || !strings.Contains(string(encoded), "Host workspace context") {
 				t.Errorf("effective workspace missing from model input: %s", encoded)
 			}
+			var metadata string
+			for _, item := range request.Input {
+				for _, part := range item.Content {
+					if strings.Contains(part.Text, "[Workspace file reference metadata]") {
+						metadata = part.Text
+					}
+				}
+			}
+			if !strings.Contains(metadata, `"path":"runtime.go"`) || !strings.Contains(metadata, `"line_count":2`) || strings.Contains(metadata, "workspace fixture") {
+				t.Errorf("expected file metadata without the file body: %q", metadata)
+			}
 			fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"item-read\",\"call_id\":\"read\",\"name\":\"workspace_read\",\"arguments\":\"{\\\"path\\\":\\\"runtime.go\\\"}\"}}\n\n")
 		} else {
 			found := false
 			for _, item := range request.Input {
 				if item.Type == "function_call_output" && strings.Contains(item.Output, "workspace fixture") && !strings.Contains(item.Output, `"error"`) {
 					found = true
+				}
+				for _, part := range item.Content {
+					if strings.Contains(part.Text, "[Workspace file reference metadata]") {
+						t.Error("second model request repeated file metadata")
+					}
 				}
 			}
 			if !found {
@@ -92,7 +108,7 @@ func TestResponsesCompleteCallReadsActualWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := turn.Run(ctx, []*schema.Message{schema.UserMessage("Read runtime.go without modifying it.")}, nil)
+	result, err := turn.Run(ctx, []*schema.Message{schema.UserMessage("Read @runtime.go without modifying it.")}, nil)
 	if err != nil || result.Final == nil || result.Final.Content != "read successfully" || calls.Load() != 2 {
 		t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
 	}

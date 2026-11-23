@@ -50,7 +50,7 @@
   },
   {
     "Name": "plugin_publish",
-    "Description": "Request human approval to publish this session's exact passing candidate, after reviewing its source and tests. Does not widen permissions. The current Turn stays frozen: the new tool is available only in a subsequent Turn/Goal round; do not try invoking it in this same loop.",
+    "Description": "Request human approval to publish this session's exact passing candidate, after reviewing its source and tests. Does not widen permissions. The current Turn stays frozen: the new tool is available only in a subsequent execution attempt; do not try invoking it in this same loop.",
     "InputSchema": {
       "type": "object",
       "properties": {
@@ -69,7 +69,7 @@
   },
   {
     "Name": "strategy_propose",
-    "Description": "Propose a version:1 LoopSpec for this root session. Only instruction_suffix and lower iteration/output caps; no model, tools, permissions or Goal gate changes. Requires approval and never activates. New revision is required for repairs.",
+    "Description": "Propose a version:1 LoopSpec for this root session. Only instruction_suffix and lower iteration/output caps; no model, tools, permissions or execution gate changes. Requires approval and never activates. New revision is required for repairs.",
     "InputSchema": {
       "type": "object",
       "properties": {

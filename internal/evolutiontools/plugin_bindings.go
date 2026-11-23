@@ -38,7 +38,7 @@ func PluginBindings(host PluginHost) []tool.Binding {
 				Revision:    "builtin-v1",
 				RiskClass:   tool.RiskWrite,
 				InputSchema: idSchema,
-				Description: "Request human approval to publish this session's exact passing candidate, after reviewing its source and tests. Does not widen permissions. The current Turn stays frozen: the new tool is available only in a subsequent Turn/Goal round; do not try invoking it in this same loop.",
+				Description: "Request human approval to publish this session's exact passing candidate, after reviewing its source and tests. Does not widen permissions. The current Turn stays frozen: the new tool is available only in a subsequent execution attempt; do not try invoking it in this same loop.",
 			},
 			Executor: tool.InvokeFunc(adapter.publish),
 		},

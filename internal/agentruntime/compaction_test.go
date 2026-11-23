@@ -118,12 +118,12 @@ func TestContextPolicyAnchorsActiveGoalAcrossCompaction(t *testing.T) {
 		schema.UserMessage(strings.Repeat("old investigation details ", 200)),
 		schema.AssistantMessage(strings.Repeat("old findings ", 200), nil),
 		schema.UserMessage("continue"),
-	}, ContextHints{GoalID: "goal-1", GoalText: "Fix the durable recovery bug without regressions", GoalRound: 3})
+	}, ContextHints{ContractID: "plan-1", ContractText: "Fix the durable recovery bug without regressions", Attempt: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(prepared) < 2 || !strings.Contains(prepared[0].Content, "Fix the durable recovery bug without regressions") || !strings.Contains(prepared[0].Content, "round=3") {
-		t.Fatalf("goal anchor missing from prepared context: %#v", prepared)
+	if len(prepared) < 2 || !strings.Contains(prepared[0].Content, "Fix the durable recovery bug without regressions") || !strings.Contains(prepared[0].Content, "attempt=3") {
+		t.Fatalf("execution contract anchor missing from prepared context: %#v", prepared)
 	}
 }
 
@@ -167,16 +167,36 @@ func TestCompactForcesDurableBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, changed, err := factory.Compact(context.Background(), session.ID("manual-compact"), []*schema.Message{
+	var live []Event
+	prepared, changed, err := factory.CompactWithSink(context.Background(), session.ID("manual-compact"), []*schema.Message{
 		schema.UserMessage(strings.Repeat("old question ", 150)),
 		schema.AssistantMessage(strings.Repeat("old answer ", 150), nil),
 		schema.UserMessage("latest question"),
+	}, func(_ context.Context, event Event) error {
+		live = append(live, event)
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed || len(prepared) != 2 || prepared[0].Role != schema.System {
 		t.Fatalf("changed=%v prepared=%#v", changed, prepared)
+	}
+	var sawCompaction, sawPreparation, sawRequest, sawResponse bool
+	for _, event := range live {
+		switch event.Type {
+		case EventContextCompactionStarted:
+			sawCompaction = true
+		case EventModelPreparationStarted:
+			sawPreparation = sawPreparation || event.Purpose == "compaction"
+		case EventModelRequestStarted:
+			sawRequest = sawRequest || event.Purpose == "compaction"
+		case EventModelResponseStarted:
+			sawResponse = sawResponse || event.Purpose == "compaction"
+		}
+	}
+	if !sawCompaction || !sawPreparation || !sawRequest || !sawResponse {
+		t.Fatalf("manual compaction live events = %#v", live)
 	}
 	history, err := factory.LoadHistory(context.Background(), "manual-compact")
 	if err != nil {

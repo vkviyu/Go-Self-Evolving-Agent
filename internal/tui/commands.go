@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var commandNames = []string{"/activity", "/agents", "/clear", "/compress", "/context", "/diff", "/exit", "/help", "/info", "/merge", "/question", "/reasoning", "/recoveries", "/resume", "/session"}
+var commandNames = []string{"/activity", "/agents", "/clear", "/compress", "/context", "/diff", "/exit", "/help", "/info", "/memory", "/merge", "/question", "/reasoning", "/recoveries", "/resume", "/session"}
 
 func (model *Model) handleCommand(input string) (tea.Cmd, bool) {
 	fields := strings.Fields(input)
@@ -18,6 +18,10 @@ func (model *Model) handleCommand(input string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return model.startResume(fields[1]), true
+	}
+	if len(fields) > 0 && strings.EqualFold(fields[0], "/memory") {
+		argument := strings.TrimSpace(input[len(fields[0]):])
+		return model.memoryCommand(argument), true
 	}
 	switch strings.ToLower(input) {
 	case "/info":
@@ -68,10 +72,16 @@ func (model *Model) handleCommand(input string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		model.busy = true
-		model.stage = "Compacting context"
+		model.stage = "Preparing context compression"
+		model.resetProgress()
 		model.refreshTranscript(true)
 		model.turnContext, model.turnCancel = context.WithCancel(model.ctx)
-		return tea.Batch(runCompressCommand(model.turnContext, compressor), model.spinner.Tick), true
+		model.turnEvents = make(chan tea.Msg, 256)
+		return tea.Batch(
+			runCompressCommand(model.turnContext, compressor, model.turnEvents, model.ctx),
+			waitForTurnEvent(model.ctx, model.turnEvents),
+			model.spinner.Tick,
+		), true
 	case "/session":
 		model.notice(blockSystem, model.sessionID)
 		return nil, true

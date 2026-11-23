@@ -29,20 +29,6 @@ func newTurnOutput(writer io.Writer, color bool) *turnOutput {
 
 func (output *turnOutput) Sink(_ context.Context, event agentruntime.Event) error {
 	switch event.Type {
-	case agentruntime.EventGoalPhase:
-		if event.GoalPhase == nil {
-			return nil
-		}
-		phase := event.GoalPhase
-		label := phase.Stage
-		if label == "stopped" {
-			label = phase.State
-		}
-		if err := output.renderer.Finish(); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintf(output.writer, "\n[task %s · round %d/%d] %s\n", render.PlainText(label), phase.Round, phase.MaxRounds, render.PlainText(phase.Reason))
-		return err
 	case agentruntime.EventAssistantReasoningDelta:
 		return output.writeReasoning(event.Delta)
 	case agentruntime.EventAssistantTextDelta:

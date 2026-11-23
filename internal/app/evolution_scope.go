@@ -18,7 +18,7 @@ func (a *App) strategyCaller(ctx context.Context) (evolutiontools.StrategyCaller
 	if !ok || !scoped || invocation.SessionID == "" || scope.AgentID == "" || scope.ParentAgentID != "" {
 		return evolutiontools.StrategyCaller{}, errors.New("strategy evolution requires a configured root Agent")
 	}
-	root, err := a.database.Orchestration().RootThreadBySession(ctx, invocation.SessionID)
+	root, err := a.repositories.RootThreadBySession(ctx, invocation.SessionID)
 	if err != nil || root.ActorScope() != scope {
 		return evolutiontools.StrategyCaller{}, errors.New("strategy caller does not match the session's root Agent")
 	}

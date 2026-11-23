@@ -97,6 +97,7 @@ func TestProfileAppliedToEinoToolsInstructionModelAndSession(t *testing.T) {
 	parentModel, childModel := &inspectingProfileModel{}, &inspectingProfileModel{}
 	noop := tool.InvokeFunc(func(context.Context, json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })
 	parent := profileFactory(t, store, parentModel, profileBinding("read", tool.RiskRead, noop), profileBinding("write", tool.RiskWrite, noop))
+	parent.config.HostInstruction = "Shared host capabilities remain subject to the available tools."
 	profile, scope := runtimeTestProfile(), runtimeTestScope(t)
 	profile.Tools, profile.ModelProfile, profile.WorkspaceMode = []string{"read", "write"}, "secondary", agentprofile.WorkspaceSharedReadonly
 	profile.Limits.MaxOutputTokens = 17
@@ -131,6 +132,14 @@ func TestProfileAppliedToEinoToolsInstructionModelAndSession(t *testing.T) {
 	}
 	if len(parentModel.input) != 0 || len(childModel.input) == 0 || !strings.Contains(childModel.input[0].Content, profile.Instruction) {
 		t.Fatal("wrong model/instruction used")
+	}
+	if !strings.Contains(childModel.input[0].Content, parent.config.HostInstruction) {
+		t.Fatal("child lost shared host capability instructions")
+	}
+	before := child.executionConfigID()
+	child.config.HostInstruction += " Revised capability contract."
+	if before == child.executionConfigID() {
+		t.Fatal("host instructions were excluded from recovery identity")
 	}
 }
 

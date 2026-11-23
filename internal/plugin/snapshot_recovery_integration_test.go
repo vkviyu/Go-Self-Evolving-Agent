@@ -3,6 +3,7 @@ package plugin_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -16,7 +17,20 @@ import (
 
 type snapshotFinalModel struct{ calls atomic.Int32 }
 
-func (fake *snapshotFinalModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (fake *snapshotFinalModel) Generate(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	for _, message := range input {
+		if message.Role != schema.System {
+			continue
+		}
+		switch {
+		case strings.Contains(message.Content, "\nStage: discover\n"):
+			return schema.AssistantMessage(`{"space_ids":[],"new_space":null,"search_terms":[],"full_history":false}`, nil), nil
+		case strings.Contains(message.Content, "\nStage: history-map\n"), strings.Contains(message.Content, "\nStage: history-reduce\n"):
+			return schema.AssistantMessage(`{"notes":[]}`, nil), nil
+		case strings.Contains(message.Content, "\nStage: extract\n"):
+			return schema.AssistantMessage(`{"lessons":[]}`, nil), nil
+		}
+	}
 	fake.calls.Add(1)
 	return schema.AssistantMessage("durable candidate", nil), nil
 }
@@ -35,7 +49,7 @@ func TestSnapshotRecoveryRestoresRetiredWASMWithoutGlobalRollback(t *testing.T) 
 	}
 	ctx := context.Background()
 	source := durableFixture(t)
-	cfg := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
+	cfg := nativePluginConfig(t)
 	open := func(cfg config.Config) *app.App {
 		application, err := app.Open(ctx, cfg)
 		if err != nil {
@@ -45,6 +59,9 @@ func TestSnapshotRecoveryRestoresRetiredWASMWithoutGlobalRollback(t *testing.T) 
 		return application
 	}
 	application := open(cfg)
+	if _, _, err := application.EnsureRootThread(ctx, "snapshot-session"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := application.Plugins().Activate(stageDurable(t, application.Plugins(), "v1", source)); err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +85,9 @@ func TestSnapshotRecoveryRestoresRetiredWASMWithoutGlobalRollback(t *testing.T) 
 		t.Fatal(err)
 	}
 	application = open(cfg)
+	if _, _, err := application.EnsureRootThread(ctx, "snapshot-session"); err != nil {
+		t.Fatal(err)
+	}
 	current := application.Registry().Snapshot()
 	if _, err := application.Registry().SnapshotByID(result.RuntimeSnapshotID); !errors.Is(err, tool.ErrSnapshotUnavailable) {
 		t.Fatalf("old combination was eagerly published: %v", err)

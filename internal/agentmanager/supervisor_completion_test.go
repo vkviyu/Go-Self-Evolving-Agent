@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/session/sqlitestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
 )
 
 type completionTaskFault struct {
-	*sqlitestore.OrchestrationStore
+	*testfixture.OrchestrationStore
 	fail atomic.Bool
 }
 
@@ -25,7 +25,7 @@ func (fault *completionTaskFault) TransitionTask(ctx context.Context, transition
 }
 
 type completionMailboxFault struct {
-	*sqlitestore.OrchestrationStore
+	*testfixture.OrchestrationStore
 	fail atomic.Bool
 }
 
@@ -36,10 +36,10 @@ func (fault *completionMailboxFault) Enqueue(ctx context.Context, spec orchestra
 	return fault.OrchestrationStore.Enqueue(ctx, spec)
 }
 
-func completionFixture(t *testing.T, assigned bool) (*sqlitestore.Database, string, orchestration.RootThread, orchestration.AgentSnapshot, orchestration.TaskSnapshot) {
+func completionFixture(t *testing.T, assigned bool) (*testfixture.Database, string, orchestration.RootThread, orchestration.AgentSnapshot, orchestration.TaskSnapshot) {
 	t.Helper()
 	ctx, path := context.Background(), filepath.Join(t.TempDir(), "completion.db")
-	database, err := sqlitestore.Open(ctx, path)
+	database, err := testfixture.Open(t, ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func completionSupervisor(t *testing.T, config Config) *Supervisor {
 	return supervisor
 }
 
-func completionPending(t *testing.T, store *sqlitestore.OrchestrationStore, team orchestration.TeamID, count int) []orchestration.AgentCompletion {
+func completionPending(t *testing.T, store *testfixture.OrchestrationStore, team orchestration.TeamID, count int) []orchestration.AgentCompletion {
 	t.Helper()
 	pending, err := store.PendingAgentCompletions(context.Background(), team)
 	if err != nil || len(pending) != count {
@@ -116,7 +116,7 @@ func TestCompletionRecoveryRetriesSettlementWithoutRerunningWorker(t *testing.T)
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := sqlitestore.Open(ctx, path)
+	reopened, err := testfixture.Open(t, ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestCompletionRecoveryCompensatesTerminalHookAndFencesContinuation(t *testi
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := sqlitestore.Open(ctx, path)
+	reopened, err := testfixture.Open(t, ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestCompletionRecoveryWaitsForRefinementAndReleasesWorkerLeases(t *testing.
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := sqlitestore.Open(ctx, path)
+	reopened, err := testfixture.Open(t, ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}

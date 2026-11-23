@@ -88,7 +88,7 @@ func ConstrainDelegation(parent, child Profile) (Profile, error) {
 	child.CanSendMessages = child.CanSendMessages && parent.CanSendMessages
 	child.Limits.MaxIterations = min(child.Limits.MaxIterations, parent.Limits.MaxIterations)
 	child.Limits.MaxToolCalls = min(child.Limits.MaxToolCalls, parent.Limits.MaxToolCalls)
-	child.Limits.MaxWallTime = min(child.Limits.MaxWallTime, parent.Limits.MaxWallTime)
+	child.Limits.MaxWallTime = narrowOptionalLimit(child.Limits.MaxWallTime, parent.Limits.MaxWallTime)
 	child.Limits.MaxChildren = min(child.Limits.MaxChildren, parent.Limits.MaxChildren)
 	child.Limits.MaxInheritedTokens = narrowOptionalLimit(child.Limits.MaxInheritedTokens, parent.Limits.MaxInheritedTokens)
 	child.Limits.MaxInputTokens = narrowOptionalLimit(child.Limits.MaxInputTokens, parent.Limits.MaxInputTokens)
@@ -99,9 +99,9 @@ func ConstrainDelegation(parent, child Profile) (Profile, error) {
 	return child, nil
 }
 
-// Zero token limits inherit the host policy rather than granting zero tokens.
-// A bounded ancestor must therefore replace an unbounded child limit.
-func narrowOptionalLimit(child, parent int) int {
+// Zero leaves an optional limit unbounded. A bounded ancestor must therefore
+// replace an unbounded child limit.
+func narrowOptionalLimit[T ~int | ~int64](child, parent T) T {
 	if parent == 0 {
 		return child
 	}

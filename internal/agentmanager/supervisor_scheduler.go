@@ -12,13 +12,16 @@ import (
 // serialize single operations, so two such children could still interleave
 // edits of one task. Read-only and isolated children share the other slots.
 func (supervisor *Supervisor) start(agent orchestration.AgentSnapshot) {
+	if !supervisor.backgroundEnabled() {
+		return
+	}
 	if !supervisor.teamAllowsExecution(supervisor.ctx, agent.TeamID) {
 		return
 	}
 	sharedWriter := supervisor.workspaceMode(agent) == orchestration.WorkspaceModeSharedLease
 	runContext, cancel := context.WithCancel(supervisor.ctx)
 	supervisor.mu.Lock()
-	if supervisor.closed || len(supervisor.running) >= supervisor.maxRunning {
+	if supervisor.closed || supervisor.deferRecoveryDispatch || len(supervisor.running) >= supervisor.maxRunning {
 		supervisor.mu.Unlock()
 		cancel()
 		return
@@ -53,7 +56,7 @@ func (supervisor *Supervisor) start(agent orchestration.AgentSnapshot) {
 }
 
 func (supervisor *Supervisor) startAvailable() {
-	if supervisor.runner == nil || supervisor.ctx.Err() != nil {
+	if supervisor.runner == nil || !supervisor.backgroundEnabled() {
 		return
 	}
 	teams, err := supervisor.agents.ListTeams(supervisor.ctx)
@@ -96,6 +99,76 @@ func (supervisor *Supervisor) startAvailable() {
 		}
 		supervisor.start(byID[candidate.ItemKey])
 	}
+}
+
+// StartAvailableAsync resumes queued child Agents without blocking the command
+// that is bringing the root conversation to its interactive surface.
+func (supervisor *Supervisor) StartAvailableAsync() {
+	done := make(chan struct{})
+	close(done)
+	supervisor.StartAvailableAfter(done)
+}
+
+// StartAvailableAfter resumes queued child Agents after a required startup
+// operation completes. It also releases deferred monitoring and merge passes,
+// after any in-progress Recover call finishes. Close cancels and joins the wait.
+func (supervisor *Supervisor) StartAvailableAfter(done <-chan struct{}) {
+	if supervisor == nil {
+		return
+	}
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	if supervisor.closed || supervisor.ctx.Err() != nil {
+		return
+	}
+	supervisor.workers.Go(func() {
+		select {
+		case <-done:
+			supervisor.releaseStartup()
+		case <-supervisor.ctx.Done():
+		}
+	})
+}
+
+func (supervisor *Supervisor) backgroundEnabled() bool {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	return !supervisor.closed && !supervisor.deferRecoveryDispatch && supervisor.ctx.Err() == nil
+}
+
+// startMonitorLocked is called during construction or with mu held.
+func (supervisor *Supervisor) startMonitorLocked() {
+	if supervisor.waitSets != nil || supervisor.runner != nil {
+		supervisor.workers.Go(supervisor.monitorWaitSets)
+	}
+}
+
+func (supervisor *Supervisor) releaseStartup() {
+	select {
+	case supervisor.recoveryGate <- struct{}{}:
+		defer func() { <-supervisor.recoveryGate }()
+	case <-supervisor.ctx.Done():
+		return
+	}
+	supervisor.mu.Lock()
+	if supervisor.closed || supervisor.ctx.Err() != nil {
+		supervisor.mu.Unlock()
+		return
+	}
+	var pending []orchestration.TeamID
+	if supervisor.deferRecoveryDispatch {
+		supervisor.deferRecoveryDispatch = false
+		supervisor.startMonitorLocked()
+		for teamID := range supervisor.pendingMerges {
+			pending = append(pending, teamID)
+		}
+		clear(supervisor.pendingMerges)
+	}
+	supervisor.mu.Unlock()
+	for _, teamID := range pending {
+		supervisor.scheduleMerges(teamID)
+	}
+	supervisor.startAvailable()
 }
 
 // A queued Agent from before a Team cancellation must not be admitted again

@@ -42,7 +42,6 @@ const (
 	EventTurnCompleted      EventType = "turn.completed"
 	EventTurnFailed         EventType = "turn.failed"
 	EventTurnAbandoned      EventType = "turn.abandoned"
-	EventGoalAbandoned      EventType = "goal.abandoned"
 	EventTurnArchived       EventType = "turn.archived"
 )
 

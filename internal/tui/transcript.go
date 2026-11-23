@@ -182,7 +182,7 @@ func (model *Model) transcriptParts() []transcriptPart {
 			// Glamour wraps words, so long unspaced CJK paragraphs can remain
 			// wider than its wrap setting. Viewport clips such lines horizontally;
 			// normalize cell width here before counting lines or storing anchors.
-			rendered = ansi.Hardwrap(rendered, max(1, model.viewport.Width), true)
+			rendered = scopeFileLinksByLine(ansi.Hardwrap(rendered, max(1, model.viewport.Width), true))
 			parts = append(parts, transcriptPart{rendered: rendered, block: block, index: index})
 		}
 	}
@@ -339,7 +339,7 @@ func (model *Model) renderBlock(block *transcriptBlock) string {
 	case blockAssistant:
 		marker = "│"
 		markerStyle = model.styles.assistant
-		body = model.markdown.render(linkFilePaths(block.content, model.workspace), width)
+		body = linkFilePaths(model.markdown.render(block.content, width), model.workspace)
 	case blockReasoning:
 		body = ansi.Hardwrap(block.content, max(1, width-2), false)
 		body = model.styles.reasoningPanel.Padding(0).Render("┊") + model.styles.reasoningPanel.Render(body)

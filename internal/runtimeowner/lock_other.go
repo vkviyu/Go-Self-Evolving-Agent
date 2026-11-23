@@ -10,3 +10,7 @@ import (
 func tryLock(*os.File) error {
 	return errors.New("runtime ownership locking is unavailable on this platform")
 }
+
+func unlock(*os.File) error {
+	return errors.New("runtime ownership locking is unavailable on this platform")
+}

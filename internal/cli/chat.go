@@ -18,10 +18,8 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/codingtools"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
-	"github.com/vkviyu/go-self-evolving-agent/internal/modelgateway"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
-	"github.com/vkviyu/go-self-evolving-agent/internal/sessionregistry"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 	"github.com/vkviyu/go-self-evolving-agent/internal/toolbridge"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tui"
@@ -36,13 +34,11 @@ func runChat(
 	stdin io.Reader,
 	stdout, stderr io.Writer,
 	deps dependencies,
-) (result error) {
+) error {
 	return runChatWithPrompt(ctx, arguments, stdin, stdout, stderr, deps, nil)
 }
 
-// runChatWithPrompt loads configuration, assembles chat resources and selects
-// the interactive or headless entry point. The named result lets deferred
-// application cleanup add its error to the error returned by the selected path.
+// runChatWithPrompt loads configuration and delegates the selected chat mode.
 func runChatWithPrompt(
 	// ctx carries cancellation through startup, conversation execution and tools.
 	ctx context.Context,
@@ -56,24 +52,8 @@ func runChatWithPrompt(
 	deps dependencies,
 	// nil means no prompt was supplied by the caller; a pointer selects one prompt.
 	initialPrompt *string,
-) (result error) {
-	// Extract --profile/-p before loading the configuration that supplies flag defaults.
-	profile, profileSet, err := profileArgument(arguments)
-	// Stop if the profile flag is missing its value or explicitly selects an empty name.
-	if err != nil {
-		return err
-	}
-
-	// Empty load options let config.Load use the current directory and environment.
-	loadOptions := config.LoadOptions{}
-	// If the caller explicitly selected a profile, pass its name to config.Load.
-	// Otherwise, leave Profile empty so config.Load can consult GSEA_PROFILE.
-	if profileSet {
-		loadOptions.Profile = profile
-	}
-
-	// Merge built-in defaults, user config, profile, project config and environment.
-	resolved, err := config.Load(loadOptions)
+) error {
+	resolved, err := loadChatConfig(arguments)
 	if err != nil {
 		return err
 	}
@@ -85,77 +65,45 @@ func runChatWithPrompt(
 		return err
 	}
 
-	// Keep the catalog handle for state updates and cleanup after a successful lookup.
-	// It remains nil when this invocation does not open a Session catalog.
-	var catalog *sessionregistry.Registry
+	return runConfiguredChat(ctx, resolved, options, stdin, stdout, stderr, deps, initialPrompt)
+}
+
+func loadChatConfig(arguments []string) (config.Config, error) {
+	profile, _, err := profileArgument(arguments)
+	if err != nil {
+		return config.Config{}, err
+	}
+	return config.Load(config.LoadOptions{Profile: profile})
+}
+
+func runConfiguredChat(
+	ctx context.Context,
+	resolved config.Config,
+	options chatOptions,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	deps dependencies,
+	initialPrompt *string,
+) (result error) {
+	var err error
+	var selected chatSession
 	var sessionTitle string
-	// Look up catalog metadata only when the user explicitly supplied --session.
-	// A generated Session ID does not enter this branch.
-	if options.sessionExplicit {
-		// The central catalog is <GSEA_HOME>/control.db, independent of --data-dir.
-		catalogPath := resolved.SessionRegistryPath()
-		// Open an existing catalog. Checking first preserves the legacy behavior
-		// where a missing catalog does not cause this chat invocation to create one.
-		if _, statErr := os.Stat(catalogPath); statErr == nil {
-			// Open SQLite and initialize the catalog table if necessary.
-			catalog, err = sessionregistry.Open(ctx, catalogPath)
+	if options.sessionExplicit && !options.evaluationMode {
+		selected, err = findChatSession(ctx, resolved, options)
+		if err != nil {
+			return err
+		}
+		if options.requireExistingSession && selected.ID == "" {
+			return fmt.Errorf("session %q was not found; use resume --list --all to browse saved sessions", options.sessionID)
+		}
+		sessionTitle = applyChatSession(&options, selected)
+		if selected.ID != "" && selected.Workspace == "" && !options.workspaceExplicit {
+			workspace, err := workspaceForChat(options.workspaceDirectory)
 			if err != nil {
 				return err
 			}
-
-			// Read the Session's resource paths and defaults, not its chat history.
-			// Get accepts a string, so convert the typed Session ID explicitly.
-			item, getErr := catalog.Get(ctx, string(options.sessionID))
-			if getErr == nil {
-				sessionTitle = strings.TrimSpace(item.Name)
-				// If --data-dir was omitted, use the Session's registered data directory.
-				if !options.dataExplicit {
-					options.dataDirectory = item.DataDirectory
-				}
-				// If --workspace was omitted, use the Session's registered workspace.
-				if !options.workspaceExplicit {
-					options.workspaceDirectory = item.Workspace
-				}
-				// Use the registered model only if --model was omitted and the stored
-				// model name contains a value. An explicit CLI model takes precedence.
-				if !options.modelExplicit && strings.TrimSpace(item.Model) != "" {
-					options.model.Model = item.Model
-				}
-				// Apply the same rule independently to --provider.
-				// This conversion changes the Go type; it does not validate the provider.
-				if !options.providerExplicit && strings.TrimSpace(item.Provider) != "" {
-					options.model.Provider = modelgateway.Provider(item.Provider)
-				}
-			} else if errors.Is(getErr, sessionregistry.ErrNotFound) {
-				// The catalog exists, but this Session is absent: fail startup.
-				// Close here because the successful-path defer has not been registered.
-				_ = catalog.Close()
-				return fmt.Errorf("Session %q is not registered", options.sessionID)
-			} else {
-				// Preserve other lookup errors, such as SQLite or decoding failures.
-				// Ignore a close error so the lookup error remains the reported cause.
-				_ = catalog.Close()
-				return getErr
-			}
-		} else if !errors.Is(statErr, os.ErrNotExist) {
-			// A missing catalog is allowed; other inspection errors stop startup.
-			// %w preserves the underlying error for errors.Is/errors.As.
-			return fmt.Errorf("inspect Session catalog: %w", statErr)
+			fmt.Fprintf(stderr, "Session %s has no recorded workspace; using %s\n", options.sessionID, workspace)
 		}
-	}
-
-	// Only a successfully opened and queried catalog participates in state updates.
-	if catalog != nil {
-		// Defers run in reverse order: the stopped-state update below runs before Close.
-		defer catalog.Close()
-		// Record the current process as running. State-update errors are ignored here.
-		_ = catalog.UpdateState(ctx, string(options.sessionID), sessionregistry.StateRunning, os.Getpid())
-		// On every normal function return, mark the Session stopped and clear its PID.
-		// A fresh context allows this write even if the command context was canceled.
-		// This records "stopped" on error returns too; it does not select "failed".
-		defer func() {
-			_ = catalog.UpdateState(context.Background(), string(options.sessionID), sessionregistry.StateStopped, 0)
-		}()
 	}
 
 	// Reject two competing prompt sources: a caller-provided prompt and a prompt file.
@@ -215,8 +163,6 @@ func runChatWithPrompt(
 	resolved.DataDirectory = options.dataDirectory
 	// Copy the selected workspace, including CLI or Session catalog overrides.
 	resolved.WorkspaceDirectory = options.workspaceDirectory
-	// Use the Goal settings parsed for this invocation.
-	resolved.Goal = options.goalMode
 	// Keep the application model name aligned with the selected chat model.
 	// The model client receives the full options.model configuration below.
 	resolved.Model.Name = options.model.Model
@@ -260,10 +206,18 @@ func runChatWithPrompt(
 		return err
 	}
 
-	// Close the app on every subsequent return and retain any cleanup error.
-	// A return expression first assigns result; this defer then joins Close's error.
-	// This runs before the earlier catalog state-update and close defers.
-	defer func() { result = errors.Join(result, application.Close()) }()
+	// Update the catalog while the runtime still holds the data directory lock.
+	var stopCatalog func() error
+	defer func() {
+		if stopCatalog != nil {
+			if err := stopCatalog(); err != nil {
+				result = errors.Join(result, fmt.Errorf("stop chat catalog: %w", err))
+			}
+		}
+		if err := application.Close(); err != nil {
+			result = errors.Join(result, fmt.Errorf("close application: %w", err))
+		}
+	}()
 
 	// Listing recoverable work needs local runtime resources but no model client.
 	if options.listRecoveries {
@@ -273,6 +227,21 @@ func runChatWithPrompt(
 		}
 		// Write the list and return before creating the model or Supervisor.
 		return writeRecoveries(stdout, items)
+	}
+
+	if interactive {
+		return runInteractiveChat(
+			ctx,
+			application,
+			resolved,
+			options,
+			selected,
+			stdin,
+			stdout,
+			deps,
+			initialPrompt,
+			bridgeBindings,
+		)
 	}
 
 	// The remaining paths execute a conversation and require a model constructor.
@@ -288,7 +257,11 @@ func runChatWithPrompt(
 
 	// Ensure the Session has a root Agent thread and obtain its Agent/Team identity.
 	// Ignore the helper's second return value because this path only needs root.
-	root, _, err := application.EnsureRootThread(ctx, options.sessionID)
+	root, _, err := application.EnsureRootThreadWithOptions(
+		ctx,
+		options.sessionID,
+		app.EnsureRootThreadOptions{DeferMaintenance: interactive},
+	)
 	if err != nil {
 		return fmt.Errorf("ensure root Agent thread: %w", err)
 	}
@@ -338,6 +311,11 @@ func runChatWithPrompt(
 		ModelBucketLimits: resolved.Agents.ModelLimits,
 		// Isolate writable children as [agents] default_workspace selects.
 		DefaultWorkspace: agentmanager.WorkspaceDefault(resolved.Agents.DefaultWorkspace),
+		// Interactive startup presents the root conversation first; resume
+		// queued children after the TUI is ready.
+		// Chat startup always resumes queued children after the root path is
+		// ready; headless callers must not block on the same global scan.
+		DeferRecoveryDispatch: true,
 	})
 	if err != nil {
 		return err
@@ -350,9 +328,40 @@ func runChatWithPrompt(
 	if err != nil {
 		return err
 	}
+	var maintenanceDone chan struct{}
+	var maintenanceErr error
+	if interactive {
+		maintenanceDone = make(chan struct{})
+		go func() {
+			maintenanceErr = application.ResumeSessionMaintenance(ctx, root.SessionID)
+			close(maintenanceDone)
+		}()
+		supervisor.StartAvailableAfter(maintenanceDone)
+	} else {
+		supervisor.StartAvailableAsync()
+	}
+
+	if !options.evaluationMode {
+		if interactive {
+			stopCatalog, err = trackChatSessionAsync(ctx, application, resolved, options, selected, application.WorkspaceDirectory())
+		} else {
+			stopCatalog, err = trackChatSession(ctx, application, resolved, options, selected, application.WorkspaceDirectory())
+		}
+		if err != nil {
+			return fmt.Errorf("register chat session: %w", err)
+		}
+	}
 
 	// If interactive, run the terminal UI until it exits or returns an error.
 	if interactive {
+		displayConversation := tui.Conversation(rootChat)
+		if maintenanceDone != nil {
+			displayConversation = &startupConversation{
+				base:     rootChat,
+				ready:    maintenanceDone,
+				readyErr: func() error { return maintenanceErr },
+			}
+		}
 		if sessionTitle == "" {
 			// Read the durable first query, rather than compacted model history,
 			// so a resumed conversation keeps its original title.
@@ -361,9 +370,10 @@ func runChatWithPrompt(
 				return err
 			}
 		}
+		memoryBrowser, _ := application.MemoryBrowser()
 		return tui.Run(ctx, stdin, stdout, tui.Config{
 			// Route user turns and recovery operations to the root Conversation.
-			Conversation: rootChat,
+			Conversation: displayConversation,
 			SessionTitle: sessionTitle,
 			// Supply model and provider labels for the UI.
 			Model:    options.model.Model,
@@ -383,6 +393,7 @@ func runChatWithPrompt(
 			// open child transcripts.
 			Agents:      supervisor,
 			Transcripts: factory,
+			Memory:      memoryBrowser,
 			// If set, let the UI resume this turn instead of starting a new one.
 			ResumeTurnID: options.resumeTurnID,
 		})

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/eino-contrib/jsonschema"
 )
 
 func TestOpenAIRequiresCredentialWithoutExposingValue(t *testing.T) {
@@ -35,7 +37,7 @@ func TestCacheUsageHTTPClientDoesNotMutateCallerClient(t *testing.T) {
 
 	transport := &inertRoundTripper{}
 	original := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-	wrapped := cacheUsageHTTPClient(original, time.Second)
+	wrapped := cacheUsageHTTPClient(original)
 
 	if wrapped == original {
 		t.Fatal("cache usage client reused the caller's client pointer")
@@ -252,6 +254,132 @@ func TestResponsesWireRequestAndToolRoundTrip(t *testing.T) {
 	}
 	if response.Content != "responses works" || response.ResponseMeta == nil || response.ResponseMeta.Usage.TotalTokens != 5 || response.ResponseMeta.Usage.PromptTokenDetails.CachedTokens != 2 {
 		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestResponsesWireToolsPreserveNonStrictSchemas(t *testing.T) {
+	t.Parallel()
+
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", streaming), func(t *testing.T) {
+			// Keep optional range fields non-nullable, while preserving explicitly
+			// nullable fields (including nested ones) in other tool schemas.
+			fixtures := []struct {
+				name       string
+				parameters string
+			}{
+				{"workspace_read", `{"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0},"start_line":{"type":"integer","minimum":1},"end_line":{"type":"integer","minimum":1},"max_bytes":{"type":"integer","minimum":1,"maximum":4194304}}}`},
+				{"nullable_options", `{"type":"object","properties":{"label":{"anyOf":[{"type":"string"},{"type":"null"}]},"options":{"type":"object","required":["enabled"],"properties":{"enabled":{"type":"boolean"},"note":{"anyOf":[{"type":"string"},{"type":"null"}]}}}}}`},
+				{"no_parameters", `{"type":"object","properties":{}}`},
+			}
+			tools := make([]*schema.ToolInfo, 0, len(fixtures))
+			expected := make([]map[string]any, len(fixtures))
+			for i, fixture := range fixtures {
+				if err := json.Unmarshal([]byte(fixture.parameters), &expected[i]); err != nil {
+					t.Fatal(err)
+				}
+				info := &schema.ToolInfo{Name: fixture.name}
+				if fixture.name != "no_parameters" {
+					var parameters jsonschema.Schema
+					if err := json.Unmarshal([]byte(fixture.parameters), &parameters); err != nil {
+						t.Fatal(err)
+					}
+					info.ParamsOneOf = schema.NewParamsOneOfByJSONSchema(&parameters)
+				}
+				tools = append(tools, info)
+			}
+
+			requests := 0
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				requests++
+				if request.Method != http.MethodPost || request.URL.Path != "/v1/responses" {
+					t.Errorf("request = %s %s", request.Method, request.URL)
+				}
+				var body struct {
+					Stream bool `json:"stream"`
+					Tools  []struct {
+						Type       string         `json:"type"`
+						Name       string         `json:"name"`
+						Strict     any            `json:"strict"`
+						Parameters map[string]any `json:"parameters"`
+					} `json:"tools"`
+				}
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+					return nil, err
+				}
+				if body.Stream != streaming {
+					t.Errorf("stream = %v, want %v", body.Stream, streaming)
+				}
+				if len(body.Tools) != len(fixtures) {
+					t.Errorf("tool count = %d, want %d", len(body.Tools), len(fixtures))
+				} else {
+					for i, tool := range body.Tools {
+						if tool.Type != "function" || tool.Name != fixtures[i].name {
+							t.Errorf("tool %d = %#v", i, tool)
+						}
+						// A bool destination would also accept an omitted field or null.
+						if strict, ok := tool.Strict.(bool); !ok || strict {
+							t.Errorf("%s strict = %#v, want explicit JSON false", tool.Name, tool.Strict)
+						}
+						if !reflect.DeepEqual(tool.Parameters, expected[i]) {
+							t.Errorf("%s parameters = %#v, want %#v", tool.Name, tool.Parameters, expected[i])
+						}
+					}
+				}
+				item := `{"type":"function_call","id":"item-1","call_id":"call-1","name":"workspace_read","arguments":"{\"path\":\"main.go\",\"offset\":42}"}`
+				contentType := "application/json"
+				payload := `{"status":"completed","output":[` + item + `]}`
+				if streaming {
+					contentType = "text/event-stream"
+					payload = responseFrames(
+						`{"type":"response.output_item.done","item":`+item+`}`,
+						`{"type":"response.completed","response":{"status":"completed"}}`,
+					)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{contentType}},
+					Body:       io.NopCloser(strings.NewReader(payload)),
+					Request:    request,
+				}, nil
+			})}
+			chatModel, err := newWithLookup(context.Background(), Config{
+				Provider: ProviderOpenAI, WireAPI: WireAPIResponses, Model: "test-model",
+				BaseURL: "https://model.test/v1", APIKeyEnvironment: "TEST_SECRET",
+				Timeout: time.Second, HTTPClient: client,
+			}, func(name string) (string, bool) { return "test-secret", name == "TEST_SECRET" })
+			if err != nil {
+				t.Fatal(err)
+			}
+			withTools, err := chatModel.WithTools(tools)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := []*schema.Message{schema.UserMessage("continue reading")}
+			var message *schema.Message
+			if streaming {
+				stream, streamErr := withTools.Stream(context.Background(), input)
+				if streamErr != nil {
+					t.Fatal(streamErr)
+				}
+				message, err = schema.ConcatMessageStream(stream)
+			} else {
+				message, err = withTools.Generate(context.Background(), input)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requests != 1 {
+				t.Errorf("request count = %d, want 1", requests)
+			}
+			if len(message.ToolCalls) != 1 {
+				t.Fatalf("tool calls = %#v", message.ToolCalls)
+			}
+			call := message.ToolCalls[0]
+			if call.ID != "call-1" || call.Function.Name != "workspace_read" || call.Function.Arguments != `{"path":"main.go","offset":42}` {
+				t.Fatalf("tool call = %#v", call)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 
+	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
@@ -12,6 +13,7 @@ import (
 type Invocation struct {
 	SessionID          session.ID
 	TurnID             string
+	Execution          orchestration.ExecutionBinding
 	RuntimeSnapshotID  string
 	CallID             string
 	RegistryGeneration uint64

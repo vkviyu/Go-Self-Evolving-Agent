@@ -6,16 +6,21 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
-var filePathTokenPattern = regexp.MustCompile(`(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+(?::[0-9]+)?|/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+(?:\:[0-9]+)?`)
+// Consume SGR sequences separately so their final "m" cannot become the
+// first character of a file path in styled Markdown.
+var fileLinkTokenPattern = regexp.MustCompile(`\x1b\[[0-9;:]*m|(?:(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+|/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+)(?::[0-9]+|#L[0-9]+)?`)
 
-// linkFilePaths annotates existing files with OSC 8 links. The terminal may
-// wrap the visible label, but the hyperlink target remains the complete path.
-// Nonexistent or ambiguous tokens are left untouched so ordinary prose and
-// tool output do not become misleading links.
+const fileLinkPrefix = "\x1b]8;;"
+
+// linkFilePaths annotates existing files in rendered text with OSC 8 links.
+// Apply it after Markdown rendering, which processes link syntax and would
+// otherwise interpret the control sequences as part of the source text.
 func linkFilePaths(content, workspace string) string {
-	if strings.TrimSpace(content) == "" {
+	if !strings.Contains(content, "/") {
 		return content
 	}
 	workspace, err := filepath.Abs(strings.TrimSpace(workspace))
@@ -24,8 +29,11 @@ func linkFilePaths(content, workspace string) string {
 	}
 	var output strings.Builder
 	last := 0
-	for _, match := range filePathTokenPattern.FindAllStringIndex(content, -1) {
+	for _, match := range fileLinkTokenPattern.FindAllStringIndex(content, -1) {
 		token := content[match[0]:match[1]]
+		if token[0] == '\x1b' {
+			continue
+		}
 		pathToken, lineSuffix := splitPathLine(token)
 		target, ok := resolveFileToken(pathToken, workspace)
 		if !ok {
@@ -43,6 +51,9 @@ func linkFilePaths(content, workspace string) string {
 }
 
 func splitPathLine(token string) (string, string) {
+	if path, line, ok := strings.Cut(token, "#L"); ok {
+		return path, "#L" + line
+	}
 	index := strings.LastIndexByte(token, ':')
 	if index <= 0 || index == len(token)-1 {
 		return token, ""
@@ -96,6 +107,35 @@ func osc8FileLink(path, label string) string {
 		link.Fragment = link.Path[index+1:]
 		link.Path = link.Path[:index]
 	}
-	target := link.String()
-	return "\x1b]8;;" + target + "\x1b\\" + label + "\x1b]8;;\x1b\\"
+	return ansi.SetHyperlink(link.String()) + label + ansi.ResetHyperlink()
+}
+
+// The viewport and terminal renderer can display any row on its own. Close a
+// wrapped link at the end of each row and reopen it on the next with the same
+// target so scrolling or a partial redraw cannot leave a link active.
+func scopeFileLinksByLine(content string) string {
+	if !strings.Contains(content, fileLinkPrefix) {
+		return content
+	}
+	var output strings.Builder
+	active := ""
+	for line, rest, more := strings.Cut(content, "\n"); ; line, rest, more = strings.Cut(rest, "\n") {
+		output.WriteString(active)
+		output.WriteString(line)
+		if index := strings.LastIndex(line, fileLinkPrefix); index >= 0 {
+			target, _, _ := strings.Cut(line[index+len(fileLinkPrefix):], "\a")
+			active = ""
+			if target != "" {
+				active = ansi.SetHyperlink(target)
+			}
+		}
+		if active != "" {
+			output.WriteString(ansi.ResetHyperlink())
+		}
+		if !more {
+			break
+		}
+		output.WriteByte('\n')
+	}
+	return output.String()
 }

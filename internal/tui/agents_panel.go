@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -13,13 +12,6 @@ import (
 )
 
 const agentActionTimeout = 5 * time.Second
-
-// transcriptViewer shows a child Agent's transcript in place of the root's.
-// Root turns keep updating model.blocks underneath it.
-type transcriptViewer struct {
-	agentID orchestration.AgentID
-	blocks  []transcriptBlock
-}
 
 // isUndecidedMerge reports whether a merge still waits for a decision.
 func isUndecidedMerge(state workspacecoord.MergeState) bool {
@@ -108,7 +100,7 @@ func (model *Model) handlePanelKey(message tea.KeyMsg) (tea.Cmd, bool) {
 // notice appends a system or failure line to the transcript and scrolls to it.
 func (model *Model) notice(kind blockKind, content string) {
 	model.blocks = append(model.blocks, transcriptBlock{kind: kind, content: content})
-	model.refreshTranscript(true)
+	model.refreshRootTranscript(true)
 }
 
 // interruptSelected cancels the selected child Agent. The first key press
@@ -199,62 +191,14 @@ func (model *Model) finishAgentAction(message agentActionMsg) tea.Cmd {
 	return model.startActivityRefresh()
 }
 
-// openSelectedTranscript loads the selected child Agent's transcript.
+// openSelectedTranscript opens the transcript under the keyboard selection.
 func (model *Model) openSelectedTranscript() tea.Cmd {
 	agent, ok := model.selectedAgent()
-	switch {
-	case !ok:
+	if !ok {
 		model.notice(blockSystem, "Select an Agent to open its transcript")
 		return nil
-	case agent.ParentAgentID == "":
-		model.closeTranscriptViewer()
-		return nil
-	case model.transcripts == nil || agent.SessionID == "":
-		model.notice(blockFailure, "Agent transcripts are unavailable")
-		return nil
 	}
-	reader, ctx := model.transcripts, model.ctx
-	return func() tea.Msg {
-		loadContext, cancel := context.WithTimeout(ctx, agentActionTimeout)
-		defer cancel()
-		messages, err := reader.LoadTranscript(loadContext, agent.SessionID)
-		return agentTranscriptMsg{agentID: agent.ID, messages: messages, err: err}
-	}
-}
-
-// openTranscriptViewer replaces the visible transcript with a child's.
-func (model *Model) openTranscriptViewer(message agentTranscriptMsg) {
-	if message.err != nil {
-		model.notice(blockFailure, fmt.Sprintf("load transcript of Agent %s: %v", shortID(string(message.agentID)), message.err))
-		return
-	}
-	title := "Transcript of Agent " + string(message.agentID) + " · Esc returns to the conversation"
-	blocks := append([]transcriptBlock{{kind: blockSystem, content: title}}, blocksFromHistory(message.messages)...)
-	if len(blocks) == 1 {
-		blocks = append(blocks, transcriptBlock{kind: blockSystem, content: "The Agent has no messages yet"})
-	}
-	model.viewer = &transcriptViewer{agentID: message.agentID, blocks: blocks}
-	model.panelFocused = false
-	model.selection = transcriptSelection{}
-	model.refreshTranscript(true)
-}
-
-// closeTranscriptViewer returns to the root transcript.
-func (model *Model) closeTranscriptViewer() {
-	if model.viewer == nil {
-		return
-	}
-	model.viewer = nil
-	model.selection = transcriptSelection{}
-	model.refreshTranscript(true)
-}
-
-// displayBlocks returns the blocks the transcript area shows.
-func (model *Model) displayBlocks() []transcriptBlock {
-	if model.viewer != nil {
-		return model.viewer.blocks
-	}
-	return model.blocks
+	return model.openAgentTranscript(agent)
 }
 
 // panelHint lists the panel keys, or the pending confirmation.
