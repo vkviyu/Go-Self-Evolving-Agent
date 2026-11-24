@@ -15,6 +15,11 @@ import (
 
 const tokenEnvironment = "GSEA_ATE_PRIVATE_LAUNCH_TOKEN"
 
+// ATE uses the server-side request timeout for idle stdio frame reads too.
+// Keep the connection open across model/tool waits. Manager and ClientLease
+// still apply the configured ATE timeout to each host operation.
+const nativeConnectionTimeout = time.Hour
+
 type (
 	process struct {
 		cmd     *exec.Cmd
@@ -54,7 +59,7 @@ func (m *Manager) start(ctx context.Context, binary, token string) (*process, er
 	// ATE authorizes snapshots separately from AllSpaces and hello capabilities.
 	cmd := exec.Command(binary, "serve", "--stdio", "--all-spaces", "--allow-global-snapshot",
 		"--agent-profile", "--event-profile", "--principal", "gsea",
-		"--token-env", tokenEnvironment, "--request-timeout", m.options.Timeout.String(),
+		"--token-env", tokenEnvironment, "--request-timeout", nativeConnectionTimeout.String(),
 		m.options.Directory)
 	// The credential is never a command argument or a process-wide variable.
 	// Remove an inherited value before adding this launch's random credential.

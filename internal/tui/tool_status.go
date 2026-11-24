@@ -8,6 +8,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// A completed tool may stay visible through thousands of streaming updates.
+func (block *transcriptBlock) failureSummary() string {
+	if block.cachedFailureName != block.toolName || block.cachedFailureResult != block.toolResult {
+		block.cachedFailure = toolFailureSummary(block.toolName, block.toolResult)
+		block.cachedFailureName, block.cachedFailureResult = block.toolName, block.toolResult
+	}
+	return block.cachedFailure
+}
+
 // toolFailureSummary recognizes the adapter's error envelope and the shell's
 // execution status. Never search arbitrary file contents or stdout for "error".
 // Full diagnostics remain available in the expandable result pane.

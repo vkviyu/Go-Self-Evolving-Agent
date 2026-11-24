@@ -30,14 +30,14 @@ func executeStrategy(ctx context.Context, options strategyOptions, stdout io.Wri
 	switch action {
 	case "propose":
 		var spec strategy.Spec
-		if err = readStrictPluginJSON(options.file, 16<<10, &spec); err == nil {
+		if err = readStrategyJSON(options.file, maxStrategySpecBytes, &spec); err == nil {
 			var id string
 			id, err = a.Strategies().Save(ctx, spec)
 			output = map[string]any{"candidate_id": id, "spec": spec}
 		}
 	case "suite":
 		var value strategy.Suite
-		if err = readStrictPluginJSON(options.file, 128<<10, &value); err == nil {
+		if err = readStrategyJSON(options.file, maxStrategySuiteBytes, &value); err == nil {
 			var id string
 			id, err = a.Strategies().SaveSuite(ctx, value, true)
 			output = map[string]any{"suite_id": id}

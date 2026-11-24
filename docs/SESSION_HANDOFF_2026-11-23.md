@@ -52,7 +52,7 @@ GSEA 不只是一次性回答工具。目标是让 Agent 完成长程工作，�
 
 - 默认入口是主 Agent Loop；Eino 承载 Turn 内循环，宿主拥有权限、调度和业务状态机。
 - Session、任务、消息、用量事实、业务回执、执行证据、知识与记忆由 ATE 权威保存。
-- checkpoint、工具快照、插件产物、LSP projection、artifact、工作区文件/租约、未完成 ATE 请求属于本地执行资源。
+- checkpoint、工具快照清单及引用、LSP projection、artifact、工作区文件与租约、未完成 ATE 请求属于本地执行资源。
 - Workspace 的共享协调数据库管理租约与进程存活，不是第二份 Task 仓库。
 - 原生 Session append 与 authority state batch 是独立提交，不是跨域大事务。
 - 文件、模型供应商、Shell 和 ATE 不共享端到端 exactly-once 保证。
@@ -116,9 +116,9 @@ GSEA 不只是一次性回答工具。目标是让 Agent 完成长程工作，�
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | [GSEA README](../README.md)                                                               | 构建、配置、CLI；活动 chat 时并发 control 查询当前有回归 |
 | [多 Agent 架构](../MULTI_AGENT_ARCHITECTURE.md)                                           | Supervisor、Task DAG、Workspace、路线图                  |
-| [剩余工作](../IMPLEMENTATION_REMAINING.md)                                                | 插件/策略 R1–R8 与资源缺口；状态日期早于本文             |
+| [剩余工作](../IMPLEMENTATION_REMAINING.md)                                                | 原 R1–R8 的历史范围、策略与恢复资源的验收边界 |
 | [审计修复](../AUDIT_REMEDIATION.md)                                                       | 权限、持久化与恢复边界                                   |
-| [自进化能力](../EVOLUTION.md)                                                             | 构建、验证、发布与资源限制                               |
+| [跨任务记忆指南](../EVOLUTION.md)                                                         | 从会话证据建立候选，在后续任务核验、采用和维护来源 |
 | [ATE 中文 README](../../agent-temporal-engine/README.zh-CN.md)                            | 引擎概览                                                 |
 | [ATE API](../../agent-temporal-engine/docs/ATE_API_REFERENCE.md)                          | 公共契约                                                 |
 | [ATE 传输](../../agent-temporal-engine/docs/ATE_TRANSPORTS.md)                            | stdio/Unix 与生命周期                                    |
@@ -146,7 +146,8 @@ CLI / TUI
   → Supervisor / Flow / Workspace：委派、协调、验收、交付
 
 Session 历史 → session/atestore → ATE 原生 Session
-编排/进化事实 → orchestration/atestore、evolutionstore → ateauthority → ATE state
+编排与策略事实 → orchestration/atestore、evolutionstore → ateauthority → ATE state
+跨任务记忆与采用 → experience → ATE Memory、Knowledge
 本地执行资源 → runtimestore、artifact、workspace domain
 ```
 
@@ -213,15 +214,15 @@ App Open
 ### 5.4 Memory 与自进化的默认行为
 
 - 主模型按共享指令决定何时调用 `memory_query` / `memory_manage`。
-- `memory_query` 有 `count/search/read/directory`，查询不自动采用。
-- `memory_manage` 有候选写入、撤回、纠正、显式采用，写操作有宿主身份和审批边界。
+- `memory_query` 的 `count`、`search` 面向当前可复用记忆，`directory` 列语义空间，`read` 可按准确引用检查候选或已晋升记录。
+- `memory_manage` 的 `create_candidate` 引用本会话的原始事件，`adopt` 记录一次明确采用，`withdraw_source` 和 `correct_source` 禁止后续复用相应来源。这些写操作都经过宿主身份与审批检查。
 - `/memory`、`@memory:` 是显式浏览/引用入口，历史材料不成为可信系统指令。
 - 没有自然语言 phrase router，没有每轮必调的辅助 Experience 模型。
 - 普通无显式记忆引用的 query 不会仅因文字提到记忆就被宿主前置检索。
 - CLI 普通成功 Turn 默认不自动执行 `Experience.Complete`；嵌入宿主显式启用的自动经验服务是另一条配置路径。
 - 工具结果通常回到主模型再生成答复，不能把工具成功等同于最终回答完成。
 
-插件与策略已有受控构建、验证、发布、回退基础。当前重点是稳定主链与恢复，不是无限制自治修改宿主或发布未经验证的工具。
+后续任务可以沿记忆的引用查证上次排障的依据，核对现场条件后决定是否采用。策略比较和 Turn 的工具快照各自服务于运行配置与恢复。较早的 WASM 插件方案已退役。[自进化定位](../EVOLUTION.md)
 
 ## 6. 已完成工作与进度边界
 

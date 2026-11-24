@@ -114,6 +114,7 @@ type Model struct {
 	turnEvents            chan tea.Msg
 	lastUsage             tokenusage.Snapshot
 	contextUsage          agentruntime.ContextUsage
+	toolInspector         *toolInspector
 	transcriptContent     string
 	transcriptLayout      []transcriptSpan
 	queryAnchors          []queryAnchor
@@ -236,25 +237,19 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 }
 
 func (model *Model) Init() tea.Cmd {
+	var resume tea.Cmd
+	if model.initialResumeTurn != "" {
+		resume = model.startResume(model.initialResumeTurn)
+	}
 	if model.startup != nil {
-		var resume tea.Cmd
-		if model.initialResumeTurn != "" {
-			resume = model.startResume(model.initialResumeTurn)
-		}
 		return tea.Batch(
 			model.input.Focus(), model.windowTitleCommand(), resume,
 			waitForApproval(model.ctx, model.approvalBroker),
 			waitForStartup(model.ctx, model.startup), model.spinner.Tick,
 		)
 	}
-	var recovery tea.Cmd
-	if model.initialResumeTurn != "" {
-		recovery = model.startResume(model.initialResumeTurn)
-	} else if source, ok := model.conversation.(RecoveryConversation); ok {
-		recovery = discoverRecoveries(model.ctx, source, false)
-	}
 	return tea.Batch(
-		model.input.Focus(), model.windowTitleCommand(), recovery,
+		model.input.Focus(), model.windowTitleCommand(), resume,
 		waitForApproval(model.ctx, model.approvalBroker),
 		model.startActivityRefresh(), model.scheduleBackgroundCheck(),
 	)
@@ -307,6 +302,14 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var command tea.Cmd
 			model.viewport, command = model.viewport.Update(message)
+			if view := model.toolInspector; view != nil {
+				if !view.detail && tea.MouseEvent(message).IsWheel() {
+					top := model.viewport.YOffset
+					view.selected = min(max(top, view.selected), min(len(view.indices)-1, top+model.viewport.Height-1))
+					model.refreshTranscript(false)
+				}
+				return model, command
+			}
 			if message.Button == tea.MouseButtonWheelUp {
 				model.autoScroll = false
 			} else if message.Button == tea.MouseButtonWheelDown && model.viewport.AtBottom() {
@@ -323,6 +326,7 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.refreshRootTranscript(false)
 		return model, tea.Batch(waitForTurnEvent(model.ctx, model.turnEvents), activity)
 	case approvalRequestMsg:
+		model.closeToolInspector()
 		model.closeTranscriptViewer()
 		model.applyApprovalRequest(message.request)
 		model.refreshTranscript(true)

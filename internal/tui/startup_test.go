@@ -107,11 +107,13 @@ func TestStartupQueuesUntilReadyHydratesHistoryAndForwardsEvents(t *testing.T) {
 	answer := schema.AssistantMessage("old answer", nil)
 	answer.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 9, CompletionTokens: 3, TotalTokens: 12}}
 	conversation.history = []*schema.Message{schema.UserMessage("old question"), answer}
+	transcript := append([]*schema.Message(nil), conversation.history...)
+	transcript = append(transcript, schema.UserMessage("interrupted question"), schema.AssistantMessage("partial answer", nil))
 	control, transcripts := &fakeAgentControl{}, &fakeTranscriptReader{}
 	activity := fakeActivityProvider{}
 	states <- StartupState{
 		Ready: true, At: time.Now(), TeamID: "team-startup",
-		Agents: control, Activity: activity, Transcripts: transcripts,
+		Agents: control, Activity: activity, Transcripts: transcripts, RootTranscript: transcript,
 	}
 	close(states)
 	seenEvent, done := false, false
@@ -132,10 +134,11 @@ func TestStartupQueuesUntilReadyHydratesHistoryAndForwardsEvents(t *testing.T) {
 				if model.contextUsage.Used != 10+len("queued question") {
 					t.Fatal("pending context usage was not hydrated")
 				}
-				if len(model.blocks) != 3 || model.blocks[0].content != "old question" || model.blocks[2].content != "queued question" {
+				if len(model.blocks) != 5 || model.blocks[0].content != "old question" || model.blocks[2].content != "interrupted question" ||
+					model.blocks[3].content != "partial answer" || model.blocks[4].content != "queued question" {
 					t.Fatalf("history hydration lost/duplicated the queued question: %+v", model.blocks)
 				}
-				if len(model.inputHistory) != 2 || model.inputHistory[0] != "old question" {
+				if len(model.inputHistory) != 3 || model.inputHistory[0] != "old question" || model.inputHistory[1] != "interrupted question" {
 					t.Fatalf("input history was not hydrated: %v", model.inputHistory)
 				}
 				if model.sessionTitle != "old question" {
@@ -153,7 +156,7 @@ func TestStartupQueuesUntilReadyHydratesHistoryAndForwardsEvents(t *testing.T) {
 	if _, command := model.Update(StartupMsg{State: StartupState{Ready: true}}); command != nil {
 		t.Fatal("duplicate terminal message restarted startup")
 	}
-	if len(model.blocks) != 4 {
+	if len(model.blocks) != 6 {
 		t.Fatalf("duplicate startup hydration: %+v", model.blocks)
 	}
 }

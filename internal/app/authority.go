@@ -155,6 +155,19 @@ func (p authorityProcess) validateClient(ctx context.Context, c *client.Client) 
 	return nil
 }
 
+func verifyAuthorityClient(c *client.Client) error {
+	identity := c.Identity()
+	if identity.Principal != "gsea" {
+		return errors.New("unexpected ATE authenticated principal")
+	}
+	for _, capability := range []string{api.AgentSessionReadCapability, "core/state-page-v1"} {
+		if !slices.Contains(identity.Capabilities, capability) {
+			return fmt.Errorf("ATE binary lacks %s; rebuild the paired ate and gsea binaries", capability)
+		}
+	}
+	return nil
+}
+
 // openAuthority establishes the native authority before executable services
 // receive repositories. Only unresolved exact requests are recovered locally.
 func openAuthority(ctx context.Context, cfg config.Config, pending authorityPendingStore) (*authorityResources, error) {
@@ -186,13 +199,8 @@ func openAuthority(ctx context.Context, cfg config.Config, pending authorityPend
 	bound := authorityProcess{manager: process, lease: lease}
 	var storeID model.StoreID
 	err = lease.WithClientContext(ctx, func(operation context.Context, c *client.Client) error {
-		if c.Identity().Principal != "gsea" {
-			return errors.New("unexpected ATE authenticated principal")
-		}
-		for _, capability := range []string{api.AgentSessionReadCapability, "core/state-page-v1"} {
-			if !slices.Contains(c.Identity().Capabilities, capability) {
-				return fmt.Errorf("ATE binary lacks %s; rebuild the paired ate and gsea binaries", capability)
-			}
+		if err := verifyAuthorityClient(c); err != nil {
+			return err
 		}
 		snapshot, err := c.Snapshot(operation)
 		if err != nil {

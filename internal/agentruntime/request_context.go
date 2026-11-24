@@ -102,19 +102,23 @@ func (m *recordingModel) prepareModelInput(ctx context.Context, input []*schema.
 			m.receipt.Input, err = cloneJournalInput(input)
 		}
 		if err == nil && m.purpose == "" && m.receipt.RawDigest != "" {
-			m.emitLive(ctx, m.modelLifecycleEvent(EventTurnPreparedPersistenceStarted))
-			durable, cancel := durabilityContext(ctx)
-			_, journalErr := m.events.Append(durable, m.sessionID, session.AnySequence, session.PendingEvent{
-				Type: session.EventTurnPrepared, CorrelationID: m.turnID, RuntimeSnapshotID: m.runtimeSnapshotID,
-				Payload: session.MustJSONPayload(turnJournal{Version: 2, Prepared: true, Receipt: &m.receipt}),
-			})
-			cancel()
-			if journalErr != nil {
-				err = fmt.Errorf("record prepared turn journal: %w", journalErr)
-			}
+			err = m.recordPreparedRequest(ctx)
 		}
 	}
 	return input, options, err
+}
+
+func (m *recordingModel) recordPreparedRequest(ctx context.Context) error {
+	m.emitLive(ctx, m.modelLifecycleEvent(EventTurnPreparedPersistenceStarted))
+	durable, cancel := durabilityContext(ctx)
+	defer cancel()
+	if _, err := m.events.Append(durable, m.sessionID, session.AnySequence, session.PendingEvent{
+		Type: session.EventTurnPrepared, CorrelationID: m.turnID, RuntimeSnapshotID: m.runtimeSnapshotID,
+		Payload: session.MustJSONPayload(turnJournal{Version: 2, Prepared: true, Receipt: &m.receipt}),
+	}); err != nil {
+		return fmt.Errorf("record prepared turn journal: %w", err)
+	}
+	return nil
 }
 
 func (m *recordingModel) prepareRequestContext(ctx context.Context, input []*schema.Message, options []model.Option) ([]*schema.Message, error) {

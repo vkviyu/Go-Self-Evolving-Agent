@@ -27,6 +27,9 @@ type modelRequestKey struct{}
 type modelRequestState struct {
 	streaming bool
 	readError atomic.Pointer[modelReadError]
+	// The native Responses decoder and its Body.Read calls run on the same
+	// goroutine. Other adapters leave this unset.
+	events *modelEventWatchdog
 }
 
 type modelReadError struct{ error }
@@ -102,7 +105,7 @@ func (err *modelDeadline) Error() string {
 
 func (*modelDeadline) Unwrap() error { return context.DeadlineExceeded }
 
-func modelTimingHTTPClient(client *http.Client, timeout time.Duration) *http.Client {
+func modelTimingHTTPClient(client *http.Client, headers, idle time.Duration) *http.Client {
 	clone := &http.Client{}
 	if client != nil {
 		*clone = *client
@@ -112,13 +115,14 @@ func modelTimingHTTPClient(client *http.Client, timeout time.Duration) *http.Cli
 		inner = http.DefaultTransport
 	}
 	// Honor an explicitly supplied Client.Timeout as an independent hard cap.
-	clone.Transport = modelTimingTransport{inner: inner, timeout: timeout}
+	clone.Transport = modelTimingTransport{inner: inner, headers: headers, idle: idle}
 	return clone
 }
 
 type modelTimingTransport struct {
 	inner   http.RoundTripper
-	timeout time.Duration
+	headers time.Duration
+	idle    time.Duration
 }
 
 func (transport modelTimingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -128,12 +132,10 @@ func (transport modelTimingTransport) RoundTrip(request *http.Request) (*http.Re
 		return transport.inner.RoundTrip(request)
 	}
 	var cancel context.CancelCauseFunc
-	var headersTimer *time.Timer
+	var stopHeaders func()
 	if state.streaming {
 		ctx, cancel = context.WithCancelCause(ctx)
-		headersTimer = time.AfterFunc(transport.timeout, func() {
-			cancel(&modelDeadline{phase: "response headers", timeout: transport.timeout})
-		})
+		stopHeaders = armModelDeadline(transport.headers, &modelDeadline{phase: "response headers", timeout: transport.headers}, cancel)
 	}
 	if state.streaming || request.Cancel != nil {
 		request = request.WithContext(ctx)
@@ -144,8 +146,8 @@ func (transport modelTimingTransport) RoundTrip(request *http.Request) (*http.Re
 		request.Cancel = nil
 	}
 	response, err := transport.inner.RoundTrip(request)
-	if headersTimer != nil {
-		headersTimer.Stop()
+	if stopHeaders != nil {
+		stopHeaders()
 	}
 	if cause, ok := context.Cause(ctx).(*modelDeadline); ok {
 		if response != nil && response.Body != nil {
@@ -161,7 +163,7 @@ func (transport modelTimingTransport) RoundTrip(request *http.Request) (*http.Re
 	}
 	response.Body = &modelTimingBody{
 		ReadCloser: response.Body, ctx: ctx, cancel: cancel, state: state,
-		idle: &modelDeadline{phase: "stream read", timeout: transport.timeout},
+		idle: &modelDeadline{phase: "stream read", timeout: transport.idle},
 	}
 	return response, nil
 }
@@ -175,15 +177,28 @@ type modelTimingBody struct {
 }
 
 func (body *modelTimingBody) Read(p []byte) (int, error) {
-	var timer *time.Timer
+	var stopRead func()
 	if body.cancel != nil && len(p) != 0 {
-		// Bound time blocked on a transport read. Bytes such as SSE keepalive
-		// frames count as transport activity, even if no token is emitted.
-		timer = time.AfterFunc(body.idle.timeout, func() { body.cancel(body.idle) })
+		delay, failure := body.idle.timeout, body.idle
+		if events := body.state.events; events != nil && events.sawBytes {
+			if remaining := time.Until(events.deadline); remaining < delay {
+				delay, failure = remaining, &events.failure
+			}
+		}
+		if delay <= 0 {
+			body.cancel(failure)
+			err := context.Cause(body.ctx)
+			body.state.readError.Store(&modelReadError{err})
+			return 0, err
+		}
+		stopRead = armModelDeadline(delay, failure, body.cancel)
 	}
 	n, err := body.ReadCloser.Read(p)
-	if timer != nil {
-		timer.Stop()
+	if stopRead != nil {
+		stopRead()
+	}
+	if n > 0 && body.state.events != nil {
+		body.state.events.sawBytes = true
 	}
 	if cause, ok := context.Cause(body.ctx).(*modelDeadline); ok {
 		err = cause
@@ -192,6 +207,21 @@ func (body *modelTimingBody) Read(p []byte) (int, error) {
 		body.state.readError.Store(&modelReadError{err})
 	}
 	return n, err
+}
+
+func armModelDeadline(delay time.Duration, failure *modelDeadline, cancel context.CancelCauseFunc) func() {
+	done := make(chan struct{})
+	timer := time.AfterFunc(delay, func() {
+		cancel(failure)
+		close(done)
+	})
+	return func() {
+		// If the callback won the race at the deadline, let it set the cause
+		// before the caller decides whether this read succeeded.
+		if !timer.Stop() {
+			<-done
+		}
+	}
 }
 
 func (body *modelTimingBody) Close() error {

@@ -2,7 +2,7 @@
 
 GSEA 将 ATE 作为会话和执行事实的唯一权威存储。普通任务不需要在 prompt 中提到 ATE，也不需要调用 MCP 或 Skill。GSEA 仍拥有 Agent Loop、模型调用、工具执行、工作区写入、Task 调度规则和恢复决策；会话、任务、消息、模型请求与响应、工具审批与结果，以及可复用经验直接保存在 ATE。
 
-应用启动后由 `internal/app` 持有一个 ATE 子进程管理器。它通过原生 stdio 帧协议连接 `ate`，使用 `--all-spaces --allow-global-snapshot --agent-profile --event-profile`，并为每次启动生成私有认证凭证。默认查找顺序是与 `gsea` 同目录的 `ate`，然后才使用 `PATH` 中的 `ate`。本地构建可以运行：
+应用启动后由 `internal/app` 持有一个 ATE 子进程管理器。它通过原生 stdio 帧协议连接 `ate`，使用 `--all-spaces --allow-global-snapshot --agent-profile --event-profile`，并为每次启动生成私有认证凭证。GSEA 以配置中的 ATE timeout 限制每次本地操作。子进程使用独立的一小时帧等待上限，避免模型推理或等待工具期间，空闲的 stdio 连接提前关闭。默认查找顺序是与 `gsea` 同目录的 `ate`，然后才使用 `PATH` 中的 `ate`。本地构建可以运行：
 
 ```sh
 make build
@@ -25,7 +25,7 @@ timeout = "30s"
 
 Session Event Store 使用 ATE 原生追加接口；编排仓库在 ATE 上逐条保存实体，并将相关状态、事件与幂等记录原子提交。GSEA 不保存业务历史副本，也没有启动或关闭时的历史补送。ATE 不可用时，依赖事实提交的操作停止。
 
-本地 `runtime-v3.db` 保存 checkpoint、工具快照、插件等宿主运行资源，以及未完成原生请求。结果未知时保留请求的原始字节、RequestID 和目标 Store ID；核验提交回执后删除正文。明确拒绝会保留无正文的终结标识。启动核对不是历史复制，不能把“未找到回执”当成“可以重新执行”。已有 `runtime.db`、`runtime-v2.db` 和 `sessions.db` 原地保留，当前版本不自动接管、迁移或回填旧库。
+本地 `runtime-v3.db` 保存 checkpoint、工具快照清单及其恢复引用，以及未完成的原生请求。快照固定本次执行可用的工具，跨任务记忆与来源由 ATE 管理。结果未知时保留请求的原始字节、RequestID 和目标 Store ID，核验提交回执后删除正文。明确拒绝会保留无正文的终结标识。查不到已尝试请求的回执时，宿主保持原请求待核验。已有 `runtime.db`、`runtime-v2.db` 和 `sessions.db` 原地保留。
 
 不同本地运行库可以共享 ATE 历史。同一会话执行受 Store ID 和 Session ID 对应的独占锁保护，Supervisor 只恢复自己持有的 Team。运行库也绑定 Store ID，防止替换 ATE 目录后把旧 checkpoint 用到另一个存储。
 
@@ -55,10 +55,10 @@ TUI 的请求阶段显示当前操作及其持续时间；存储操作同时显�
 
 普通 turn 先交给主 Agent 理解。共享系统指令说明记忆属于 Agent 的跨会话历史，并区分查看、采用和维护；主 Agent 根据当前请求决定是否使用工具。没有 TUI 自然语言句式分流，也没有每轮必调的辅助路由模型。
 
-例如，询问记忆数量时，主模型可以选择 `memory_query` 的 `count` 操作，再根据工具结果回答；询问一个完全不依赖历史的问题时，可以直接回答。执行任务时，可以先搜索、读取候选，再判断是否适用。自然语言理解仍需要主模型请求，供应商网络故障仍可能导致请求暂停。
+询问可复用记忆数量时，主模型可以选择 `memory_query` 的 `count` 操作，再根据结果回答。排查另一个项目的类似故障时，可以搜索当前可复用的记忆，按准确引用读取主张、来源和状态。持有候选的准确引用时，也可以直接读取检查。自然语言理解仍需要主模型请求，供应商网络故障仍可能导致请求暂停。[跨任务示例](../EVOLUTION.md)
 
 - `memory_query` 提供 `count`、`search`、`read` 和 `directory`。搜索和计数针对当前可复用记忆；精确读取返回状态和可复用标记，不把候选伪装成已验证事实。查询不会自动采用或修改记忆。
-- `memory_manage` 提供候选写入、来源撤回、事实纠正和显式采用。写入绑定宿主提供的 Session、Turn、Call 和 Actor 身份，经过统一工具审批。候选引用当前会话的原始事件；模型不能凭自己的成功声明完成验证或发布。
+- `memory_manage` 仅提供 `create_candidate`、`withdraw_source`、`correct_source` 和 `adopt`，不支持 `validate/promote`。写入绑定宿主提供的 Session、Turn、Call 和 Actor 身份，经过统一工具审批。创建候选需提供 `claim`、`kind` 和 `space`/`new_space` 之一，引用当前会话的原始事件；另经独立验证和晋升才具备复用资格。来源纠正会禁止复用旧来源，新主张需另建候选。[注册表与参数](../internal/app/memory_tools.go)
 - `/memory` 和 `@memory:` 仍支持用户直接浏览与引用。引用以不可信历史材料提供给 Agent，由它判断相关性，不会成为系统指令。
 - 普通成功 turn 不会自动启动 `Experience.Complete`。自动经验选择和提炼服务仍可由嵌入宿主显式配置，但不是 CLI 默认路径；其测试不能代表主 Agent 的工具选择效果。
 

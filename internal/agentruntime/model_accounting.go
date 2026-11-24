@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 
 	"github.com/cloudwego/eino/schema"
+
 	"github.com/vkviyu/go-self-evolving-agent/internal/modeltelemetry"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
@@ -19,15 +22,47 @@ type modelInvocationError struct{ cause error }
 func (e *modelInvocationError) Error() string { return e.cause.Error() }
 func (e *modelInvocationError) Unwrap() error { return e.cause }
 
+// RetryableModelFailure only accepts the accounted model failure itself. An error
+// joined with a usage or journal failure must go through explicit recovery.
+func RetryableModelFailure(err error) orchestration.ExecutionStopKind {
+	for err != nil {
+		if invocation, ok := err.(*modelInvocationError); ok {
+			kind, _ := orchestration.ExecutionStopKindOf(invocation.cause)
+			switch kind {
+			case orchestration.ExecutionToolCallFormat:
+				return kind
+			case orchestration.ExecutionTransport:
+				var network net.Error
+				if errors.Is(invocation, context.DeadlineExceeded) ||
+					(errors.As(invocation, &network) && network.Timeout()) {
+					return kind
+				}
+			}
+			return ""
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			causes := joined.Unwrap()
+			if len(causes) != 1 {
+				return ""
+			}
+			err = causes[0]
+		} else {
+			err = errors.Unwrap(err)
+		}
+	}
+	return ""
+}
+
 // Once dispatched, absence of reported usage does not mean a free request.
 // Charge the bounded reservation conservatively and mark its quality. If the
 // ledger is unavailable, leave the reservation pending rather than releasing
 // it and hiding consumption. Only releaseUnsent refunds a pre-dispatch failure.
 func (m *recordingModel) failRequest(ctx context.Context, requestID string, cause error, streaming bool) error {
+	observation.Emit(ctx, observation.Event{Component: "runtime", Name: "model.request.finished", Status: "failed"})
 	settlementErr := m.settleUsage(ctx, requestID, nil)
 	recordErr := m.recordModelFailure(ctx, requestID, cause, streaming)
 	if observation := modeltelemetry.ReadStream(ctx); observation != nil &&
-		(observation.Outcome == "response_headers_timeout" || observation.Outcome == "stream_read_timeout") {
+		(observation.Outcome == "response_headers_timeout" || observation.Outcome == "stream_read_timeout" || observation.Outcome == "stream_event_idle_timeout") {
 		lastEvent := observation.LastEvent
 		if lastEvent == "" {
 			lastEvent = "none"
@@ -36,6 +71,12 @@ func (m *recordingModel) failRequest(ctx context.Context, requestID string, caus
 	}
 	if settlementErr != nil || recordErr != nil {
 		return errors.Join(cause, settlementErr, recordErr)
+	}
+	if m.purpose == "" && errors.Is(cause, modeltelemetry.ErrToolCallFormat) {
+		return &modelInvocationError{cause: &orchestration.ExecutionStop{
+			Kind:  orchestration.ExecutionToolCallFormat,
+			Cause: fmt.Errorf("%w (request %s)", cause, requestID),
+		}}
 	}
 	return &modelInvocationError{cause: orchestration.FromModelExecutionError(cause)}
 }

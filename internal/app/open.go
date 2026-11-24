@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -18,9 +17,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	orchestrationate "github.com/vkviyu/go-self-evolving-agent/internal/orchestration/atestore"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
-	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
@@ -73,16 +69,11 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 	runtime := runtimeStorage{
 		checkpoints: database.Checkpoints(),
 		snapshots:   database.RuntimeSnapshots().WithReferenceGuard(repositories.CheckSnapshotReference),
-		plugins:     database.Plugins(),
 		strategies:  evolution,
 		diagnostics: database.LSPDiagnostics(),
-		builds:      evolution,
-		reports:     evolution,
 	}
 	closeOnError := true
-	var wasmRuntime *wasm.Runtime
 	var diagnosticManager *lsp.Manager
-	var pluginManager *plugin.Manager
 	var domain *workspacedomain.Domain
 	temporalCleanup := func() { _ = authority.process.Close() }
 	evolutionContext, evolutionCancel := context.WithCancel(context.Background())
@@ -93,19 +84,12 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 			if temporalCleanup != nil {
 				temporalCleanup()
 			}
-			if pluginManager != nil {
-				_ = pluginManager.Close(context.Background())
-			}
-			closeOpenResources(database, wasmRuntime, approvalBroker, diagnosticManager)
+			closeOpenResources(database, approvalBroker, diagnosticManager)
 			_ = domain.Close()
 			_ = owner.Close()
 		}
 	}()
 	events := authority.sessions
-	wasmRuntime, err = wasm.NewRuntime(ctx, resolved.WASM)
-	if err != nil {
-		return nil, err
-	}
 	workspace, err := codingtools.NewWithSandboxMode(resolved.WorkspaceDirectory, options.ShellSandbox)
 	if err != nil {
 		return nil, fmt.Errorf("initialize workspace tools: %w", err)
@@ -192,7 +176,6 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 		events:           events,
 		runtime:          runtime,
 		registry:         registry,
-		wasm:             wasmRuntime,
 		approval:         approvalBroker,
 		profiles:         profiles,
 		workspace:        workspace,
@@ -209,7 +192,6 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 	}
 	bindings := buildBuiltinBindings(resolved, workspace, artifacts)
 	bindings = append(bindings, memoryToolBindings(application.experience)...)
-	bindings = append(bindings, pluginEvolutionBindings(application)...)
 	bindings = append(bindings, strategyEvolutionBindings(application)...)
 	bindings = append(bindings, options.ToolBindings...)
 	bindings = append(bindings, agentflow.ControlBindings(application.repositories)...)
@@ -237,28 +219,11 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 	if _, err := registry.ActivateMany(scopeNativeBindings(nativeScope, agentflow.CatalogBindings(flowCatalog))...); err != nil {
 		return nil, fmt.Errorf("activate Flow catalog tools: %w", err)
 	}
-	pluginManager, err = plugin.OpenManager(ctx, wasmRuntime, registry, application.runtime.plugins, "agent_", "task_", "merge_", "flow_", "plugin_", "strategy_", "memory_")
-	if err != nil {
-		return nil, fmt.Errorf("restore durable plugins: %w", err)
-	}
-	if err := registry.ConfigurePersistence(application.runtime.snapshots, pluginManager.ResolveBinding); err != nil {
+	if err := registry.ConfigurePersistence(application.runtime.snapshots); err != nil {
 		return nil, err
 	}
-	application.pipeline, application.plugins = pipeline, pluginManager
+	application.pipeline = pipeline
 	application.flows, application.flowCatalog = flowRuntime, flowCatalog
-	application.publication, err = plugin.NewPublicationService(pluginManager, registry, application.runtime.reports, wasmRuntime.ResourceIdentity())
-	if err != nil {
-		return nil, err
-	}
-	application.builds, err = pluginbuild.NewService(pluginbuild.ServiceConfig{
-		Store:    application.runtime.builds,
-		Compiler: pluginbuild.Compiler{GoRoot: os.Getenv(pluginbuild.EnvGoRoot)},
-		Stager:   pluginManager,
-		Verifier: application.publication,
-	})
-	if err != nil {
-		return nil, err
-	}
 	application.shadow, err = strategy.NewShadowService(application.strategies)
 	if err != nil {
 		return nil, err

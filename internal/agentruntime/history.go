@@ -114,6 +114,9 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 	err := session.VisitEvents(ctx, f.events, sessionID, func(event session.Event) error {
 		switch event.Type {
 		case session.EventContextCompacted:
+			if transcript {
+				return nil
+			}
 			var payload historyContextCheckpoint
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return fmt.Errorf("decode context compaction event %s: %w", event.EventID, err)
@@ -161,6 +164,9 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 				turn.messages = append(turn.messages, schema.UserMessage(payload.Content))
 			}
 		case session.EventModelRequested:
+			if transcript {
+				return nil
+			}
 			var payload struct {
 				EstimatedInputTokens int    `json:"estimated_input_tokens"`
 				Purpose              string `json:"purpose"`
@@ -270,6 +276,9 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 		case session.EventTurnCompleted:
 			turn := ensureHistoryTurn(turns, &order, event.CorrelationID, event.Sequence)
 			turn.completedAt = event.Sequence
+			if transcript {
+				return nil
+			}
 			// Resume reconstructs the original turn input, even when newer
 			// context has committed in the meantime. Publish this checkpoint
 			// only if it was derived from the current conversation baseline.
@@ -293,7 +302,7 @@ func (f *Factory) projectHistory(ctx context.Context, sessionID session.ID, tran
 	history = append(history, compactedRetained...)
 	if !transcript {
 		// Late recovery becomes available to the model when it completes.
-		// The display keeps the opening order of the remaining turns.
+		// The display keeps the opening order of all turns.
 		slices.SortStableFunc(order, func(a, b string) int { return cmp.Compare(turns[a].completedAt, turns[b].completedAt) })
 	}
 	for _, id := range order {

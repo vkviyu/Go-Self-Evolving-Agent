@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
@@ -122,7 +123,10 @@ func cancelOnDone(ctx context.Context) (adk.AgentRunOption, func() bool) {
 }
 
 // start records the turn start with its opening input and runs Eino.
-func (t *Turn) start(ctx context.Context, messages []*schema.Message, sink EventSink, inputKind string, opening session.PendingEvent, before func(string) error) (Result, error) {
+func (t *Turn) start(ctx context.Context, messages []*schema.Message, sink EventSink, inputKind string, opening session.PendingEvent, before func(string) error) (result Result, err error) {
+	ctx = t.observedContext(ctx)
+	observation.Emit(ctx, observation.Event{Component: "runtime", Name: "turn.started"})
+	defer func() { observeTurnFinished(ctx, err) }()
 	started := map[string]any{
 		"turn_id": t.turnID, "model_profile": t.modelProfile,
 		"provider": t.provider, "model": t.model,
@@ -132,13 +136,19 @@ func (t *Turn) start(ctx context.Context, messages []*schema.Message, sink Event
 		"run_id":                   t.runID,
 		"journal":                  turnJournal{Version: 1, Input: messages, Prepared: true},
 	}
-	if t.recordedModel != nil && t.recordedModel.factory != nil && !t.recordedModel.factory.config.Execution.IsZero() {
-		started["execution"] = t.recordedModel.factory.config.Execution
+	if t.recordedModel != nil && t.recordedModel.factory != nil {
+		factory := t.recordedModel.factory
+		if !factory.config.Execution.IsZero() {
+			started["execution"] = factory.config.Execution
+		}
+		if opening.Type == session.EventUserMessage && factory.ActorScope().ParentAgentID == "" {
+			started["foreground"] = true
+		}
 	}
 	if inputKind != "" {
 		started["input"] = inputKind
 	}
-	if err := emitEvent(ctx, sink, Event{Type: EventTurnPersistenceStarted, TurnID: t.turnID}); err != nil {
+	if err := emitStage(ctx, sink, Event{Type: EventTurnPersistenceStarted, TurnID: t.turnID}); err != nil {
 		return Result{}, err
 	}
 	if _, err := t.events.Append(ctx, t.sessionID, session.AnySequence,
@@ -166,11 +176,11 @@ func (t *Turn) start(ctx context.Context, messages []*schema.Message, sink Event
 			t.recordedModel.liveSink = nil
 		}()
 	}
-	if err := emitEvent(ctx, sink, Event{Type: EventAgentLoopStarting, TurnID: t.turnID}); err != nil {
+	if err := emitStage(ctx, sink, Event{Type: EventAgentLoopStarting, TurnID: t.turnID}); err != nil {
 		return Result{}, err
 	}
 	iterator := t.runner.Run(ctx, messages, cancelOption, adk.WithCheckPointID(t.checkpointID))
-	return t.consumeIterator(ctx, iterator, sink, false)
+	return t.consumeIterator(ctx, iterator, sink, false, replayPresentation{})
 }
 
 // ID returns the durable turn identity used by the checkpoint store.
@@ -183,12 +193,34 @@ func (t *Turn) ID() string {
 
 // Resume continues this turn from its persisted Eino checkpoint.
 func (t *Turn) Resume(ctx context.Context, sink EventSink) (Result, error) {
+	return t.resume(ctx, sink, "")
+}
+
+// RetryModelFailure resumes the original turn and suppresses display of its
+// confirmed, already visible prefix.
+func (t *Turn) RetryModelFailure(ctx context.Context, sink EventSink, kind orchestration.ExecutionStopKind) (Result, error) {
+	return t.resume(ctx, sink, kind)
+}
+
+func (t *Turn) resume(ctx context.Context, sink EventSink, retry orchestration.ExecutionStopKind) (result Result, err error) {
+	ctx = t.observedContext(ctx)
+	observation.Emit(ctx, observation.Event{Component: "runtime", Name: "turn.resuming"})
+	defer func() { observeTurnFinished(ctx, err) }()
 	if err := t.begin(ctx); err != nil {
 		return Result{}, err
 	}
 	if t.checkpointID == "" {
 		return Result{}, errors.New("Agent turn has no checkpoint ID")
 	}
+	var presentation replayPresentation
+	if retry != "" {
+		t.recordedModel.correctToolFormat = retry == orchestration.ExecutionToolCallFormat
+		presentation.active = true
+		if replay := t.recordedModel.replay; replay != nil {
+			presentation.remaining = len(replay.Responses) - replay.Next
+		}
+	}
+	ctx = WithLiveSink(ctx, sink)
 	cancelOption, stopCancelWatch := cancelOnDone(ctx)
 	defer stopCancelWatch()
 	if t.recordedModel != nil {
@@ -206,11 +238,11 @@ func (t *Turn) Resume(ctx context.Context, sink EventSink) (Result, error) {
 			}
 		}
 		iterator := t.runner.Run(ctx, t.journal.Input, cancelOption, adk.WithCheckPointID(t.checkpointID))
-		return t.consumeIterator(ctx, iterator, sink, true)
+		return t.consumeIterator(ctx, iterator, sink, true, presentation)
 	}
 	iterator, err := t.runner.Resume(ctx, t.checkpointID, cancelOption)
 	if err != nil {
 		return Result{}, t.fail(ctx, err)
 	}
-	return t.consumeIterator(ctx, iterator, sink, true)
+	return t.consumeIterator(ctx, iterator, sink, true, presentation)
 }

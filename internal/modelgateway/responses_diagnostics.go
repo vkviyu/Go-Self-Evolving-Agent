@@ -13,23 +13,29 @@ import (
 
 type observedResponsesBody struct {
 	io.ReadCloser
-	observation *modeltelemetry.Stream
+	observation *responsesObservation
 }
 
 func (body observedResponsesBody) Read(p []byte) (int, error) {
 	n, err := body.ReadCloser.Read(p)
 	if n > 0 {
-		now := time.Now().UTC()
+		now := time.Now()
 		if body.observation.FirstByteAt.IsZero() {
-			body.observation.FirstByteAt = now
+			body.observation.FirstByteAt = now.UTC()
+			if s := body.observation.stats; s != nil {
+				s.emit("responses.first_byte", "received", nil, nil)
+			}
 		}
-		body.observation.LastByteAt = now
+		body.observation.LastByteAt = now.UTC()
 		body.observation.BodyBytes += uint64(n)
+		if body.observation.stats != nil {
+			body.observation.activity(now)
+		}
 	}
 	return n, err
 }
 
-func observeResponsesHeaders(response *http.Response, observation *modeltelemetry.Stream, apiKey string) {
+func observeResponsesHeaders(response *http.Response, observation *responsesObservation, apiKey string) {
 	observation.HeadersAt = time.Now().UTC()
 	observation.Status = response.StatusCode
 	rawType := response.Header.Get("Content-Type")
@@ -48,6 +54,7 @@ func observeResponsesHeaders(response *http.Response, observation *modeltelemetr
 			break
 		}
 	}
+	observation.headers()
 	response.Body = observedResponsesBody{ReadCloser: response.Body, observation: observation}
 }
 
@@ -81,7 +88,7 @@ func responsesEventLabel(name string) string {
 	}
 }
 
-func recordResponsesTransport(ctx context.Context, observation *modeltelemetry.Stream, err error) {
+func recordResponsesTransport(ctx context.Context, observation *responsesObservation, err error) {
 	var deadline *modelDeadline
 	var status *HTTPStatusError
 	switch {
@@ -91,6 +98,8 @@ func recordResponsesTransport(ctx context.Context, observation *modeltelemetry.S
 		observation.Outcome = "response_headers_timeout"
 	case errors.As(err, &deadline) && deadline.phase == "stream read":
 		observation.Outcome = "stream_read_timeout"
+	case errors.As(err, &deadline) && deadline.phase == "stream event idle":
+		observation.Outcome = "stream_event_idle_timeout"
 	case errors.As(err, &status):
 		observation.Outcome = "http_status_error"
 	case errors.Is(err, context.Canceled):
@@ -99,6 +108,8 @@ func recordResponsesTransport(ctx context.Context, observation *modeltelemetry.S
 		observation.Outcome = "deadline_exceeded"
 	case errors.Is(err, ErrResponsesStreamTruncated):
 		observation.Outcome = "truncated"
+	case errors.Is(err, modeltelemetry.ErrToolCallFormat):
+		observation.Outcome = "tool_call_format_rejected"
 	case err == nil:
 		observation.Outcome = "stream_closed"
 	case observation.HeadersAt.IsZero():
@@ -107,5 +118,6 @@ func recordResponsesTransport(ctx context.Context, observation *modeltelemetry.S
 		observation.Outcome = "stream_failed"
 	}
 	observation.EndedAt = time.Now().UTC()
-	modeltelemetry.RecordStream(ctx, *observation)
+	modeltelemetry.RecordStream(ctx, observation.Stream)
+	observation.finish()
 }

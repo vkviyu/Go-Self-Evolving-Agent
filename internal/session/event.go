@@ -17,9 +17,11 @@ type EventType string
 const (
 	EventSessionCreated EventType = "session.created"
 	EventTurnStarted    EventType = "turn.started"
-	EventTurnPrepared   EventType = "turn.prepared"
-	EventModelPartial   EventType = "model.partial"
-	EventUserMessage    EventType = "user.message"
+	// EventTurnForegroundSelected records a user's choice to resume a foreground turn.
+	EventTurnForegroundSelected EventType = "turn.foreground.selected"
+	EventTurnPrepared           EventType = "turn.prepared"
+	EventModelPartial           EventType = "model.partial"
+	EventUserMessage            EventType = "user.message"
 	// EventBackgroundInput records Agent messages added to a turn as untrusted
 	// user-role context, either as the opening input of a wake turn or at a
 	// position inside a running turn's model input.

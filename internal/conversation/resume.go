@@ -4,37 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 )
 
 // ResumeTurn restores an existing execution from its durable checkpoint or
-// replay journal. A completed turn is returned without rerunning tools.
+// replay journal. An empty ID selects the foreground turn from durable state.
+// A completed turn selected by ID is returned without rerunning tools.
 func (conversation *Conversation) ResumeTurn(ctx context.Context, turnID string, sink agentruntime.EventSink) (agentruntime.Result, error) {
-	if strings.TrimSpace(turnID) == "" {
-		return agentruntime.Result{}, errors.New("conversation resume requires a turn ID")
-	}
 	conversation.mutex.Lock()
 	defer conversation.mutex.Unlock()
-	return conversation.resumeTurn(ctx, turnID, sink)
-}
-
-func (conversation *Conversation) resumeTurn(ctx context.Context, turnID string, sink agentruntime.EventSink) (agentruntime.Result, error) {
 	records, err := conversation.factory.TurnRecords(ctx, conversation.sessionID)
 	if err != nil {
 		return agentruntime.Result{}, err
 	}
-	var record *agentruntime.TurnRecord
-	for index := range records {
-		if records[index].TurnID == turnID {
-			record = &records[index]
-			break
+	root := conversation.factory.ActorScope().ParentAgentID == ""
+	if turnID == "" && root {
+		record, err := foregroundRecoveryTarget(records)
+		if err != nil {
+			return agentruntime.Result{}, err
+		}
+		return conversation.resumeRecordedTurn(ctx, record, sink, record.ForegroundSequence == 0)
+	}
+	for _, record := range records {
+		if record.TurnID == turnID {
+			return conversation.resumeRecordedTurn(ctx, record, sink, root && record.IsForegroundRequest())
 		}
 	}
-	if record == nil {
-		return agentruntime.Result{}, fmt.Errorf("turn %s has no durable start", turnID)
-	}
+	return agentruntime.Result{}, fmt.Errorf("turn %s has no durable start", turnID)
+}
+
+func (conversation *Conversation) resumeRecordedTurn(ctx context.Context, record agentruntime.TurnRecord, sink agentruntime.EventSink, selectForeground bool) (agentruntime.Result, error) {
+	turnID := record.TurnID
+	ctx = observation.WithScope(ctx, observation.Scope{SessionID: string(conversation.sessionID), TurnID: turnID})
 	if record.RequiresExecutionRecovery() {
 		return agentruntime.Result{}, errors.New("turn belongs to a removed execution admission protocol; recovery is fail-closed")
 	}
@@ -48,7 +51,10 @@ func (conversation *Conversation) resumeTurn(ctx context.Context, turnID string,
 		}
 		return result, err
 	}
-	result, err := conversation.resumeInnerTurn(ctx, turnID, sink)
+	if err := emit(sink, ctx, agentruntime.Event{Type: agentruntime.EventTurnResuming, TurnID: turnID}); err != nil {
+		return agentruntime.Result{}, err
+	}
+	result, err := conversation.resumeInnerTurn(ctx, turnID, sink, selectForeground)
 	if err == nil {
 		conversation.completedTurns++
 	}

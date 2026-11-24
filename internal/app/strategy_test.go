@@ -14,7 +14,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
-	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
@@ -193,28 +192,21 @@ func TestEvolutionWorkersCancelAndJoinBeforeClose(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("close returned before worker stopped")
 	}
-	if _, err := a.BuildPlugin(context.Background(), pluginbuild.Request{}); err == nil {
-		t.Fatal("build started after close")
-	}
 	if _, _, err := a.ShadowStrategy(context.Background(), nil, "", ""); err == nil {
 		t.Fatal("shadow started after close")
 	}
 }
 
-func TestEvolutionEvidenceErrorsAreFatalToTheEinoAdapter(t *testing.T) {
-	for _, failure := range []error{pluginbuild.ErrEvidence, strategy.ErrEvidence} {
-		binding := tool.Binding{Descriptor: tool.Descriptor{Name: "evidence_fault", Revision: "v1", Description: "failure injection", RiskClass: tool.RiskExecute, InputSchema: []byte(`{"type":"object"}`)}, Executor: tool.InvokeFunc(func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, failure })}
-		a, err := testOpenWithOptions(t, context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}, OpenOptions{ToolBindings: []tool.Binding{binding}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = a.Pipeline().WithApprover(approval.NewToolAllowlistApprover("evidence_fault")).Execute(context.Background(), tool.Call{SessionID: "evidence", TurnID: "turn", CallID: "call", ToolName: "evidence_fault", Arguments: []byte(`{}`)})
-		var recoverable *tool.ExecutionError
-		if !errors.Is(err, failure) || errors.As(err, &recoverable) {
-			t.Fatalf("uncertainty became repairable: %v", err)
-		}
-		if err := a.Close(); err != nil {
-			t.Fatal(err)
-		}
+func TestStrategyEvidenceErrorsAreFatalToTheEinoAdapter(t *testing.T) {
+	binding := tool.Binding{Descriptor: tool.Descriptor{Name: "evidence_fault", Revision: "v1", Description: "failure injection", RiskClass: tool.RiskExecute, InputSchema: []byte(`{"type":"object"}`)}, Executor: tool.InvokeFunc(func(context.Context, json.RawMessage) (json.RawMessage, error) { return nil, strategy.ErrEvidence })}
+	a, err := testOpenWithOptions(t, context.Background(), config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}, OpenOptions{ToolBindings: []tool.Binding{binding}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	_, err = a.Pipeline().WithApprover(approval.NewToolAllowlistApprover("evidence_fault")).Execute(context.Background(), tool.Call{SessionID: "evidence", TurnID: "turn", CallID: "call", ToolName: "evidence_fault", Arguments: []byte(`{}`)})
+	var recoverable *tool.ExecutionError
+	if !errors.Is(err, strategy.ErrEvidence) || errors.As(err, &recoverable) {
+		t.Fatalf("uncertainty became repairable: %v", err)
 	}
 }

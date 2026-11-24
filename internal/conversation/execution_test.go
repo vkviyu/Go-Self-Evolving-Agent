@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -28,7 +29,7 @@ type failOnceExecutionModel struct{ calls atomic.Int32 }
 
 func (fake *failOnceExecutionModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	if fake.calls.Add(1) == 1 {
-		return nil, timeoutExecutionError{}
+		return nil, io.ErrUnexpectedEOF
 	}
 	return schema.AssistantMessage("recovered answer", nil), nil
 }
@@ -40,12 +41,6 @@ func (fake *failOnceExecutionModel) Stream(ctx context.Context, input []*schema.
 	}
 	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
 }
-
-type timeoutExecutionError struct{}
-
-func (timeoutExecutionError) Error() string   { return "upstream timeout" }
-func (timeoutExecutionError) Timeout() bool   { return true }
-func (timeoutExecutionError) Temporary() bool { return true }
 
 func (fake *executionModel) Stream(ctx context.Context, messages []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	message, err := fake.Generate(ctx, messages, options...)

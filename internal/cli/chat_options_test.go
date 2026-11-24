@@ -248,3 +248,25 @@ func TestProfileArgumentRejectsMissingOrEmptyValue(t *testing.T) {
 		}
 	}
 }
+
+func TestParseChatStreamTimeouts(t *testing.T) {
+	defaults := config.Config{
+		Model:  config.ModelConfig{Timeout: 2 * time.Minute},
+		Agent:  config.AgentConfig{MaxIterations: 20},
+		Agents: config.AgentsConfig{MaxRunning: 4},
+	}
+	options, err := parseChatOptions(nil, defaults, &bytes.Buffer{})
+	if err != nil || options.model.Timeout != 2*time.Minute || options.model.StreamIdleTimeout != 5*time.Minute {
+		t.Fatalf("default timeouts: %+v, %v", options.model, err)
+	}
+	options, err = parseChatOptions([]string{"--timeout", "8s", "--response-header-timeout", "15s", "--stream-event-idle-timeout", "30s"}, defaults, &bytes.Buffer{})
+	if err != nil || options.model.Timeout != 8*time.Second || options.model.ResponseHeaderTimeout != 15*time.Second ||
+		options.model.StreamIdleTimeout != 8*time.Second || options.model.StreamEventIdleTimeout != 30*time.Second {
+		t.Fatalf("overridden timeouts: %+v, %v", options.model, err)
+	}
+	for _, name := range []string{"--response-header-timeout", "--stream-idle-timeout", "--stream-event-idle-timeout"} {
+		if _, err := parseChatOptions([]string{name, "0s"}, defaults, &bytes.Buffer{}); err == nil {
+			t.Fatalf("accepted zero duration for %s", name)
+		}
+	}
+}

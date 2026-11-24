@@ -13,6 +13,6 @@ test:
 	go test ./...
 
 resilience:
-	go test ./internal/cli -run '^TestResponsesStreamDiagnosticsAndResumeThroughCLI$$' -count=1 -v
-	go test ./internal/app -run 'TestTruncatedResponsesStreamPausesAndResumesOriginalTurn|TestTruncatedResponsesAfterConfirmedToolResumesWithoutRepeatingTool' -count=1 -v
+	go test ./internal/cli -run '^TestResponses(DeltasReachTUIBeforeCompletion|StreamDiagnosticsAndResumeThroughCLI)$$' -count=1 -v
+	go test ./internal/app -run 'TestTruncatedResponsesStreamPausesAndResumesOriginalTurn|TestTruncatedResponsesAfterConfirmedToolResumesWithoutRepeatingTool|TestResponsesRegeneratesRejectedToolCallWithinOriginalTurn|TestResponsesSlowFirstByteKeepsATEAvailable' -count=1 -v
 	go test ./internal/agentruntime -run 'TestJournalRecoveryPreservesModelVisibleToolFailures|TestJournalRecoveryReplaysEinoDecisionsWithoutRepeatingPreparation|TestCheckpointWithoutCommittedReplayMarkerUsesOriginalJournal' -count=1 -v

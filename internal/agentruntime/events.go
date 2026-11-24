@@ -16,6 +16,7 @@ type EventType string
 const (
 	EventMemoryReferenceLookupStarted        EventType = "memory.reference.lookup.started"
 	EventTurnStarting                        EventType = "turn.starting"
+	EventTurnResuming                        EventType = "turn.resuming"
 	EventConversationLockWaiting             EventType = "conversation.lock.waiting"
 	EventConversationHistoryLoading          EventType = "conversation.history.loading"
 	EventTurnBuilding                        EventType = "turn.building"
@@ -39,6 +40,8 @@ const (
 	EventModelDispatchPersistenceStarted     EventType = "model.dispatch.persistence.started"
 	EventModelRequestStarted                 EventType = "model.request.started"
 	EventModelResponseStarted                EventType = "model.response.started"
+	EventModelToolFormatRetry                EventType = "model.tool_format.retry"
+	EventModelTimeoutRetry                   EventType = "model.timeout.retry"
 	EventToolProposed                        EventType = "tool.proposed"
 	EventToolPolicyChecking                  EventType = "tool.policy.checking"
 	EventToolPolicyDecided                   EventType = "tool.policy.decided"

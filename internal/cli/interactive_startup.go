@@ -154,6 +154,7 @@ func runInteractiveChat(
 		var factory *agentruntime.Factory
 		var supervisor *agentmanager.Supervisor
 		var rootChat tui.Conversation
+		var rootTranscript []*schema.Message
 		startupContext := ateprocess.WithObserver(setupContext, publisher.observe)
 		publisher.phase(setupContext, tui.StartupRootOwner)
 		err = application.WithStorageBatch(startupContext, func(batchContext context.Context) error {
@@ -203,6 +204,11 @@ func runInteractiveChat(
 			if err := application.ResumeSessionMaintenance(batchContext, root.SessionID); err != nil {
 				return fmt.Errorf("resume session maintenance: %w", err)
 			}
+			publisher.phase(setupContext, tui.StartupTranscript)
+			rootTranscript, err = factory.LoadTranscript(batchContext, root.SessionID)
+			if err != nil {
+				return fmt.Errorf("load chat transcript: %w", err)
+			}
 			return nil
 		})
 		if err != nil {
@@ -219,11 +225,12 @@ func runInteractiveChat(
 		close(ready)
 		attached = true
 		publisher.finish(setupContext, tui.StartupState{
-			Ready:       true,
-			TeamID:      root.TeamID,
-			Activity:    supervisor,
-			Agents:      supervisor,
-			Transcripts: factory,
+			Ready:          true,
+			TeamID:         root.TeamID,
+			Activity:       supervisor,
+			Agents:         supervisor,
+			Transcripts:    factory,
+			RootTranscript: rootTranscript,
 		})
 		stopCatalog, err := trackChatSessionAsync(
 			setupContext,

@@ -56,6 +56,7 @@ func (model *Model) openAgentTranscript(agent orchestration.AgentSnapshot) tea.C
 		model.closeTranscriptViewer()
 		return nil
 	}
+	model.closeToolInspector()
 	model.panelFocused = false
 	if model.viewer == nil {
 		model.rootReading = transcriptReadingState{position: model.readingPosition(), follow: model.autoScroll}
@@ -169,6 +170,16 @@ func (model *Model) applyAgentTranscript(message agentTranscriptMsg) {
 	}
 	viewer.loaded, viewer.revision = true, message.revision
 	blocks := blocksFromHistory(message.messages)
+	// A refreshed child projection can insert or remove earlier messages.
+	// Never leave a detail page pointing at a different call in that slot.
+	if view := model.toolInspector; view != nil {
+		for _, index := range view.indices {
+			if index < 1 || index > len(blocks) || !sameTranscriptBlock(&viewer.blocks[index], &blocks[index-1]) {
+				model.closeToolInspector()
+				break
+			}
+		}
+	}
 	reuseTranscriptBlocks(viewer.blocks[1:], blocks)
 	if len(blocks) == 0 {
 		blocks = append(blocks, transcriptBlock{kind: blockSystem, content: "The Agent has no messages yet"})
@@ -182,22 +193,24 @@ func (model *Model) applyAgentTranscript(message agentTranscriptMsg) {
 func reuseTranscriptBlocks(previous, next []transcriptBlock) {
 	for index := range min(len(previous), len(next)) {
 		old, block := &previous[index], &next[index]
-		if old.kind != block.kind || old.content != block.content || old.toolCallID != block.toolCallID || old.toolName != block.toolName || old.toolArguments != block.toolArguments {
+		if !sameTranscriptBlock(old, block) {
 			continue
 		}
 		if old.toolResult == block.toolResult {
 			*block = *old
-		} else {
-			block.argumentsExpanded = old.argumentsExpanded
-			block.toolGroupExpanded = old.toolGroupExpanded
 		}
 	}
+}
+
+func sameTranscriptBlock(a, b *transcriptBlock) bool {
+	return a.kind == b.kind && a.content == b.content && a.toolCallID == b.toolCallID && a.toolName == b.toolName && a.toolArguments == b.toolArguments
 }
 
 func (model *Model) closeTranscriptViewer() {
 	if model.viewer == nil {
 		return
 	}
+	model.closeToolInspector()
 	if model.viewer.cancel != nil {
 		model.viewer.cancel()
 	}

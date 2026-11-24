@@ -246,3 +246,71 @@ func drainModelStream(ctx context.Context, chat model.ToolCallingChatModel) (str
 		content.WriteString(message.Content)
 	}
 }
+
+func TestResponsesEventIdleDistinguishesHeartbeatFromProgress(t *testing.T) {
+	const heartbeat = ": keepalive\n\n"
+	const created = "data: {\"type\":\"response.created\",\"response\":{\"status\":\"in_progress\"}}\n\n"
+	const inProgress = "data: {\"type\":\"response.in_progress\",\"response\":{\"status\":\"in_progress\"}}\n\n"
+	for _, name := range []string{"no_bytes", "heartbeat_only", "repeated_lifecycle", "productive"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			wire := modelTimingWires["Responses"]
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			ctx = modeltelemetry.CaptureStream(ctx)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", wire.contentType)
+				writeModelFrame(w, created)
+				ticker := time.NewTicker(30 * time.Millisecond)
+				defer ticker.Stop()
+				for i := 0; ; i++ {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-ticker.C:
+					}
+					switch name {
+					case "heartbeat_only":
+						writeModelFrame(w, heartbeat)
+					case "repeated_lifecycle":
+						writeModelFrame(w, inProgress)
+					case "productive":
+						writeModelFrame(w, heartbeat+wire.delta)
+						if i == 11 {
+							writeModelFrame(w, wire.done)
+							return
+						}
+					}
+				}
+			}))
+			defer server.Close()
+			chat, err := newWithLookup(ctx, Config{
+				Provider: wire.provider, WireAPI: wire.wireAPI, Model: "test", BaseURL: server.URL,
+				ResponseHeaderTimeout: 2 * time.Second, StreamIdleTimeout: 550 * time.Millisecond, StreamEventIdleTimeout: 180 * time.Millisecond,
+			}, func(string) (string, bool) { return "test-key", true })
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := drainModelStream(ctx, chat)
+			report := modeltelemetry.ReadStream(ctx)
+			if name == "productive" {
+				if err != nil || result != strings.Repeat("x", 12) || report == nil || !report.Completed ||
+					report.EndedAt.Sub(report.StartedAt) <= 180*time.Millisecond {
+					t.Fatalf("healthy stream result=%q observation=%+v err=%v", result, report, err)
+				}
+				return
+			}
+			var deadline *modelDeadline
+			if !errors.As(err, &deadline) || report == nil || report.Completed {
+				t.Fatalf("stream must time out: report=%+v err=%v", report, err)
+			}
+			if name == "no_bytes" {
+				if deadline.phase != "stream read" || report.Outcome != "stream_read_timeout" {
+					t.Fatalf("silent stream: report=%+v err=%v", report, err)
+				}
+			} else if deadline.phase != "stream event idle" || report.Outcome != "stream_event_idle_timeout" || report.BodyBytes <= uint64(len(created)) {
+				t.Fatalf("metadata-only stream: report=%+v err=%v", report, err)
+			}
+		})
+	}
+}

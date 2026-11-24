@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentprofile"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/scheduler"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
@@ -419,6 +420,12 @@ func (supervisor *Supervisor) Spawn(ctx context.Context, spec orchestration.Spaw
 	child, err := supervisor.agents.CreateChild(ctx, spec)
 	if err != nil {
 		return orchestration.AgentSnapshot{}, err
+	}
+	if observation.Enabled(ctx) {
+		observation.Emit(ctx, observation.Event{
+			Component: "supervisor", Name: "agent.spawned", Scope: agentObservationScope(parent),
+			Labels: map[string]string{"child_agent_id": string(child.ID), "child_session_id": string(child.SessionID)},
+		})
 	}
 	supervisor.rememberTeam(child.TeamID)
 	supervisor.signal()

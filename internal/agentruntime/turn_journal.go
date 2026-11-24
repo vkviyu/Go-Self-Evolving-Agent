@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/vkviyu/go-self-evolving-agent/internal/experienceport"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
@@ -26,15 +27,18 @@ type turnJournal struct {
 }
 
 type modelReceipt struct {
-	Version             int                     `json:"version"`
-	RawDigest           string                  `json:"raw_digest"`
-	Covered             int                     `json:"covered"`
-	Digest              [32]byte                `json:"digest"`
-	Input               []*schema.Message       `json:"input"`
-	Response            *schema.Message         `json:"response"`
-	FileReferencePrompt *fileReferencePrompt    `json:"file_reference_prompt,omitempty"`
-	Experience          *experienceport.Context `json:"experience,omitempty"`
-	ExperienceIndex     *int                    `json:"experience_index,omitempty"`
+	// Filled from the enclosing assistant event on replay. Never serialized.
+	replayedRequestID    string
+	Version              int                     `json:"version"`
+	RawDigest            string                  `json:"raw_digest"`
+	Covered              int                     `json:"covered"`
+	Digest               [32]byte                `json:"digest"`
+	Input                []*schema.Message       `json:"input"`
+	Response             *schema.Message         `json:"response"`
+	FileReferencePrompt  *fileReferencePrompt    `json:"file_reference_prompt,omitempty"`
+	Experience           *experienceport.Context `json:"experience,omitempty"`
+	ExperienceIndex      *int                    `json:"experience_index,omitempty"`
+	ToolFormatCorrection bool                    `json:"tool_format_correction,omitempty"`
 }
 
 type journalReplay struct {
@@ -93,8 +97,9 @@ func (f *Factory) loadTurnJournal(ctx context.Context, id session.ID, turnID str
 				return nil
 			}
 			var payload struct {
-				Receipt *modelReceipt `json:"receipt"`
-				Purpose string        `json:"purpose"`
+				Receipt   *modelReceipt `json:"receipt"`
+				Purpose   string        `json:"purpose"`
+				RequestID string        `json:"request_id"`
 			}
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return err
@@ -108,6 +113,7 @@ func (f *Factory) loadTurnJournal(ctx context.Context, id session.ID, turnID str
 			if err := validateModelReceipt(payload.Receipt); err != nil {
 				return err
 			}
+			payload.Receipt.replayedRequestID = payload.RequestID
 			replay.Responses = append(replay.Responses, *payload.Receipt)
 		case session.EventTurnCompleted:
 			if replay != nil {
@@ -221,7 +227,7 @@ func rawRequestDigest(input []*schema.Message) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func (m *recordingModel) replayResponse(input []*schema.Message, options []model.Option) (*schema.Message, bool, error) {
+func (m *recordingModel) replayResponse(ctx context.Context, input []*schema.Message, options []model.Option) (*schema.Message, bool, error) {
 	replay := m.replay
 	if replay == nil || replay.Next >= len(replay.Responses) {
 		return nil, false, nil
@@ -237,6 +243,10 @@ func (m *recordingModel) replayResponse(input []*schema.Message, options []model
 	if err := m.restoreModelReceipt(receipt, options); err != nil {
 		return nil, true, err
 	}
+	observation.Emit(ctx, observation.Event{
+		Component: "runtime", Name: "model.response.replayed",
+		Scope: observation.Scope{RequestID: receipt.replayedRequestID},
+	})
 	replay.Next++
 	return response, true, nil
 }

@@ -3,7 +3,6 @@ module github.com/vkviyu/go-self-evolving-agent
 go 1.27.0
 
 require (
-	github.com/vkviyu/agent-temporal-engine v0.0.0
 	github.com/alecthomas/chroma/v2 v2.20.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/aymanbagabas/go-udiff v0.3.1
@@ -22,7 +21,7 @@ require (
 	github.com/pkoukk/tiktoken-go v0.1.6
 	github.com/rivo/uniseg v0.4.7
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
-	github.com/tetratelabs/wazero v1.12.0
+	github.com/vkviyu/agent-temporal-engine v0.0.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.57.0
 )

@@ -1105,7 +1105,7 @@ func TestExperienceSuspensionSyncsAfterCheckpoint(t *testing.T) {
 		InterruptContexts: []*adk.InterruptCtx{{Info: encoded}},
 	}}})
 	generator.Close()
-	_, err = turn.consumeIterator(ctx, iterator, nil, false)
+	_, err = turn.consumeIterator(ctx, iterator, nil, false, replayPresentation{})
 	if _, ok := errors.AsType[*orchestration.WaitSuspendedError](err); !ok || service.syncs != 1 || service.completes != 0 {
 		t.Fatalf("suspension hooks: %v syncs=%d completes=%d", err, service.syncs, service.completes)
 	}

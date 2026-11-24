@@ -15,9 +15,8 @@ import (
 
 var _ strategy.Comparator = (*Factory)(nil)
 
-// CompareStrategy runs two isolated Eino sessions per host-owned fixture. No
-// executable business tools, approval tools, plugin proposal or publication
-// tools exist in these registries. The model gateway/usage ledger stays shared.
+// CompareStrategy runs two isolated Eino sessions per host-owned fixture.
+// Each uses an empty tool registry and shares the model gateway and usage ledger.
 func (f *Factory) CompareStrategy(ctx context.Context, candidate strategy.Spec, suite strategy.Suite) (strategy.Report, error) {
 	report := strategy.Report{CandidateID: candidate.ID(), SuiteID: strategy.Digest(suite), BaselineConfigID: f.BaselineConfigID(), EvaluatedAt: time.Now().UTC()}
 	if err := candidate.Validate(); err != nil {

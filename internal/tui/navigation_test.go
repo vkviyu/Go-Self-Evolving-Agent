@@ -133,7 +133,7 @@ func TestReadingQuestionSurvivesResizeAndToolDisclosure(t *testing.T) {
 		t.Fatalf("resize changed reading question: %+v", query)
 	}
 	model.toggleToolDetails()
-	model.refreshTranscript(false)
+	model.closeToolInspector()
 	if query, ok := model.currentQuestion(); !ok || !strings.Contains(query.preview, "第二个问题") {
 		t.Fatalf("tool expansion changed reading question: %+v", query)
 	}

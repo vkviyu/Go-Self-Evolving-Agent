@@ -16,7 +16,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 )
 
-func TestMaintenanceAndPluginCLIStayOffline(t *testing.T) {
+func TestMaintenanceAndStrategyValidationStayOffline(t *testing.T) {
 	cliATEEnvironment(t)
 	ctx := context.Background()
 	data, workspace := t.TempDir(), t.TempDir()
@@ -52,11 +52,7 @@ func TestMaintenanceAndPluginCLIStayOffline(t *testing.T) {
 	runCommand([]string{"maintenance", "archive", "--session", "finished", "--plan-id", plan.ID}, 1)
 	runCommand([]string{"maintenance", "archive", "--session", "finished", "--plan-id", plan.ID, "--confirm"}, 0)
 	runCommand([]string{"maintenance", "compact", "--confirm"}, 0)
-	runCommand([]string{"plugins", "list", "--workspace", workspace}, 0)
 	for _, args := range [][]string{
-		{"plugins", "collect", "--tool", "extension_x", "--revision", "v1"},
-		{"plugins", "activate", "--tool", "extension_x", "--revision", "v1", "--confirm"},
-		{"plugins", "list", "--confirm"},
 		{"maintenance", "plan", "--session", "finished", "--confirm"},
 		{"strategy", "publish", "--report-id", "fake"},
 		{"strategy", "shadow", "--candidate-id", "fake", "--suite-id", "fake", "--confirm", "--workspace", workspace},

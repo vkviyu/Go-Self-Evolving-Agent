@@ -146,6 +146,25 @@ func TestChatCommandEmitsMachineReadableFinalResult(t *testing.T) {
 	}
 }
 
+func TestChatCompletesWhenObserverCannotOpen(t *testing.T) {
+	data, workspace := t.TempDir(), t.TempDir()
+	cliCommandConfig(t, data, workspace)
+	if err := os.WriteFile(filepath.Join(data, "diagnostics"), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	exit := runWithDependencies(t.Context(), []string{
+		"chat", "--model", "test-model", "--workspace", workspace, "--data-dir", data, "--prompt-file", "-",
+	}, strings.NewReader("hello"), &stdout, &stderr, dependencies{
+		newModel: func(context.Context, modelgateway.Config) (model.ToolCallingChatModel, error) {
+			return &chatTestModel{}, nil
+		},
+	})
+	if exit != 0 || stdout.String() != "reply: hello\n" || !strings.Contains(stderr.String(), "execution diagnostics") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
 func TestChatCommandReadsMultilinePromptFromStdin(t *testing.T) {
 	cliATEEnvironment(t)
 

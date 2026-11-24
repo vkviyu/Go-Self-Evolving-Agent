@@ -26,7 +26,7 @@ func TestRootConversationDeliversChildResultAndAcknowledgesAfterTurn(t *testing.
 	rootChat, store, root, child := newRootMailboxConversation(t, model)
 	enqueueRootResult(t, store, root, child, "child finished")
 
-	if _, err := rootChat.RunTurn(context.Background(), "continue", nil); err != nil {
+	if _, err := rootChat.RunTurn(context.Background(), "Summarize the delegated work.", nil); err != nil {
 		t.Fatal(err)
 	}
 	model.mu.Lock()
@@ -48,8 +48,8 @@ func TestRootConversationKeepsMailboxDeliveredWhenTurnFails(t *testing.T) {
 	rootChat, store, root, child := newRootMailboxConversation(t, model)
 	enqueueRootResult(t, store, root, child, "must retry")
 
-	if _, err := rootChat.RunTurn(context.Background(), "continue", nil); err == nil {
-		t.Fatal("expected root turn failure")
+	if _, err := rootChat.RunTurn(context.Background(), "Summarize the delegated work.", nil); !errors.Is(err, model.err) {
+		t.Fatalf("expected model failure, got %v", err)
 	}
 	messages, err := store.ListMessages(context.Background(), orchestration.MessageQuery{
 		TeamID: root.TeamID, RecipientAgentID: root.AgentID,

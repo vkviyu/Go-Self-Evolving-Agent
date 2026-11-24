@@ -8,8 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,12 +18,9 @@ import (
 	"github.com/vkviyu/agent-temporal-engine/service"
 	"github.com/vkviyu/go-self-evolving-agent/internal/ateauthority"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
-	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 	"github.com/vkviyu/go-self-evolving-agent/internal/retention"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
-	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
 // The real engine, service and client enforce native durability and root CAS.
@@ -352,172 +347,6 @@ func TestNativeStrategyFallbackAtomicFailureAndActiveEvidence(t *testing.T) {
 	}
 }
 
-func buildRequest() pluginbuild.Request {
-	return pluginbuild.Request{
-		Manifest: plugin.Manifest{PluginID: "build", Tool: tool.Descriptor{
-			Name: "extension_test", Revision: "v1", Description: "test", RiskClass: tool.RiskPure,
-			InputSchema: []byte(`{"type":"object"}`),
-		}},
-		Source: "package main\nimport \"encoding/json\"\nfunc Invoke(input json.RawMessage)(json.RawMessage,error){return input,nil}",
-		Cases:  []plugin.TestCase{{Name: "echo", Input: []byte(`{}`), Expected: []byte(`{}`)}},
-	}
-}
-
-func TestNativeBuildReservationCompletionAndFreshRuntime(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	request := buildRequest()
-	id, result, err := f.store.BeginPluginBuild(ctx, request)
-	must(t, err)
-	if result != nil || id != strategy.Digest(request) {
-		t.Fatal("incorrect reservation")
-	}
-	f.reopen(t)
-	if _, _, err := f.store.BeginPluginBuild(ctx, request); err == nil {
-		t.Fatal("incomplete build replayed after new runtime")
-	}
-	stored, result, err := f.store.PluginBuild(ctx, id)
-	must(t, err)
-	if result != nil || !reflect.DeepEqual(stored, request) || stored.OwnerSession != "" {
-		t.Fatal("incomplete CLI build not inspectable")
-	}
-	completed := pluginbuild.Result{BuildID: id, State: "failed", Error: "diagnostic"}
-	must(t, f.store.FinishPluginBuild(ctx, completed))
-	if err := f.store.FinishPluginBuild(ctx, completed); !errors.Is(err, orchestration.ErrIdempotencyConflict) {
-		t.Fatal("rewrote completed build", err)
-	}
-	f.reopen(t)
-	repeated, result, err := f.store.BeginPluginBuild(ctx, request)
-	must(t, err)
-	if repeated != id || result == nil || !reflect.DeepEqual(*result, completed) {
-		t.Fatal("lost completed failure evidence")
-	}
-	_, result, err = f.store.PluginBuild(ctx, id)
-	if err != nil || result == nil || !reflect.DeepEqual(*result, completed) {
-		t.Fatal("lost result", err)
-	}
-	if err := f.store.FinishPluginBuild(ctx, pluginbuild.Result{BuildID: "unknown"}); !errors.Is(err, orchestration.ErrNotFound) {
-		t.Fatal("finished unknown build", err)
-	}
-	if _, _, err := f.store.PluginBuild(ctx, "unknown"); !errors.Is(err, orchestration.ErrNotFound) {
-		t.Fatal("wrong missing-build error", err)
-	}
-	encodedRequest, _ := json.Marshal(request)
-	encodedResult, _ := json.Marshal(completed)
-	must(t, f.store.authority.View(ctx, func(tx *ateauthority.Tx) error {
-		used, err := buildBytes(tx)
-		if used != int64(len(encodedRequest)+len(encodedResult)) {
-			t.Fatalf("incorrect evidence bytes: %d", used)
-		}
-		return err
-	}))
-}
-
-func TestNativeBuildBoundsAndTamper(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	request := buildRequest()
-	bad := request
-	bad.Source = strings.Repeat(" ", pluginbuild.MaxRequestBytes+1)
-	if _, _, err := f.store.BeginPluginBuild(ctx, bad); err == nil {
-		t.Fatal("unbounded source accepted")
-	}
-	bad = request
-	bad.OwnerSession = strings.Repeat("x", pluginbuild.MaxRequestBytes)
-	if _, _, err := f.store.BeginPluginBuild(ctx, bad); err == nil {
-		t.Fatal("unbounded request accepted")
-	}
-	id, _, err := f.store.BeginPluginBuild(ctx, request)
-	must(t, err)
-	if err := f.store.FinishPluginBuild(ctx, pluginbuild.Result{BuildID: id, Error: strings.Repeat("x", maxBuildResultBytes)}); err == nil {
-		t.Fatal("unbounded result accepted")
-	}
-	_, result, err := f.store.PluginBuild(ctx, id)
-	if err != nil || result != nil {
-		t.Fatal("rejected result changed reservation", err)
-	}
-	must(t, f.store.FinishPluginBuild(ctx, pluginbuild.Result{BuildID: id, State: "failed"}))
-	must(t, f.store.authority.Update(ctx, func(tx *ateauthority.Tx) error {
-		var record buildRecord
-		if _, err := tx.Get(recordKey("plugin-build", id), &record); err != nil {
-			return err
-		}
-		record.Result.Data = []byte("{}")
-		return tx.Put(recordKey("plugin-build", id), record)
-	}))
-	if _, _, err := f.store.BeginPluginBuild(ctx, request); err == nil {
-		t.Fatal("duplicate accepted corrupt result")
-	}
-	if _, _, err := f.store.PluginBuild(ctx, id); err == nil {
-		t.Fatal("inspection accepted corrupt result")
-	}
-	must(t, f.store.authority.Update(ctx, func(tx *ateauthority.Tx) error {
-		var record buildRecord
-		if _, err := tx.Get(recordKey("plugin-build", id), &record); err != nil {
-			return err
-		}
-		record.Request.Data = []byte("{}")
-		return tx.Put(recordKey("plugin-build", id), record)
-	}))
-	if _, _, err := f.store.PluginBuild(ctx, id); err == nil {
-		t.Fatal("inspection accepted corrupt request")
-	}
-	must(t, f.store.authority.Update(ctx, func(tx *ateauthority.Tx) error {
-		return tx.Put(recordKey("plugin-build-bytes"), int64(maxBuildStoreBytes-maxBuildResultBytes))
-	}))
-	request.Manifest.Tool.Revision = "v2"
-	if _, _, err := f.store.BeginPluginBuild(ctx, request); err == nil || !strings.Contains(err.Error(), "64 MiB") {
-		t.Fatal("store evidence bound ignored", err)
-	}
-	if _, _, err := f.store.PluginBuild(ctx, strategy.Digest(request)); !errors.Is(err, orchestration.ErrNotFound) {
-		t.Fatal("capacity rejection left a reservation", err)
-	}
-}
-
-func TestNativePluginReportDigestReopenAndIntegrity(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	report := plugin.TestReport{
-		Tool: "extension_test", Revision: "v1", ContentSHA256: "wasm", RuntimeIdentity: "runtime",
-		CasesSHA256: "cases", Passed: true, Results: []plugin.CaseResult{{Name: "echo", Passed: true}},
-		TestedAt: time.Now().UTC(),
-	}
-	id, err := f.store.SavePluginTest(ctx, report)
-	must(t, err)
-	if id != strategy.Digest(report) {
-		t.Fatal("report digest changed")
-	}
-	if repeated, err := f.store.SavePluginTest(ctx, report); err != nil || repeated != id {
-		t.Fatal("report save not idempotent", err)
-	}
-	f.reopen(t)
-	got, err := f.store.PluginTest(ctx, id)
-	must(t, err)
-	if !reflect.DeepEqual(got, report) {
-		t.Fatalf("lost report: %+v", got)
-	}
-	if _, err := f.store.PluginTest(ctx, "missing"); !errors.Is(err, orchestration.ErrNotFound) {
-		t.Fatal("wrong missing-report error", err)
-	}
-	if _, err := f.store.SavePluginTest(ctx, plugin.TestReport{}); err == nil {
-		t.Fatal("invalid report accepted")
-	}
-	oversize := report
-	oversize.Results = []plugin.CaseResult{{Name: "echo", Error: strings.Repeat("x", api.MaxStateValueBytes)}}
-	if _, err := f.store.SavePluginTest(ctx, oversize); !errors.Is(err, ateauthority.ErrLimit) {
-		t.Fatal("native report size bound bypassed", err)
-	}
-	must(t, f.store.authority.Update(ctx, func(tx *ateauthority.Tx) error {
-		return tx.Put(recordKey("plugin-test-report", id), document{Data: []byte("{}"), Digest: id})
-	}))
-	if _, err := f.store.PluginTest(ctx, id); err == nil {
-		t.Fatal("report read masked corruption")
-	}
-	if _, err := f.store.SavePluginTest(ctx, report); err == nil {
-		t.Fatal("idempotent report save masked corruption")
-	}
-}
-
 func TestNativeStrategyConsentAndImmutableChecksums(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
@@ -554,7 +383,7 @@ func TestNativeStrategyConsentAndImmutableChecksums(t *testing.T) {
 	}
 }
 
-func TestNativeConcurrentPublicationAndBuildReservation(t *testing.T) {
+func TestNativeConcurrentPublication(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	_, _, first := strategyReport(t, f.store, "first")
@@ -582,31 +411,6 @@ func TestNativeConcurrentPublicationAndBuildReservation(t *testing.T) {
 	}
 	if succeeded != 1 || conflicted != 1 || len(events(t, f.store)) != 1 {
 		t.Fatal("competing publications did not compare the exact baseline")
-	}
-	buildReady := make(chan struct{})
-	request := buildRequest()
-	for range 2 {
-		go func() {
-			<-buildReady
-			_, _, err := f.store.BeginPluginBuild(ctx, request)
-			results <- err
-		}()
-	}
-	close(buildReady)
-	succeeded, conflicted = 0, 0
-	for range 2 {
-		err := <-results
-		switch {
-		case err == nil:
-			succeeded++
-		case strings.Contains(err.Error(), "interrupted or is running"):
-			conflicted++
-		default:
-			t.Fatal(err)
-		}
-	}
-	if succeeded != 1 || conflicted != 1 {
-		t.Fatal("concurrent build reservation authorized multiple compiler runs")
 	}
 }
 

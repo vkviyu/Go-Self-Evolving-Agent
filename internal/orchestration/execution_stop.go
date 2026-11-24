@@ -26,6 +26,7 @@ const (
 	ExecutionQuota               ExecutionStopKind = "quota"
 	ExecutionBudget              ExecutionStopKind = "budget"
 	ExecutionOutcomeUnknown      ExecutionStopKind = "outcome_unknown"
+	ExecutionToolCallFormat      ExecutionStopKind = "model_tool_format"
 )
 
 func (stop *ExecutionStop) Error() string {
@@ -50,7 +51,7 @@ func ExecutionStopKindOf(cause error) (ExecutionStopKind, bool) {
 		return "", false
 	}
 	switch stop.Kind {
-	case ExecutionTransport, ExecutionRateLimit, ExecutionProviderUnavailable, ExecutionCredentials, ExecutionQuota, ExecutionBudget, ExecutionOutcomeUnknown:
+	case ExecutionTransport, ExecutionRateLimit, ExecutionProviderUnavailable, ExecutionCredentials, ExecutionQuota, ExecutionBudget, ExecutionOutcomeUnknown, ExecutionToolCallFormat:
 		return stop.Kind, true
 	default:
 		return "", false

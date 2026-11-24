@@ -1,23 +1,20 @@
 # 功能范围与剩余工作
 
-更新：2026-11-20。当前正在进行整体架构清理：业务事实以 ATE 为权威，移除旧 SQLite 业务适配器与遗留日志，不保留旧库兼容。Eino 继续负责 Agent Loop；runtime SQLite 仍保存执行资源和 pending 请求，包名暂按当前源码保留。
+更新：2026-11-24（代码清理与回归验证）。业务事实以 ATE 为权威，旧 SQLite 业务适配器与遗留日志已退出生产路径，不提供旧业务库自动迁移。Eino 继续负责 Agent Loop；`internal/runtimestore` 保存执行资源和 pending 请求。受支持的 ATE-linked runtime v1 库原地保留，但不恢复退役扩展能力；它与旧业务库是不同格式。
 
-下表的“已有”表示可在当前生产装配和源码中找到实现，不表示清理后的最终验收已通过。原 R1–R8 编号用于追踪受控自进化功能，不替代多 Agent 产品路线。
+例如，另一个项目再次遇到流超时，可以搜索上次留下的排查经验，核对其来源和现场条件，再决定是否采用。GSEA 的 Evolving 以 ATE 管理的跨任务记忆为核心。当前模型工具和具体示例见[跨任务记忆指南](EVOLUTION.md)。
 
-## R1–R8 当前实现
+## 原 R1–R8 与现行范围
 
-| 项目 | 已有能力与当前入口 | 验收重点 |
-| --- | --- | --- |
-| R1 引用生命周期 | `internal/orchestration/atestore` 生成保留计划/权威关闭回执；`internal/app/maintenance.go` 再清理本地 runtime 引用 | 直接 Turn、终态 Goal、子 Agent、Flow；活跃/未知依赖保留；关闭事实持久后清理失败可重试 |
-| R2 插件回收 | App 协调 native collection 意图/完成回执与 runtime 插件资源清理；保留 revision tombstone | 独占资源作用域、同 plan_id、共享 blob、未知消费者阻断；不能重新绑定已删除 revision |
-| R3 管理 CLI | `plugins list\|stage\|build\|inspect-build\|test\|activate\|retire\|rollback\|gc-plan\|collect` | 发布使用 report_id，回收使用 plan_id，均需显式确认；不启动模型或 Supervisor |
-| R4 隔离构建 | `internal/pluginbuild`，固定可信 Go 1.27.0/嵌入 SDK、离线沙箱、超时/输出限制、ATE 构建与测试证据 | 工具链摘要、进程组取消、失败不激活；Go 软内存目标不等于硬 RSS 上限 |
-| R5 边界回归 | native 仓储、runtime 资源、App/CLI 均有相关测试 | 清理后重新执行集成/静态/相关竞态检查；不能沿用旧 SQL 测试结果 |
-| R6 Agent 生成工具 | `plugin_propose/inspect/publish`，由 `internal/evolutiontools` 接入原 Eino Loop | 编译失败→修复 revision→测试→审批发布→后续 Turn 使用；仅纯 JSON 计算 |
-| R7 策略自进化 | `strategy_propose/inspect/shadow/publish`；`internal/evolutionstore` 保存 LoopSpec、报告、active 和隔离状态 | Turn 固定精确配置、报告/环境绑定、CAS、权限不升级；Fallback 与 Session `turn.failed` 分别提交 |
-| R8 完整链路核对 | App、CLI、策略、构建和恢复已有本地脚本模型测试 | 配套 ATE binary 的跨重启及失败注入；不把测试替身视为真实模型效果提升 |
+| 项目                | 已有能力与当前入口                                                                                                                            | 验收重点                                                                             |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| R1 引用生命周期     | `internal/orchestration/atestore` 生成保留计划/权威关闭回执；`internal/app/maintenance.go` 再清理本地 runtime 引用                            | 直接 Turn、执行契约、子 Agent、Flow；活跃/未知依赖保留；关闭事实持久后清理失败可重试 |
+| R2–R4、R6（历史项） | 早期 WASM 工具生成、发布和回收方案已退出产品范围                                                                                              | Turn/Flow 使用的普通工具快照与恢复引用由 R1 跟踪                                     |
+| R5 边界回归         | native 仓储、runtime 资源、App/CLI 均有相关测试                                                                                               | 清理后重新执行集成/静态/相关竞态检查；不能沿用旧 SQL 测试结果                        |
+| R7 宿主策略         | `strategy_propose`、`strategy_inspect`、`strategy_shadow`、`strategy_publish` 管理有界 LoopSpec，`internal/evolutionstore` 保存策略报告与状态 | Turn 固定精确配置，Fallback 与 Session `turn.failed` 分别提交                        |
+| R8 完整链路核对     | App、CLI、策略与恢复有本地脚本模型测试                                                                                                        | 配套 ATE 的跨重启及失败注入，模型效果需单独验证                                      |
 
-R6/R7 合计七个模型工具。策略 CLI 为 `strategy propose|suite|inspect|report|shadow|publish|rollback`。插件 `gc-plan/collect` 与 Session 归档均需离线访问 ATE 权威事实及本地资源；`compact` 仅整理 runtime SQLite 空闲页。
+记忆验收关注 `memory_query` 的查询范围、`memory_manage` 的审批、原始事件引用、采用回执和来源撤回。Session 归档另行取得 ATE 关闭回执并释放本地引用，`compact` 整理 runtime SQLite 空闲页。[记忆接入与验证记录](docs/ATE_INTEGRATION.md)
 
 ## 本轮架构清理的验收门槛
 
@@ -32,16 +29,19 @@ R6/R7 合计七个模型工具。策略 CLI 为 `strategy propose|suite|inspect|
 
 - 多 Agent：steer、durable 审批、Agent 独立预算、tester Profile、关键路径调度、Team 会话级 draining/completed/failed 自动收敛。
 - 工作区：宿主 Git checkout/filter 等生命周期安全、git-patch 与 snapshot 统一 apply 协议、后台 merge 的 per-Team 取消/等待、unknown 检查的显式人工恢复、worktree 池和所有权 epoch。
-- 资源：历史引用索引/增量扫描、artifact 保留/清理策略、编译进程硬 RSS 和宿主总 RSS 限制。
+- 资源方面仍需完善历史引用索引、增量扫描、artifact 保留策略及宿主总 RSS 限制。
 - 高级编排：委派收益、跨 provider 路由、历史表现选 Profile、自动修订/验证任务、Team 模板、可视化 DAG、完整 headless 协议及容量/效果评测。
-- 原 Phase 6 的实验性 WASM Driver 仍是非 MVP 可选方向，未实现；通用 Loop 不因此重写。
 
 详细多 Agent 阶段与状态机见 `MULTI_AGENT_ARCHITECTURE.md`；操作与资源限制见 `EVOLUTION.md`；审计边界见 `AUDIT_REMEDIATION.md`。
 
 ## 验证状态与待核实项
 
-本次仅做源码/文档静态核对，未运行全量测试、vet 或 race。此前日期的“全部通过”与旧业务库升级记录不构成本次清理后的验收结论。
+2026-11-24 在 macOS arm64 / Go 1.27.0 上完成以下验证：
 
-清理结束后需要配套 ATE/GSEA 构建与 native 集成测试，重点覆盖请求对账、Session/Team 作用域、Execution admission、Turn/策略独立失败、completion、合并、保留/回收阶段间中断。现有测试文件仅是验证入口，不是已执行证据。
+- `go build -mod=readonly ./...`、`go vet ./...`、`go mod tidy -diff`、`git diff --check` 通过。
+- `go test -mod=readonly -count=1 -p 1 ./...` 已执行完毕。除 CLI 包外，其余包通过；CLI 的 `TestControlScopeProductionJSONL` 因聊天进程持有同一 ATE 运行库、独立 control 进程取得所有权超时而失败。该问题仍未解决，不能声明全量通过。
+- `internal/tool`、`internal/runtimestore`、`internal/app` 的定向 race 检查通过，覆盖快照恢复、运行库格式、Memory 工具、策略审批和关闭时的所有权保护；不代表全库 race。
+- 交互式 resume 会话隔离、Memory 查询与写入审批、策略重开、旧 runtime v1 原位打开及损坏格式拒绝回归通过。旧库测试使用临时 fixture，核对 checkpoint、pending 请求、工具快照及历史字节保留。
+- 已重建 `bin/gsea`，帮助不再提供 `plugins` 命令，旧命令返回 unknown command，构建依赖不含 wazero。
 
-暂不能核实或不应继续承诺：runtime 资源包最终名称、遗留文件最终删除清单、当前工作区全量测试结果、Linux 实机验收、真实模型效果和容量指标。无需保留旧业务格式、旧 API 别名或自动数据迁移来满足本轮目标。
+本轮未执行 Linux 实机隔离验收、真实付费模型效果或容量评测。此前日期的全库通过结论不能替代上述结果。真实会话和 ATE 数据未清理；运行库旧格式识别仅保留已有执行证据，不提供退役扩展的执行能力。

@@ -32,7 +32,6 @@ func diagnosticsBinding(resolved config.Config) tool.Binding {
 				"eino_version":        dependencyVersion("github.com/cloudwego/eino"),
 				"eino_openai_version": dependencyVersion("github.com/cloudwego/eino-ext/components/model/openai"),
 				"eino_ollama_version": dependencyVersion("github.com/cloudwego/eino-ext/components/model/ollama"),
-				"wazero_version":      dependencyVersion("github.com/tetratelabs/wazero"),
 				"runtime_database":    resolved.RuntimeDatabasePath(),
 				"ate_directory":       resolved.ATE.Directory,
 			})

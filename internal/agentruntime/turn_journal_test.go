@@ -1,15 +1,18 @@
 package agentruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
@@ -190,6 +193,12 @@ func TestJournalRecoveryReplaysEinoDecisionsWithoutRepeatingPreparation(t *testi
 	if _, found, err := store.Get(ctx, checkpointID("journal-loop", turn.ID())); err != nil || found {
 		t.Fatalf("test requires journal recovery without an Eino interrupt checkpoint: found=%v err=%v", found, err)
 	}
+	rec, err := observation.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rec.Close(context.Background()) })
+	ctx = rec.Attach(ctx)
 	resumed, err := factory.ResumeTurn(ctx, "journal-loop", turn.ID())
 	if err != nil {
 		t.Fatal(err)
@@ -223,4 +232,36 @@ func TestJournalRecoveryReplaysEinoDecisionsWithoutRepeatingPreparation(t *testi
 	if responses != 3 {
 		t.Fatalf("replayed decisions were persisted as new model answers: %d", responses)
 	}
+	if err := rec.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	trace, err := os.ReadFile(rec.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests, replayedModels, replayedTools int
+	for _, line := range bytes.Split(bytes.TrimSpace(trace), []byte{'\n'}) {
+		var event observation.Event
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatal(err)
+		}
+		switch event.Name {
+		case "model.request.started":
+			requests++
+		case "model.response.replayed":
+			replayedModels++
+			if event.RequestID == "" || event.TurnID != turn.ID() {
+				t.Fatalf("missing original request: %+v", event)
+			}
+		case "tool.result.replayed":
+			replayedTools++
+			if event.CallID == "" || event.TurnID != turn.ID() || event.Status != "succeeded" {
+				t.Fatalf("missing original tool call: %+v", event)
+			}
+		}
+	}
+	if requests != 1 || replayedModels != 2 || replayedTools != 2 {
+		t.Fatalf("resume trace: %d provider requests, %d replayed model decisions, %d replayed tools", requests, replayedModels, replayedTools)
+	}
+
 }

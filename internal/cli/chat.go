@@ -178,9 +178,20 @@ func runConfiguredChat(
 			return err
 		}
 		// Explain that abandonment disables recovery without undoing prior effects.
-		fmt.Fprintln(stderr, "Recovery abandoned. Prior side effects, events, checkpoints and plugin artifacts were NOT undone or deleted.")
+		fmt.Fprintln(stderr, "Recovery abandoned. Prior side effects, events and checkpoints were NOT undone or deleted.")
 		// Write the receipt and finish this command without starting a conversation.
 		return writeAbandonment(stdout, receipt)
+	}
+
+	if !options.listRecoveries {
+		data := resolved.DataDirectory
+		if data == "" {
+			data = resolved.HomeDirectory
+		}
+		var finish func(error)
+		ctx, finish = observeChat(ctx, data, options.sessionID, interactive, stderr)
+		// Registered before opening the app so workers finish before the trace closes.
+		defer func() { finish(result) }()
 	}
 
 	// Leave extra tool bindings nil unless this invocation configured a tool bridge.
@@ -194,8 +205,7 @@ func runConfiguredChat(
 		}
 	}
 
-	// Open local runtime resources, including the database, workspace tools,
-	// approval broker and plugin services. The app owns their lifecycle.
+	// The app owns the database, workspace tools and approval broker.
 	application, err := app.OpenWithOptions(ctx, resolved, app.OpenOptions{
 		// Select the OS sandbox or an explicitly selected existing container boundary.
 		ShellSandbox: options.shellSandbox,
@@ -297,6 +307,9 @@ func runConfiguredChat(
 
 	// Create the Supervisor that manages delegated Agent work.
 	supervisor, err := application.NewSupervisor(agentmanager.Config{
+		// Workers and recovery keep the invocation's observer across dispatches.
+		// The Supervisor retains its own cancellation and shutdown boundary.
+		RunContext: context.WithoutCancel(ctx),
 		// Prepare initial context for a child Agent using the shared Factory.
 		ContextSeeder: newChildContextSeeder(factory),
 		// Run or resume child conversations through the Factory-backed adapter.

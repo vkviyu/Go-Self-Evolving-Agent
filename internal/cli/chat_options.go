@@ -74,7 +74,10 @@ func parseConversationOptions(arguments []string, defaults config.Config, stderr
 	baseURL := flags.String("base-url", defaults.Model.BaseURL, "provider base URL")
 	apiKeyEnvironment := flags.String("api-key-env", defaults.Model.APIKeyEnvironment, "environment variable containing the provider API key")
 	reasoningEffort := flags.String("reasoning-effort", defaults.Model.ReasoningEffort, "Responses reasoning effort: none, minimal, low, medium, high, or xhigh")
-	requestTimeout := flags.Duration("timeout", defaults.Model.Timeout, "model timeout (full non-stream request, stream connect and read stalls)")
+	requestTimeout := flags.Duration("timeout", defaults.Model.Timeout, "non-stream model timeout; when supplied, also overrides stream header and byte waits unless a specific flag is set")
+	responseHeaderTimeout := flags.Duration("response-header-timeout", defaults.Model.ResponseHeaderTimeout, "maximum wait for response headers on a streaming request")
+	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaults.Model.StreamIdleTimeout, "maximum wait for new bytes during a stream (default 5m)")
+	streamEventIdleTimeout := flags.Duration("stream-event-idle-timeout", defaults.Model.StreamEventIdleTimeout, "Responses stream maximum wait for model events when bytes still arrive (default 5m)")
 	sessionValue := flags.String("session", "", "session history to load; omitted creates a new session")
 	resumeTurnID := flags.String("resume-turn", "", "explicitly resume one original turn; requires --session")
 	listRecoveries := flags.Bool("list-recoveries", false, "list interrupted turns without executing them; requires --session")
@@ -130,6 +133,7 @@ func parseConversationOptions(arguments []string, defaults config.Config, stderr
 	dataExplicit := false
 	sessionExplicit := resume && leadingID != ""
 	modelExplicit, providerExplicit := false, false
+	var timeoutExplicit, headersExplicit, idleExplicit, eventsExplicit bool
 	flags.Visit(func(item *flag.Flag) {
 		switch item.Name {
 		case "workspace":
@@ -142,6 +146,14 @@ func parseConversationOptions(arguments []string, defaults config.Config, stderr
 			modelExplicit = true
 		case "provider":
 			providerExplicit = true
+		case "timeout":
+			timeoutExplicit = true
+		case "response-header-timeout":
+			headersExplicit = true
+		case "stream-idle-timeout":
+			idleExplicit = true
+		case "stream-event-idle-timeout":
+			eventsExplicit = true
 		}
 	})
 	if *evaluationMode && (!workspaceExplicit || strings.TrimSpace(*workspaceDirectory) == "") {
@@ -164,6 +176,24 @@ func parseConversationOptions(arguments []string, defaults config.Config, stderr
 	}
 	if *requestTimeout <= 0 {
 		return chatOptions{}, errors.New("timeout must be positive")
+	}
+	if headersExplicit && *responseHeaderTimeout <= 0 {
+		return chatOptions{}, errors.New("response-header-timeout must be positive")
+	}
+	if idleExplicit && *streamIdleTimeout <= 0 {
+		return chatOptions{}, errors.New("stream-idle-timeout must be positive")
+	}
+	if eventsExplicit && *streamEventIdleTimeout <= 0 {
+		return chatOptions{}, errors.New("stream-event-idle-timeout must be positive")
+	}
+	if timeoutExplicit && !headersExplicit {
+		*responseHeaderTimeout = *requestTimeout
+	}
+	if timeoutExplicit && !idleExplicit {
+		*streamIdleTimeout = *requestTimeout
+	}
+	if *streamIdleTimeout == 0 {
+		*streamIdleTimeout = modelgateway.DefaultStreamIdleTimeout
 	}
 	if *maxIterations <= 0 {
 		return chatOptions{}, errors.New("max-iterations must be positive")
@@ -234,14 +264,17 @@ func parseConversationOptions(arguments []string, defaults config.Config, stderr
 		modelExplicit:          modelExplicit,
 		providerExplicit:       providerExplicit,
 		model: modelgateway.Config{
-			Provider:          modelgateway.Provider(*provider),
-			WireAPI:           modelgateway.WireAPI(*wireAPI),
-			Model:             *modelName,
-			TokenizerEncoding: strings.TrimSpace(*tokenizerEncoding),
-			BaseURL:           *baseURL,
-			APIKeyEnvironment: *apiKeyEnvironment,
-			ReasoningEffort:   *reasoningEffort,
-			Timeout:           *requestTimeout,
+			Provider:               modelgateway.Provider(*provider),
+			WireAPI:                modelgateway.WireAPI(*wireAPI),
+			Model:                  *modelName,
+			TokenizerEncoding:      strings.TrimSpace(*tokenizerEncoding),
+			BaseURL:                *baseURL,
+			APIKeyEnvironment:      *apiKeyEnvironment,
+			ReasoningEffort:        *reasoningEffort,
+			Timeout:                *requestTimeout,
+			ResponseHeaderTimeout:  *responseHeaderTimeout,
+			StreamIdleTimeout:      *streamIdleTimeout,
+			StreamEventIdleTimeout: *streamEventIdleTimeout,
 		},
 		sessionID:               sessionID,
 		resumeTurnID:            *resumeTurnID,

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
@@ -150,6 +151,11 @@ func (p *Pipeline) Execute(ctx context.Context, call Call) (Result, error) {
 	if err := validateCall(&call); err != nil {
 		return Result{}, err
 	}
+	ctx = observation.WithScope(ctx, observation.Scope{
+		SessionID: string(call.SessionID), TurnID: call.TurnID, CallID: call.CallID,
+		TeamID: string(call.Actor.TeamID), AgentID: string(call.Actor.AgentID), ParentAgentID: string(call.Actor.ParentAgentID),
+		TaskID: string(call.Actor.TaskID), RunID: string(call.Actor.RunID),
+	})
 	snapshot, binding, err := p.resolve(call)
 	if err != nil {
 		return Result{}, err
@@ -161,10 +167,17 @@ func (p *Pipeline) Execute(ctx context.Context, call Call) (Result, error) {
 	}
 	unlock := p.calls.lock(string(call.SessionID) + "\x00" + call.TurnID + "\x00" + call.CallID)
 	defer unlock()
-	if replayed, found, err := p.replayOutcome(ctx, call, binding); err != nil {
+	replayed, found, err := p.replayOutcome(ctx, call, binding)
+	if found {
+		status := "succeeded"
+		if err != nil {
+			status = "failed"
+		}
+		observation.Emit(ctx, observation.Event{Component: "tool", Name: "tool.result.replayed", Status: status})
+		return replayed, err
+	}
+	if err != nil {
 		return Result{}, err
-	} else if found {
-		return replayed, nil
 	}
 	var resumedWait bool
 	ctx, resumedWait, err = p.restoreWaitIntent(ctx, call, binding)
@@ -341,7 +354,7 @@ func (p *Pipeline) evaluate(ctx context.Context, call Call, request policy.Reque
 	}
 	emitLiveEvent(ctx, LiveEvent{
 		Type: LivePolicyDecided, CallID: call.CallID, TurnID: call.TurnID,
-		ToolName: request.ToolName,
+		ToolName: request.ToolName, Effect: decision.Effect,
 	})
 	return decision, nil
 }

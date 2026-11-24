@@ -33,7 +33,6 @@ var ownedImports = map[string][]string{
 	"github.com/cloudwego/eino/adk":                  {"internal/agentruntime"},
 	"github.com/cloudwego/eino/compose":              {"internal/agentruntime", "internal/einoadapter"},
 	"github.com/cloudwego/eino-ext":                  {"internal/modelgateway"},
-	"github.com/tetratelabs/wazero":                  {"internal/plugin/wasm"},
 }
 
 // Domain protocols and services depend inward through their explicit ports.
@@ -47,25 +46,26 @@ var domainDependencies = map[string][]string{
 	"internal/workspacedomain": {"internal/orchestration"},
 	"internal/orchestration":   {"internal/execution", "internal/session"},
 	"internal/policy":          {"internal/orchestration"},
-	"internal/tool":            {"internal/orchestration", "internal/policy", "internal/session"},
+	"internal/tool":            {"internal/observation", "internal/orchestration", "internal/policy", "internal/session"},
 	"internal/agentprofile":    {},
 	"internal/execution":       {},
 	"internal/strategy":        {},
 	"internal/agentflow":       {"internal/orchestration", "internal/session", "internal/tokenusage", "internal/tool"},
-	"internal/conversation":    {"internal/agentruntime", "internal/orchestration", "internal/session", "internal/tool"},
-	"internal/agentruntime":    {"internal/agentprofile", "internal/einoadapter", "internal/experienceport", "internal/modelcontext", "internal/modeltelemetry", "internal/orchestration", "internal/policy", "internal/session", "internal/session/memorystore", "internal/strategy", "internal/tokenizer", "internal/tokenusage", "internal/tool"},
-	"internal/agentmanager":    {"internal/agentprofile", "internal/orchestration", "internal/scheduler", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
+	"internal/conversation":    {"internal/observation", "internal/agentruntime", "internal/orchestration", "internal/session", "internal/tool"},
+	"internal/agentruntime":    {"internal/observation", "internal/agentprofile", "internal/einoadapter", "internal/experienceport", "internal/modelcontext", "internal/modeltelemetry", "internal/orchestration", "internal/policy", "internal/session", "internal/session/memorystore", "internal/strategy", "internal/tokenizer", "internal/tokenusage", "internal/tool"},
+	"internal/agentmanager":    {"internal/observation", "internal/agentprofile", "internal/orchestration", "internal/scheduler", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
 	"internal/einoadapter":     {"internal/orchestration", "internal/session", "internal/tool"},
-	"internal/modelgateway":    {"internal/modelcontext", "internal/modeltelemetry", "internal/tokenizer"},
+	"internal/modelgateway":    {"internal/observation", "internal/modelcontext", "internal/modeltelemetry", "internal/tokenizer"},
 	"internal/modelcontext":    {},
 	"internal/modeltelemetry":  {},
+	"internal/observation":     {},
 	"internal/retention":       {"internal/session", "internal/tool"},
 	"internal/tokenusage":      {"internal/orchestration"},
 	"internal/tokenizer":       {},
 	"internal/runtimeowner":    {},
 	// Temporal implementations depend on shared contracts; the runtime consumes
 	// experienceport and must not import the service, bridge, or process manager.
-	"internal/ateprocess":     {"internal/runtimeowner"},
+	"internal/ateprocess":     {"internal/observation", "internal/runtimeowner"},
 	"internal/aterequest":     {},
 	"internal/ateauthority":   {"internal/aterequest"},
 	"internal/atebridge":      {"internal/aterequest", "internal/session", "internal/ateports"},
@@ -73,18 +73,14 @@ var domainDependencies = map[string][]string{
 	"internal/experienceport": {"internal/ateports"},
 	"internal/ateports":       {},
 	"internal/scheduler":      {},
-	"internal/evolutiontools": {"internal/pluginbuild", "internal/strategy", "internal/tool"},
-	"internal/evolutionstore": {"internal/ateauthority", "internal/orchestration", "internal/plugin", "internal/pluginbuild", "internal/retention", "internal/strategy"},
-	"internal/pluginbuild":    {"internal/plugin", "internal/sandbox", "internal/tool", "sdk/pluginabi"},
-	"internal/plugin":         {"internal/plugin/wasm", "internal/tool"},
-	"internal/plugin/wasm":    {},
-	"sdk/pluginabi":           {},
+	"internal/evolutiontools": {"internal/strategy", "internal/tool"},
+	"internal/evolutionstore": {"internal/ateauthority", "internal/orchestration", "internal/retention", "internal/strategy"},
 	// Adapters implement domain ports, but must not call the runtime they
 	// persist. Explicit roles override the pure session protocol above.
 	"internal/session/memorystore":    {"internal/session"},
 	"internal/session/atestore":       {"internal/aterequest", "internal/session", "internal/ateports"},
 	"internal/orchestration/atestore": {"internal/ateauthority", "internal/agentflow", "internal/agentprofile", "internal/orchestration", "internal/retention", "internal/session", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
-	"internal/runtimestore":           {"internal/agentflow", "internal/aterequest", "internal/lsp", "internal/orchestration", "internal/plugin", "internal/pluginbuild", "internal/retention", "internal/session", "internal/strategy", "internal/ateports", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
+	"internal/runtimestore":           {"internal/agentflow", "internal/aterequest", "internal/lsp", "internal/orchestration", "internal/retention", "internal/session", "internal/strategy", "internal/ateports", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
 }
 
 // Check imported selectors, not source spelling, so aliases and taking a
@@ -95,7 +91,6 @@ var constructors = map[string][]string{
 	// Native integration fixtures are forbidden from production imports.
 	module + "internal/runtimestore.OpenRuntime": {"internal/app/open.go", "internal/app/maintenance.go", "internal/app/catalog.go", "internal/app/control.go", "internal/testfixture/native.go"},
 	module + "internal/workspacedomain.Open":     {"internal/app/open.go", "internal/app/control.go"},
-	module + "internal/plugin/wasm.NewRuntime":   {"internal/app/open.go"},
 	module + "internal/tool.NewPipeline":         {"internal/app/open.go", "internal/agentruntime/strategy_shadow.go"},
 }
 
@@ -173,7 +168,7 @@ func TestProductionArchitecture(t *testing.T) {
 	}
 	root := filepath.Dir(filepath.Dir(filepath.Dir(source)))
 	files := 0
-	for _, tree := range []string{"cmd", "internal", "sdk"} {
+	for _, tree := range []string{"cmd", "internal"} {
 		err := filepath.WalkDir(filepath.Join(root, tree), func(name string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
@@ -272,7 +267,6 @@ func TestArchitectureRulesDetectBoundaryViolations(t *testing.T) {
 		{"internal/modelgateway", module + "internal/conversation", false},
 		{"internal/modelgateway", "github.com/cloudwego/eino-ext/components/model/openai", true},
 		{"internal/cli", "github.com/cloudwego/eino-ext/components/model/openai", false},
-		{"sdk/pluginabi", module + "internal/tool", false},
 	} {
 		if got := dependencyViolation(test.importer, test.dependency); (got == "") != test.allowed {
 			t.Errorf("%s -> %s: allowed=%v, reason=%q", test.importer, test.dependency, test.allowed, got)

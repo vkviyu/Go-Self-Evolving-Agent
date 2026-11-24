@@ -59,18 +59,6 @@ func runHeadlessChat(
 	options chatOptions,
 ) error {
 	printHeadlessHeader(stderr, chat, options)
-	if recovery, ok := chat.(recoveryConversation); ok {
-		items, err := recovery.Recoveries(ctx)
-		if err != nil {
-			return err
-		}
-		if len(items) > 0 {
-			fmt.Fprintln(stderr, "interrupted work; use /recoveries or /resume <turn-id> (not executed automatically)")
-			if err := writeRecoveries(stderr, items); err != nil {
-				return err
-			}
-		}
-	}
 
 	scanner := bufio.NewScanner(stdin)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -106,12 +94,16 @@ func runHeadlessChat(
 				if err := printRecoveries(ctx, stdout, recovery); err != nil {
 					return err
 				}
-			} else if fields[0] == "/resume" && len(fields) == 2 {
-				if err := runHeadlessResume(ctx, stdout, recovery, fields[1], options.headlessFormat); err != nil {
+			} else if fields[0] == "/resume" && len(fields) <= 2 {
+				id := ""
+				if len(fields) == 2 {
+					id = fields[1]
+				}
+				if err := runHeadlessResume(ctx, stdout, recovery, id, options.headlessFormat); err != nil {
 					return err
 				}
 			} else {
-				return fmt.Errorf("usage: /recoveries or /resume <turn-id>")
+				return fmt.Errorf("usage: /recoveries or /resume [turn-id]")
 			}
 			continue
 		}
@@ -122,7 +114,7 @@ func runHeadlessChat(
 			fmt.Fprintln(stderr, chat.ID())
 			continue
 		case "/help":
-			fmt.Fprintln(stderr, "commands: /help, /session, /recoveries, /resume <turn-id>, /exit")
+			fmt.Fprintln(stderr, "commands: /help, /session, /recoveries, /resume [turn-id], /exit")
 			continue
 		}
 		if err := runHeadlessTurnWithFormat(ctx, stdout, chat, input, options.headlessFormat); err != nil {

@@ -70,13 +70,11 @@ func TestResumedTurnCannotPublishAStaleContextCheckpoint(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			foundOpening := false
-			for _, message := range transcript {
-				foundOpening = foundOpening || message.Content == "A question"
-			}
-			if !foundOpening {
-				t.Fatal("compaction removed an interrupted turn's opening from its transcript")
-			}
+			assertCheckpointMessages(t, []*schema.Message{
+				schema.UserMessage("A question"),
+				schema.UserMessage("B question"),
+				schema.AssistantMessage("B answer", nil),
+			}, transcript)
 
 			// A can also compact again after resuming. Its original input still
 			// predates B, regardless of when this new checkpoint was recorded.

@@ -10,6 +10,8 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
+	"github.com/vkviyu/go-self-evolving-agent/internal/conversation"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
@@ -22,6 +24,8 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 		model.stage = "Reading referenced memory"
 	case agentruntime.EventTurnStarting:
 		model.stage = "Starting request"
+	case agentruntime.EventTurnResuming:
+		model.stage = "Recovering turn " + event.TurnID
 	case agentruntime.EventConversationLockWaiting:
 		model.stage = "Waiting for previous request"
 	case agentruntime.EventConversationHistoryLoading:
@@ -68,6 +72,14 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 		model.stage = model.modelRequestStage(event)
 	case agentruntime.EventModelResponseStarted:
 		model.stage = model.modelResponseStage(event)
+	case agentruntime.EventModelToolFormatRetry:
+		model.stage = "Retrying rejected tool call"
+		model.finishInterruptedModelOutput()
+		model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "Tool call format was rejected before execution. Retrying this model step."})
+	case agentruntime.EventModelTimeoutRetry:
+		model.stage = "Retrying timed-out model request"
+		model.finishInterruptedModelOutput()
+		model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "Model request timed out. Retrying this model step."})
 	case agentruntime.EventToolProposed:
 		model.stage = toolStage("Preparing tool call", event)
 	case agentruntime.EventToolPolicyChecking:
@@ -99,6 +111,7 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 		if model.activeReasoning < 0 {
 			model.blocks = append(model.blocks, transcriptBlock{kind: blockReasoning, pending: true})
 			model.activeReasoning = len(model.blocks) - 1
+			model.observeBlock(event, "reasoning")
 		}
 		model.blocks[model.activeReasoning].content += event.Delta
 	case agentruntime.EventAssistantTextDelta:
@@ -106,6 +119,7 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 		if model.activeAssistant < 0 {
 			model.blocks = append(model.blocks, transcriptBlock{kind: blockAssistant, pending: true})
 			model.activeAssistant = len(model.blocks) - 1
+			model.observeBlock(event, "text")
 		}
 		model.blocks[model.activeAssistant].content += event.Delta
 	case agentruntime.EventAssistantMessage:
@@ -113,6 +127,24 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 	case agentruntime.EventToolResult:
 		model.applyToolResult(event.Message)
 	}
+}
+
+func (model *Model) finishInterruptedModelOutput() {
+	for _, index := range []int{model.activeAssistant, model.activeReasoning} {
+		if index >= 0 && index < len(model.blocks) {
+			model.blocks[index].pending = false
+		}
+	}
+	model.activeAssistant = -1
+	model.activeReasoning = -1
+	model.lastAssistantMessage = -1
+}
+
+func (model *Model) observeBlock(event agentruntime.Event, kind string) {
+	observation.Emit(model.turnContext, observation.Event{
+		Component: "tui", Name: "transcript.block.started", Status: kind,
+		Scope: observation.Scope{SessionID: model.sessionID, TurnID: event.TurnID},
+	})
 }
 
 func toolStage(prefix string, event agentruntime.Event) string {
@@ -152,15 +184,16 @@ func (model *Model) modelRequestStage(event agentruntime.Event) string {
 }
 
 func (model *Model) modelResponseStage(event agentruntime.Event) string {
+	// The stream can be open before the provider sends model output.
 	switch event.Purpose {
 	case "experience":
-		return "Preparing memory · receiving response"
+		return "Preparing memory · waiting for model output"
 	case "compaction":
-		return "Compacting context · receiving response"
+		return "Compacting context · waiting for model output"
 	case "verification":
-		return "Verifying outcome · receiving response"
+		return "Verifying outcome · waiting for model output"
 	default:
-		return "Receiving response"
+		return "Waiting for model output"
 	}
 }
 
@@ -355,6 +388,15 @@ func (model *Model) finishTurn(message turnDoneMsg) (tea.Model, tea.Cmd) {
 		}
 		if errors.Is(message.err, context.Canceled) && kind != orchestration.ExecutionOutcomeUnknown {
 			model.stage = "Cancelled"
+		} else if !paused && (errors.Is(message.err, tool.ErrSnapshotHostChanged) ||
+			errors.Is(message.err, conversation.ErrAmbiguousRecovery) || errors.Is(message.err, conversation.ErrNoForegroundRecovery)) {
+			// The open session still accepts new input. A repeated shortcut
+			// against the same blocked turn needs only one visible diagnostic.
+			model.stage = "Ready"
+			detail := message.err.Error()
+			if n := len(model.blocks); n == 0 || model.blocks[n-1].kind != blockFailure || model.blocks[n-1].content != detail {
+				model.blocks = append(model.blocks, transcriptBlock{kind: blockFailure, content: detail})
+			}
 		} else {
 			model.stage = "Failed"
 			detail := message.err.Error()
@@ -365,7 +407,7 @@ func (model *Model) finishTurn(message turnDoneMsg) (tea.Model, tea.Cmd) {
 					detail += "\n/recoveries only inspects interrupted work; it does not reconcile saved ATE appends."
 					detail += "\nClose the runtime owning this session before reconciliation, then run: gsea session reconcile <session-id>."
 				} else if _, canInspect := model.conversation.(RecoveryConversation); canInspect {
-					detail += "\nUse /recoveries to inspect this session's interrupted work."
+					detail += "\nUse /resume to continue the foreground turn or /recoveries to inspect interrupted work."
 				}
 			}
 			model.blocks = append(model.blocks, transcriptBlock{kind: blockFailure, content: detail})

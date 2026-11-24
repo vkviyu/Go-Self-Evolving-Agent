@@ -36,7 +36,7 @@ func (database *Database) RuntimeRetentionReferences(ctx context.Context, id ses
 // CleanupRetention accepts a completed receipt from the trusted authority
 // adapter. It records only resource release metadata; business receipts and
 // closure facts remain in ATE. The transaction is local and independently
-// retryable after native closure. Manifests, history and plugin evidence remain.
+// retryable after native closure. Manifests and reference history are retained.
 func (database *Database) CleanupRetention(ctx context.Context, receipt retention.Receipt) (int, error) {
 	if receipt.Plan.ID == "" || receipt.Plan.SessionID == "" || receipt.ClosedAt.IsZero() || receipt.EvidenceDeleted || len(receipt.Plan.Blockers) != 0 || len(receipt.Plan.Consumers) == 0 {
 		return 0, errors.New("invalid authoritative retention receipt")

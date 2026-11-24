@@ -3,7 +3,6 @@ package runtimestore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
@@ -14,11 +13,6 @@ import (
 // and transaction-local state must stay visible.
 type rowQuery interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
-type readQuery interface {
-	rowQuery
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 // A single decoder serves point lookups and list projections in column order.
@@ -45,11 +39,9 @@ func execCAS(ctx context.Context, tx *sql.Tx, conflict error, statement string, 
 	return nil
 }
 
-func closeRetentionRows(rows *sql.Rows) error { return errors.Join(rows.Err(), rows.Close()) }
-
 var (
-	_ readQuery  = (*sql.DB)(nil)
-	_ readQuery  = (*sql.Tx)(nil)
+	_ rowQuery   = (*sql.DB)(nil)
+	_ rowQuery   = (*sql.Tx)(nil)
 	_ rowScanner = (*sql.Row)(nil)
 	_ rowScanner = (*sql.Rows)(nil)
 )

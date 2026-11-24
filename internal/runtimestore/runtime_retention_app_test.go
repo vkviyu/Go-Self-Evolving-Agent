@@ -19,7 +19,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/app"
 	"github.com/vkviyu/go-self-evolving-agent/internal/ateprocess"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
 	"github.com/vkviyu/go-self-evolving-agent/internal/retention"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
@@ -30,7 +29,7 @@ import (
 
 // All paths and the native binary are temporary. No App/model/Supervisor or
 // workspace/Git service is constructed to exercise the offline public API.
-func TestRuntimeMaintenanceAppNativeArchiveCollectionAndSharedLock(t *testing.T) {
+func TestRuntimeMaintenanceAppNativeArchiveAndSharedLock(t *testing.T) {
 	ctx := t.Context()
 	binary := filepath.Join(t.TempDir(), "ate")
 	if output, err := exec.CommandContext(ctx, "go", "build", "-o", binary, "github.com/vkviyu/agent-temporal-engine/cmd/ate").CombinedOutput(); err != nil {
@@ -93,14 +92,6 @@ func TestRuntimeMaintenanceAppNativeArchiveCollectionAndSharedLock(t *testing.T)
 	); err != nil {
 		t.Fatal(err)
 	}
-	source := []byte("test resource; never executed")
-	digest := sha256.Sum256(source)
-	record := plugin.RevisionRecord{Version: plugin.CatalogVersion, RuntimeIdentity: "test", ContentSHA256: hex.EncodeToString(digest[:]), Manifest: plugin.Manifest{
-		PluginID: "offline-plugin", Timeout: time.Second, Tool: tool.Descriptor{Name: "echo", Revision: "v1", Description: "Echo", RiskClass: tool.RiskPure, InputSchema: []byte(`{"type":"object"}`)},
-	}}
-	if err := db.Plugins().Save(ctx, record, source); err != nil {
-		t.Fatal(err)
-	}
 	if err := process.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -143,21 +134,6 @@ func TestRuntimeMaintenanceAppNativeArchiveCollectionAndSharedLock(t *testing.T)
 	second, err := app.ArchiveSession(ctx, cfg, "root", plan.ID, true)
 	if err != nil || !reflect.DeepEqual(first, second) {
 		t.Fatalf("archive retry: %+v %v", second, err)
-	}
-	collect, err := app.PreviewPluginCollection(ctx, cfg, "echo", "v1")
-	if err != nil || len(collect.Blockers) != 0 {
-		t.Fatalf("collection preview: %+v %v", collect, err)
-	}
-	if _, err := app.CollectPlugin(ctx, cfg, "echo", "v1", collect.ID, false); err == nil {
-		t.Fatal("collection without confirmation")
-	}
-	collected, err := app.CollectPlugin(ctx, cfg, "echo", "v1", collect.ID, true)
-	if err != nil || !collected.BlobDeleted {
-		t.Fatalf("collection: %+v %v", collected, err)
-	}
-	replayed, err := app.CollectPlugin(ctx, cfg, "echo", "v1", collect.ID, true)
-	if err != nil || !reflect.DeepEqual(collected, replayed) {
-		t.Fatalf("collection retry: %+v %v", replayed, err)
 	}
 	db, err = runtimestore.OpenRuntime(ctx, cfg.RuntimeDatabasePath())
 	if err != nil {

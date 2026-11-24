@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
@@ -12,9 +13,10 @@ import (
 // NewTurn captures one immutable runtime snapshot and constructs Eino's Agent
 // and Runner around it.
 func (f *Factory) NewTurn(ctx context.Context, sessionID session.ID) (*Turn, error) {
+	ctx = f.observedContext(ctx, sessionID, "")
 	sink := EventSinkFromContext(ctx)
 	if !f.strategyPinned && f.config.Strategies != nil {
-		_ = emitEvent(ctx, sink, Event{Type: EventTurnStrategySelectionStarted})
+		_ = emitStage(ctx, sink, Event{Type: EventTurnStrategySelectionStarted})
 	}
 	selected, err := f.withActiveStrategy(ctx)
 	if err != nil {
@@ -32,7 +34,7 @@ func (f *Factory) NewTurn(ctx context.Context, sessionID session.ID) (*Turn, err
 	// Earlier turns have finished; settle the messages they held so the new
 	// turn can claim those that were never committed.
 	if f.mailbox != nil {
-		_ = emitEvent(ctx, sink, Event{Type: EventTurnBackgroundReconciliationStarted})
+		_ = emitStage(ctx, sink, Event{Type: EventTurnBackgroundReconciliationStarted})
 	}
 	if err := f.settleBackground(ctx, sessionID, true); err != nil {
 		return nil, err
@@ -46,17 +48,18 @@ func (f *Factory) NewTurn(ctx context.Context, sessionID session.ID) (*Turn, err
 	if err != nil {
 		return nil, err
 	}
-	_ = emitEvent(ctx, sink, Event{Type: EventTurnSnapshotRetentionStarted, TurnID: turnID})
+	ctx = observation.WithScope(ctx, observation.Scope{TurnID: turnID})
+	_ = emitStage(ctx, sink, Event{Type: EventTurnSnapshotRetentionStarted, TurnID: turnID})
 	if err := f.registry.RetainSnapshot(ctx, snapshot, tool.SnapshotReference{Kind: "turn", Scope: string(sessionID), ID: turnID}); err != nil {
 		return nil, fmt.Errorf("retain turn runtime: %w", err)
 	}
-	_ = emitEvent(ctx, sink, Event{Type: EventTurnSessionSequenceReadStarted, TurnID: turnID})
+	_ = emitStage(ctx, sink, Event{Type: EventTurnSessionSequenceReadStarted, TurnID: turnID})
 	current, err := f.events.CurrentSequence(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("read session before turn: %w", err)
 	}
 	if current == 0 {
-		_ = emitEvent(ctx, sink, Event{Type: EventTurnSessionCreationStarted, TurnID: turnID})
+		_ = emitStage(ctx, sink, Event{Type: EventTurnSessionCreationStarted, TurnID: turnID})
 		if _, err := f.events.Append(ctx, sessionID, 0, session.PendingEvent{
 			Type:              session.EventSessionCreated,
 			CorrelationID:     turnID,
@@ -68,13 +71,14 @@ func (f *Factory) NewTurn(ctx context.Context, sessionID session.ID) (*Turn, err
 			return nil, fmt.Errorf("create Agent session: %w", err)
 		}
 	}
-	_ = emitEvent(ctx, sink, Event{Type: EventTurnAgentConstructionStarted, TurnID: turnID})
+	_ = emitStage(ctx, sink, Event{Type: EventTurnAgentConstructionStarted, TurnID: turnID})
 	return f.buildTurn(ctx, sessionID, turnID, runtimeSnapshotID, snapshot, 0)
 }
 
 // ResumeTurn reconstructs the exact turn-scoped agent and resumes its Eino
 // execution from the persisted checkpoint identified by the turn ID.
 func (f *Factory) ResumeTurn(ctx context.Context, sessionID session.ID, turnID string) (*Turn, error) {
+	ctx = f.observedContext(ctx, sessionID, turnID)
 	selected, err := f.withTurnStrategy(ctx, sessionID, turnID)
 	if err != nil {
 		return nil, err

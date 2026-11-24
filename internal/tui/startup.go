@@ -24,6 +24,8 @@ func startupPhaseLabel(phase StartupPhase) string {
 		return "Session / mailbox"
 	case StartupMaintenance:
 		return "Session maintenance"
+	case StartupTranscript:
+		return "Loading chat transcript"
 	default:
 		return ""
 	}
@@ -60,7 +62,7 @@ func (model *Model) applyStartup(message StartupMsg) tea.Cmd {
 		model.activityProvider = state.Activity
 		model.agentControl = state.Agents
 		model.transcripts = state.Transcripts
-		model.hydrateStartupHistory()
+		model.hydrateStartupHistory(state.RootTranscript)
 		model.stage = "Ready"
 		var operation tea.Cmd
 		if queued := model.startupOperation; queued != nil {
@@ -72,13 +74,7 @@ func (model *Model) applyStartup(message StartupMsg) tea.Cmd {
 				waitForTurnEvent(model.ctx, model.turnEvents),
 			)
 		}
-		var recovery tea.Cmd
-		if model.initialResumeTurn == "" {
-			if source, ok := model.conversation.(RecoveryConversation); ok {
-				recovery = discoverRecoveries(model.ctx, source, false)
-			}
-		}
-		return tea.Batch(operation, recovery, model.windowTitleCommand(),
+		return tea.Batch(operation, model.windowTitleCommand(),
 			model.startActivityRefresh(), model.scheduleBackgroundCheck())
 	}
 	if state.Phase != 0 && state.Phase != model.startupPhase {
@@ -101,8 +97,8 @@ func (model *Model) applyStartup(message StartupMsg) tea.Cmd {
 	return waitForStartup(model.ctx, model.startup)
 }
 
-func (model *Model) hydrateStartupHistory() {
-	history := model.conversation.History()
+func (model *Model) hydrateStartupHistory(history []*schema.Message) {
+	model.closeToolInspector()
 	blocks := blocksFromHistory(history)
 	// Recovered children can request approval as soon as setup releases them.
 	// Preserve live block indices while prepending durable history.

@@ -46,6 +46,9 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 	}
+	if model.toolInspector != nil && model.handleToolInspectionKey(message) {
+		return nil, true
+	}
 	if command, handled := model.handleViewerKey(message); handled {
 		return command, true
 	}
@@ -58,7 +61,6 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 	}
 	if key.Matches(message, toggleToolBinding) {
 		model.toggleToolDetails()
-		model.refreshTranscript(false)
 		return nil, true
 	}
 	if key.Matches(message, toggleActivityBinding) {
@@ -192,11 +194,9 @@ func (model *Model) submit() tea.Cmd {
 	}
 
 	model.closeTranscriptViewer()
-	model.blocks = append(model.blocks, transcriptBlock{kind: blockUser, content: input})
-	var titleCommand tea.Cmd
-	if model.sessionTitle == "" {
-		model.sessionTitle = singleLinePreview(input, 80)
-		titleCommand = model.windowTitleCommand()
+	titleCommand := model.showUserInput(input)
+	if contextConversation, ok := model.conversation.(pendingContextConversation); ok {
+		model.contextUsage = contextConversation.ContextUsageFor(input)
 	}
 	model.resetWakeBudget()
 	model.inputHistory = append(model.inputHistory, input)
@@ -209,14 +209,20 @@ func (model *Model) submit() tea.Cmd {
 	model.memorySuggestionItems = nil
 	model.memorySuggestionIndex = 0
 	model.resizeInput()
-	if contextConversation, ok := model.conversation.(pendingContextConversation); ok {
-		model.contextUsage = contextConversation.ContextUsageFor(input)
-	}
 	return tea.Batch(titleCommand, model.startOperation("Starting request", func(ctx context.Context, events chan<- tea.Msg) tea.Cmd {
 		return runOperationCommand(ctx, func(turnCtx context.Context, sink agentruntime.EventSink) (agentruntime.Result, error) {
 			return model.runTurnWithMemory(turnCtx, input, sink)
 		}, events, model.ctx)
 	}))
+}
+
+func (model *Model) showUserInput(input string) tea.Cmd {
+	model.blocks = append(model.blocks, transcriptBlock{kind: blockUser, content: input})
+	if model.sessionTitle == "" {
+		model.sessionTitle = singleLinePreview(input, 80)
+		return model.windowTitleCommand()
+	}
+	return nil
 }
 
 func (model *Model) startOperation(stage string, command func(context.Context, chan<- tea.Msg) tea.Cmd) tea.Cmd {

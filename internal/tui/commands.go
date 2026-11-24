@@ -13,11 +13,15 @@ var commandNames = []string{"/activity", "/agents", "/clear", "/compress", "/con
 func (model *Model) handleCommand(input string) (tea.Cmd, bool) {
 	fields := strings.Fields(input)
 	if len(fields) > 0 && strings.EqualFold(fields[0], "/resume") {
-		if len(fields) != 2 {
-			model.recoveryFailure("usage: /resume <turn-id>")
+		switch len(fields) {
+		case 1:
+			return model.startResume(""), true
+		case 2:
+			return model.startResume(fields[1]), true
+		default:
+			model.recoveryFailure("usage: /resume [turn-id]")
 			return nil, true
 		}
-		return model.startResume(fields[1]), true
 	}
 	if len(fields) > 0 && strings.EqualFold(fields[0], "/memory") {
 		argument := strings.TrimSpace(input[len(fields[0]):])
@@ -36,7 +40,7 @@ func (model *Model) handleCommand(input string) (tea.Cmd, bool) {
 		return nil, true
 	case "/recoveries":
 		if source, ok := model.conversation.(RecoveryConversation); ok {
-			return discoverRecoveries(model.ctx, source, true), true
+			return discoverRecoveries(model.ctx, source), true
 		}
 		model.recoveryFailure("recovery is unavailable")
 		return nil, true
@@ -46,18 +50,9 @@ func (model *Model) handleCommand(input string) (tea.Cmd, bool) {
 		model.appendMergeSummary()
 		return nil, true
 	case "/diff", "/diffs":
-		found := false
-		for index := range model.blocks {
-			if model.blocks[index].kind != blockTool || !hasDiffPayload(model.blocks[index].toolResult) {
-				continue
-			}
-			model.blocks[index].resultExpanded = true
-			found = true
+		if !model.openToolInspector(0, len(model.displayBlocks()), true) {
+			model.notice(blockSystem, "No code diffs in the current transcript")
 		}
-		if !found {
-			model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "No inline code diffs in the current transcript"})
-		}
-		model.refreshTranscript(true)
 		return nil, true
 	case "/exit", "/quit":
 		return tea.Quit, true

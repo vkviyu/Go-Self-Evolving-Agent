@@ -2,8 +2,11 @@ package ateprocess
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
+
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 )
 
 const (
@@ -45,11 +48,42 @@ func WithObserver(ctx context.Context, observer Observer) context.Context {
 // batchProgress brackets a batch including queuing and deferred shutdown.
 func batchProgress(ctx context.Context) func(Stage) {
 	observer, _ := ctx.Value(observerKey{}).(Observer)
-	if observer == nil {
+	if observer == nil && !observation.Enabled(ctx) {
 		return func(Stage) {}
 	}
 	id := nextBatchID.Add(1)
 	return func(stage Stage) {
-		observer(ctx, Progress{BatchID: id, Stage: stage, At: time.Now()})
+		if observer != nil {
+			observer(ctx, Progress{BatchID: id, Stage: stage, At: time.Now()})
+		}
+		if observation.Enabled(ctx) {
+			observation.Emit(ctx, observation.Event{Component: "ate", Name: "connection.stage", Status: string(stage), Metrics: map[string]int64{"batch": int64(id)}})
+		}
+	}
+}
+
+func observeLease(ctx context.Context) (acquired func(), finish func(error)) {
+	id := int64(nextBatchID.Add(1))
+	start := time.Now()
+	var operation time.Time
+	emit := func(name, status string) {
+		metrics := map[string]int64{"batch": id, "elapsed_us": time.Since(start).Microseconds()}
+		if !operation.IsZero() {
+			metrics["queue_us"] = operation.Sub(start).Microseconds()
+		}
+		observation.Emit(ctx, observation.Event{Component: "ate", Name: name, Status: status, Metrics: metrics})
+	}
+	emit("lease.queued", "")
+	return func() { operation = time.Now(); emit("lease.acquired", "") }, func(err error) {
+		status := "ok"
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			status = "timeout"
+		case errors.Is(err, context.Canceled):
+			status = "canceled"
+		case err != nil:
+			status = "failed"
+		}
+		emit("lease.finished", status)
 	}
 }

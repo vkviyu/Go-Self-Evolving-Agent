@@ -12,10 +12,11 @@ import (
 )
 
 var ErrSnapshotUnavailable = errors.New("verified registry snapshot is unavailable")
+var ErrSnapshotHostChanged = fmt.Errorf("%w: host executable changed", ErrSnapshotUnavailable)
 
 // Native implementation identity includes the host executable, not its path or
 // a process-local counter. A rebuilt host must not silently resume old code.
-// Dynamic executors additionally provide their own artifact/config digest.
+// The binding identity also captures execution configuration within that host.
 var hostIdentity = sync.OnceValues(func() (string, error) {
 	path, err := os.Executable()
 	if err != nil {

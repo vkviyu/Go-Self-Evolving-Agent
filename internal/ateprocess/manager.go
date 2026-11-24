@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/vkviyu/agent-temporal-engine/client"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
 )
 
@@ -23,6 +24,10 @@ type (
 	Options struct {
 		Binary, Directory string
 		Timeout           time.Duration
+		// ExistingOnly skips store initialization and opens it with ate serve.
+		ExistingOnly bool
+		// NoWaitForOwner lets a catalog command report the active owner immediately.
+		NoWaitForOwner bool
 	}
 
 	// Manager serializes local callbacks and owns the native ATE lifetime.
@@ -138,6 +143,9 @@ func (m *Manager) OpenClient(ctx context.Context) (*ClientLease, error) {
 	defer cancel()
 	stop := context.AfterFunc(m.ctx, cancel)
 	defer stop()
+	progress := batchProgress(ctx)
+	defer progress(StageDone)
+	progress(StageQueue)
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -152,8 +160,6 @@ func (m *Manager) OpenClient(ctx context.Context) (*ClientLease, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	progress := batchProgress(ctx)
-	defer progress(StageDone)
 	owner, p, c, err := m.openNative(ctx, context.Background(), progress)
 	if err != nil {
 		return nil, err
@@ -320,9 +326,22 @@ func (m *Manager) WithClient(ctx context.Context, fn func(*client.Client) error)
 // WithClientContext runs one bounded, serialized callback and supplies the
 // bounded operation context used by the lease. The callback is always joined
 // before the lease admits another operation.
-func (l *ClientLease) WithClientContext(ctx context.Context, fn func(context.Context, *client.Client) error) error {
+func (l *ClientLease) WithClientContext(ctx context.Context, fn func(context.Context, *client.Client) error) (err error) {
 	if l == nil || ctx == nil || fn == nil {
 		return errors.New("ATE lease requires a context and callback")
+	}
+	// Report waiting and execution independently of the UI progress callback.
+	var acquired func()
+	if observation.Enabled(ctx) {
+		var finish func(error)
+		acquired, finish = observeLease(ctx)
+		defer func() {
+			if v := recover(); v != nil {
+				finish(errors.New("ATE callback panicked"))
+				panic(v)
+			}
+			finish(err)
+		}()
 	}
 	opCtx, cancel := context.WithTimeout(ctx, l.manager.options.Timeout)
 	defer cancel()
@@ -361,6 +380,9 @@ func (l *ClientLease) WithClientContext(ctx context.Context, fn func(context.Con
 		l.gate <- struct{}{}
 	}()
 
+	if acquired != nil {
+		acquired()
+	}
 	result := make(chan callbackResult, 1)
 	go func() {
 		var r callbackResult
@@ -519,9 +541,11 @@ func (m *Manager) openNative(ctx, processContext context.Context, progress func(
 			}
 		}
 	}()
-	progress(StageInitialize)
-	if err := m.initialize(ctx, binary); err != nil {
-		return owner, p, c, err
+	if !m.options.ExistingOnly {
+		progress(StageInitialize)
+		if err := m.initialize(ctx, binary); err != nil {
+			return owner, p, c, err
+		}
 	}
 	var secret [32]byte
 	if _, err := rand.Read(secret[:]); err != nil {
@@ -578,8 +602,12 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) acquire(ctx context.Context) (*runtimeowner.Lock, error) {
+	var lastOwnershipError error
 	for {
 		if err := ctx.Err(); err != nil {
+			if lastOwnershipError != nil && errors.Is(err, context.DeadlineExceeded) {
+				return nil, errors.Join(lastOwnershipError, err)
+			}
 			return nil, err
 		}
 		// Acquire creates only the parent. Its canonical sibling lock stays
@@ -591,11 +619,14 @@ func (m *Manager) acquire(ctx context.Context) (*runtimeowner.Lock, error) {
 		if !errors.Is(err, runtimeowner.ErrOwned) {
 			return nil, &batchError{stage: "ownership acquisition", cause: err}
 		}
+		if m.options.NoWaitForOwner {
+			return nil, err
+		}
+		lastOwnershipError = err
 		timer := time.NewTimer(20 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
 		case <-timer.C:
 		}
 	}

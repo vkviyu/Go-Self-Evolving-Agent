@@ -375,7 +375,7 @@ func TestToolResultRendersUnifiedDiffSeparately(t *testing.T) {
 	}
 }
 
-func TestDiffCommandExpandsDiffResults(t *testing.T) {
+func TestDiffCommandInspectsDiffResults(t *testing.T) {
 	model := newTestModel(t)
 	model.blocks = []transcriptBlock{{
 		kind:       blockTool,
@@ -386,8 +386,8 @@ func TestDiffCommandExpandsDiffResults(t *testing.T) {
 	if _, handled := model.handleCommand("/diff"); !handled {
 		t.Fatal("/diff command was not handled")
 	}
-	if !model.blocks[0].resultExpanded {
-		t.Fatal("/diff did not expand the diff result")
+	if model.toolInspector == nil || !strings.Contains(model.transcriptContent, "+new") {
+		t.Fatal("/diff did not show the diff result")
 	}
 }
 
@@ -485,15 +485,15 @@ func TestToolDetailsDefaultCollapsedAndToggleWithMouse(t *testing.T) {
 		t.Fatal("tool header click was not handled")
 	}
 	model.refreshTranscript(true)
-	if !model.blocks[0].argumentsExpanded || !model.blocks[0].resultExpanded {
-		t.Fatal("tool details did not expand")
+	if model.toolInspector == nil || !model.toolInspector.detail {
+		t.Fatal("tool details did not open")
 	}
 	if !strings.Contains(ansi.Strip(model.transcriptContent), "approval-check.txt") {
 		t.Fatal("expanded arguments are not visible")
 	}
 }
 
-func TestToolDetailsKeyboardToggleExpandsAll(t *testing.T) {
+func TestToolDetailsKeyboardToggleReturnsToChat(t *testing.T) {
 	model := newTestModel(t)
 	model.blocks = []transcriptBlock{{
 		kind:          blockTool,
@@ -505,14 +505,14 @@ func TestToolDetailsKeyboardToggleExpandsAll(t *testing.T) {
 	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO}); !handled {
 		t.Fatal("Ctrl+O was not handled")
 	}
-	if !model.blocks[0].argumentsExpanded || !model.blocks[0].resultExpanded {
-		t.Fatal("Ctrl+O did not expand all tool details")
+	if model.toolInspector == nil || !strings.Contains(model.transcriptContent, "bytes_written") {
+		t.Fatal("Ctrl+O did not open tool details")
 	}
 	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO}); !handled {
 		t.Fatal("second Ctrl+O was not handled")
 	}
-	if model.blocks[0].argumentsExpanded || model.blocks[0].resultExpanded {
-		t.Fatal("second Ctrl+O did not collapse all tool details")
+	if model.toolInspector != nil || strings.Contains(model.transcriptContent, "bytes_written") {
+		t.Fatal("second Ctrl+O did not return to chat")
 	}
 }
 
@@ -887,7 +887,7 @@ func TestModelShowsProviderRequestStages(t *testing.T) {
 		t.Fatalf("auxiliary request stage = %q", model.stage)
 	}
 	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventModelResponseStarted})
-	if model.stage != "Receiving response" {
+	if model.stage != "Waiting for model output" {
 		t.Fatalf("response stage = %q", model.stage)
 	}
 	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventAssistantTextDelta, Delta: "answer"})

@@ -61,7 +61,7 @@ type AgentControl interface {
 	DiscardMerge(context.Context, orchestration.MergeID, string) (workspacecoord.MergeRequest, error)
 }
 
-// TranscriptReader loads the display transcript of another Agent's session.
+// TranscriptReader loads a display transcript for one Agent session.
 type TranscriptReader interface {
 	LoadTranscript(context.Context, session.ID) ([]*schema.Message, error)
 }
@@ -76,6 +76,7 @@ const (
 	StartupSupervisor
 	StartupSessionMailbox
 	StartupMaintenance
+	StartupTranscript
 )
 
 // StartupState carries ordered setup progress and one terminal attachment.
@@ -91,6 +92,8 @@ type StartupState struct {
 	Activity    agentmanager.TeamSnapshotReader
 	Agents      AgentControl
 	Transcripts TranscriptReader
+	// RootTranscript is the durable display history loaded before attachment.
+	RootTranscript []*schema.Message
 }
 
 // Config contains display metadata and the conversation application service.

@@ -14,11 +14,11 @@ import (
 // Recoveries is an offline read boundary: it neither constructs a model nor
 // starts the Supervisor (whose recovery may run delegated work).
 func (a *App) Recoveries(ctx context.Context, id session.ID) ([]conversation.Recovery, error) {
-	return conversation.DiscoverRecoveries(ctx, id, a.events, a.runtime.checkpoints)
+	return conversation.DiscoverRecoveries(ctx, id, a.events, a.runtime.checkpoints, a.Registry().CheckSnapshotHost)
 }
 
-// AbandonRecovery is intentionally separate from App: no model, plugin
-// runtime or Supervisor is constructed. withOfflineSessionAuthority acquires
+// AbandonRecovery is intentionally separate from App: no model or Supervisor
+// is constructed. withOfflineSessionAuthority acquires
 // ownSession's StoreID+Session lock before reconciliation and holds it through
 // both authoritative mutation and all local reference/checkpoint cleanup.
 func AbandonRecovery(ctx context.Context, unresolved config.Config, request session.AbandonRequest) (receipt session.Abandonment, result error) {

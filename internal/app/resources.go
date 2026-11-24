@@ -12,8 +12,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/artifact"
 	"github.com/vkviyu/go-self-evolving-agent/internal/codingtools"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
@@ -28,7 +26,7 @@ func (a *App) FlowCatalog() *agentflow.Catalog {
 	return a.flowCatalog
 }
 
-// Registry returns the process registry for activation services.
+// Registry returns the tool registry used to freeze each turn's bindings.
 func (a *App) Registry() *tool.Registry {
 	if a == nil {
 		return nil
@@ -141,20 +139,4 @@ func (check postMergeCheck) VerificationIdentity() string {
 	}{"post-merge-readonly-v1", check.command, check.timeout})
 	digest := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(digest[:])
-}
-
-// WASM returns the sandbox runtime used to compile immutable revisions.
-func (a *App) WASM() *wasm.Runtime {
-	if a == nil {
-		return nil
-	}
-	return a.wasm
-}
-
-// Plugins returns the staged immutable revision lifecycle manager.
-func (a *App) Plugins() *plugin.Manager {
-	if a == nil {
-		return nil
-	}
-	return a.plugins
 }

@@ -39,17 +39,7 @@ func TestRegistryPublicationCommitIsAtomic(t *testing.T) {
 	if _, err := registry.ActivateManyWithCommit(nil, second, additional); err != nil {
 		t.Fatal(err)
 	}
-	active := registry.Snapshot()
-	_, err = registry.RetireManyWithCommit(func(previous, next *Snapshot) error {
-		if previous != active || len(next.Descriptors()) != 0 {
-			t.Fatal("invalid retirement candidate")
-		}
-		return failure
-	}, second, additional)
-	if !errors.Is(err, failure) || registry.Snapshot() != active {
-		t.Fatalf("failed retirement changed snapshot: %v", err)
-	}
-	if _, err := registry.RetireManyWithCommit(nil, second, additional); err != nil {
+	if _, err := registry.RetireMany(second, additional); err != nil {
 		t.Fatal(err)
 	}
 	if b, ok := old.Get("echo"); !ok || b.Descriptor.Revision != "v1" {
@@ -69,8 +59,5 @@ func TestRegistryCommitNotCalledForInvalidPublication(t *testing.T) {
 	}
 	if _, err := registry.ActivateManyWithCommit(commit, testBinding("v2", "two"), Binding{}); err == nil {
 		t.Fatal("accepted invalid binding")
-	}
-	if _, err := registry.RetireManyWithCommit(commit, testBinding("missing", "")); err == nil {
-		t.Fatal("accepted mismatched retirement")
 	}
 }

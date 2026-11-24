@@ -1,9 +1,11 @@
 package agentruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
@@ -113,11 +116,17 @@ func TestEinoAgentLoopUsesPolicyPipelineAndDurableEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	turn, err := factory.NewTurn(context.Background(), "session-1")
+	rec, err := observation.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := turn.Run(context.Background(), []*schema.Message{schema.UserMessage("echo hello")}, nil)
+	t.Cleanup(func() { _ = rec.Close(context.Background()) })
+	ctx := rec.Attach(t.Context())
+	turn, err := factory.NewTurn(ctx, "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := turn.Run(ctx, []*schema.Message{schema.UserMessage("echo hello")}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +180,57 @@ func TestEinoAgentLoopUsesPolicyPipelineAndDurableEvents(t *testing.T) {
 	if history[3].ResponseMeta == nil || history[3].ResponseMeta.Usage == nil || history[3].ResponseMeta.Usage.PromptTokenDetails.CachedTokens != 12 || history[3].ResponseMeta.Usage.CompletionTokensDetails.ReasoningTokens != 2 {
 		t.Fatalf("cached token usage was not restored: %#v", history[3].ResponseMeta)
 	}
+	// A nil presentation sink still records two provider calls and links the
+	// first call's decision to the tool invocation by its original call ID.
+	if err := rec.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	trace, err := os.ReadFile(rec.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"echo hello", "finished after tool", "Use the echo tool once."} {
+		if bytes.Contains(trace, []byte(secret)) {
+			t.Fatalf("trace included fixture content %q", secret)
+		}
+	}
+	counts := map[string]int{}
+	for _, line := range bytes.Split(bytes.TrimSpace(trace), []byte{'\n'}) {
+		var e observation.Event
+		if err := json.Unmarshal(line, &e); err != nil {
+			t.Fatal(err)
+		}
+		switch e.Name {
+		case "model.request.started", "model.request.finished", "model.first_output.forwarding":
+			if e.RequestID != turn.ID()+":1" && e.RequestID != turn.ID()+":2" {
+				t.Fatalf("missing request scope: %+v", e)
+			}
+		case "model.tool_call":
+			if e.CallID != "model-call-1" || e.RequestID != turn.ID()+":1" {
+				t.Fatalf("missing model/tool edge: %+v", e)
+			}
+		case "tool.started", "tool.succeeded":
+			if e.CallID != "model-call-1" || e.Labels["tool"] != "echo" {
+				t.Fatalf("missing tool scope: %+v", e)
+			}
+		case "turn.finished":
+			if e.Status != "completed" {
+				t.Fatalf("unexpected terminal state: %+v", e)
+			}
+		default:
+			continue
+		}
+		if e.SessionID != "session-1" || e.TurnID != turn.ID() {
+			t.Fatalf("incorrect turn scope: %+v", e)
+		}
+		counts[e.Name]++
+	}
+	for name, want := range map[string]int{"model.request.started": 2, "model.request.finished": 2, "model.first_output.forwarding": 2, "model.tool_call": 1, "tool.started": 1, "tool.succeeded": 1, "turn.finished": 1} {
+		if counts[name] != want {
+			t.Errorf("%s count = %d, want %d", name, counts[name], want)
+		}
+	}
+
 }
 
 func TestResumeRestoresDurableModelRequestSequence(t *testing.T) {

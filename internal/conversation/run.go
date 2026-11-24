@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 )
 
 // RunTurn prepares context, executes one turn and refreshes durable history.
@@ -15,6 +16,7 @@ func (conversation *Conversation) RunTurn(ctx context.Context, input string, sin
 	if strings.TrimSpace(input) == "" {
 		return agentruntime.Result{}, errors.New("conversation input must not be empty")
 	}
+	ctx = observation.WithScope(ctx, observation.Scope{SessionID: string(conversation.sessionID)})
 	if err := emit(sink, ctx, agentruntime.Event{Type: agentruntime.EventTurnStarting}); err != nil {
 		return agentruntime.Result{}, err
 	}
@@ -34,6 +36,7 @@ func (conversation *Conversation) RunTurn(ctx context.Context, input string, sin
 }
 
 func emit(sink agentruntime.EventSink, ctx context.Context, event agentruntime.Event) error {
+	observation.Emit(ctx, observation.Event{Component: "conversation", Name: string(event.Type), Scope: observation.Scope{TurnID: event.TurnID}})
 	if sink == nil {
 		return nil
 	}

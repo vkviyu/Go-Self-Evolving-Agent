@@ -9,13 +9,12 @@ import (
 	"net/http"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/vkviyu/go-self-evolving-agent/internal/modeltelemetry"
 )
 
 // doResponsesRequest owns HTTP request construction and response status
 // handling. Protocol-specific encoding and stream decoding stay in
 // responses.go, which keeps transport concerns independently testable.
-func (m *responsesModel) doResponsesRequest(ctx context.Context, payload []byte, observation *modeltelemetry.Stream) (*http.Response, error) {
+func (m *responsesModel) doResponsesRequest(ctx context.Context, payload []byte, observation *responsesObservation) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("create Responses request: %w", err)

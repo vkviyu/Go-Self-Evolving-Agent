@@ -42,9 +42,9 @@ func applyATEEnvironment(target *ATEConfig) error {
 	return nil
 }
 
-// resolveATE resolves paths without creating the store: init-state needs an
+// ResolveATE resolves paths without creating the store: init-state needs an
 // empty directory, and only the subprocess manager may initialize it under lock.
-func resolveATE(c Config) (ATEConfig, error) {
+func (c Config) ResolveATE() (ATEConfig, error) {
 	a := c.ATE
 	if a.Binary == "" {
 		a.Binary = "ate"

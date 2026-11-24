@@ -18,9 +18,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
-	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
@@ -46,8 +43,6 @@ type App struct {
 	runtime          runtimeStorage
 	registry         *tool.Registry
 	pipeline         *tool.Pipeline
-	wasm             *wasm.Runtime
-	plugins          *plugin.Manager
 	approval         *approval.Broker
 	supervisor       *agentmanager.Supervisor
 	profiles         *agentprofile.Registry
@@ -60,8 +55,6 @@ type App struct {
 	experience       *experience.Service
 	flows            *agentflow.Runtime
 	flowCatalog      *agentflow.Catalog
-	builds           *pluginbuild.Service
-	publication      *plugin.PublicationService
 	strategies       strategy.Catalog
 	shadow           *strategy.ShadowService
 	shadowFactories  map[orchestration.AgentID]*agentruntime.Factory
@@ -83,11 +76,8 @@ type App struct {
 type runtimeStorage struct {
 	checkpoints session.CheckpointStore
 	snapshots   runtimeSnapshotStore
-	plugins     plugin.Catalog
 	strategies  strategy.Catalog
 	diagnostics lsp.ProjectionStore
-	builds      pluginbuild.BuildStore
-	reports     plugin.TestReportStore
 }
 
 type runtimeSnapshotStore interface {

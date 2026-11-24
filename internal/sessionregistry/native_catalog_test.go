@@ -267,6 +267,9 @@ func TestNativeCatalogListShowReopenAndRemove(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(saved, reopened) {
 		t.Fatalf("reopened session: %+v, %v; want %+v", reopened, err, saved)
 	}
+	if err := registry.Close(); err != nil {
+		t.Fatal(err)
+	}
 	records, events := nativeCatalogStores(t, cfg)
 	if err := records.View(ctx, func(tx *ateauthority.Tx) error {
 		count := 0
@@ -291,6 +294,7 @@ func TestNativeCatalogListShowReopenAndRemove(t *testing.T) {
 	if _, err := events.Append(ctx, session.ID(item.ID), 0, userMessage("retained history")); err != nil {
 		t.Fatal(err)
 	}
+	registry = openCatalog(t, cfg)
 	if err := registry.Remove(ctx, item.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -299,6 +303,9 @@ func TestNativeCatalogListShowReopenAndRemove(t *testing.T) {
 	}
 	if _, err := os.Stat(item.DataDirectory); err != nil {
 		t.Fatalf("remove deleted resources: %v", err)
+	}
+	if err := registry.Close(); err != nil {
+		t.Fatal(err)
 	}
 	histories, err := app.DiscoverChats(ctx, cfg, session.ID(item.ID))
 	if err != nil || len(histories) != 1 || histories[0].Prompt != "retained history" {
@@ -441,6 +448,9 @@ func TestNativeCLICatalogAndDiscovery(t *testing.T) {
 	if err := registry.Create(ctx, nativeCatalogItem(cfg, "empty-session")); err != nil {
 		t.Fatal(err)
 	}
+	if err := registry.Close(); err != nil {
+		t.Fatal(err)
+	}
 	_, events := nativeCatalogStores(t, cfg)
 	for _, id := range []session.ID{"cli-stable", "other-workspace", "orphan"} {
 		if _, err := events.Append(ctx, id, 0, userMessage("Prompt "+string(id))); err != nil {
@@ -466,8 +476,12 @@ func TestNativeCLICatalogAndDiscovery(t *testing.T) {
 		t.Fatalf("resource directory filter: %s", filtered)
 	}
 	run("session", "remove", "cli-stable")
+	registry = openCatalog(t, cfg)
 	if _, err := registry.Get(ctx, "cli-stable"); !errors.Is(err, sessionregistry.ErrNotFound) {
 		t.Fatalf("removed CLI session still registered: %v", err)
+	}
+	if err := registry.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(shown.DataDirectory); err != nil {
 		t.Fatal(err)

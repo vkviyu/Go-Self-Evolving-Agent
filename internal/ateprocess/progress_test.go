@@ -4,11 +4,16 @@ package ateprocess
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/vkviyu/agent-temporal-engine/client"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
 )
 
@@ -112,4 +117,67 @@ func TestProgressBracketsCallbackAndShutdown(t *testing.T) {
 		}
 	}
 	assertReapedAndUnlocked(t, m, ".launch")
+}
+
+func TestPersistentLeaseTraceSeparatesQueueFromOperation(t *testing.T) {
+	r, err := observation.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close(context.Background()) })
+	ctx := observation.WithScope(r.Attach(t.Context()), observation.Scope{RequestID: "model-request"})
+	m := helperManager(t, "normal", 5*time.Second)
+	lease, err := m.OpenClient(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	if err := lease.WithClient(ctx, func(*client.Client) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	<-lease.gate
+	defer func() { lease.gate <- struct{}{} }()
+	timeout, cancel := context.WithTimeout(ctx, 15*time.Millisecond)
+	defer cancel()
+	if err := lease.WithClient(timeout, func(*client.Client) error { t.Fatal("unexpected callback while gate held"); return nil }); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	if err := r.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(r.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	batches := map[int64][]string{}
+	for {
+		var e observation.Event
+		if err := dec.Decode(&e); err != nil {
+			if err != io.EOF {
+				t.Fatal(err)
+			}
+			break
+		}
+		if e.Name == "lease.queued" || e.Name == "lease.acquired" || e.Name == "lease.finished" {
+			if e.RequestID != "model-request" {
+				t.Fatal(e)
+			}
+			batch := e.Metrics["batch"]
+			batches[batch] = append(batches[batch], e.Name+e.Status)
+		}
+	}
+	ok, timeoutSeen := false, false
+	for _, events := range batches {
+		if slices.Equal(events, []string{"lease.queued", "lease.acquired", "lease.finishedok"}) {
+			ok = true
+		}
+		if slices.Equal(events, []string{"lease.queued", "lease.finishedtimeout"}) {
+			timeoutSeen = true
+		}
+	}
+	if len(batches) != 2 || !ok || !timeoutSeen {
+		t.Fatal(batches)
+	}
 }

@@ -16,18 +16,53 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	sessionate "github.com/vkviyu/go-self-evolving-agent/internal/session/atestore"
+	"github.com/vkviyu/go-self-evolving-agent/internal/sessionregistry"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
-// DiscoverChats reads native ATE history and orchestration metadata without
-// opening an agent runtime or inspecting any per-session runtime database.
-// Unregistered native conversations remain discoverable after catalog removal.
-func DiscoverChats(ctx context.Context, cfg config.Config, id session.ID) (histories []session.ChatHistory, err error) {
-	resources, closeFn, err := openCatalogAuthority(ctx, cfg)
+// ReadChatCatalog reads the catalog and native history through one ATE lease.
+// With a session ID, the caller may accept a registration without saved history.
+func ReadChatCatalog(ctx context.Context, cfg config.Config, id session.ID, requireHistory bool) (entries []sessionregistry.Session, histories []session.ChatHistory, err error) {
+	resources, err := openChatCatalogReader(ctx, cfg)
+	if err != nil || resources == nil {
+		return nil, nil, err
+	}
+	defer func() { err = errors.Join(err, resources.process.Close()) }()
+	registry, err := sessionregistry.NewAuthority(resources.records, nil)
 	if err != nil {
+		return nil, nil, err
+	}
+	if id == "" {
+		entries, err = registry.List(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		item, getErr := registry.Get(ctx, string(id))
+		if getErr == nil {
+			entries = []sessionregistry.Session{item}
+			if !requireHistory {
+				return entries, nil, nil
+			}
+		} else if !errors.Is(getErr, sessionregistry.ErrNotFound) {
+			return nil, nil, getErr
+		}
+	}
+	histories, err = discoverChats(ctx, resources, id)
+	return entries, histories, err
+}
+
+// DiscoverChats reads native ATE conversations, including unregistered history.
+func DiscoverChats(ctx context.Context, cfg config.Config, id session.ID) (_ []session.ChatHistory, err error) {
+	resources, err := openChatCatalogReader(ctx, cfg)
+	if err != nil || resources == nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, closeFn()) }()
+	defer func() { err = errors.Join(err, resources.process.Close()) }()
+	return discoverChats(ctx, resources, id)
+}
+
+func discoverChats(ctx context.Context, resources *authorityResources, id session.ID) ([]session.ChatHistory, error) {
 	metadata, err := readChatMetadata(ctx, resources.records)
 	if err != nil {
 		return nil, err
@@ -36,7 +71,7 @@ func DiscoverChats(ctx context.Context, cfg config.Config, id session.ID) (histo
 	if err != nil {
 		return nil, err
 	}
-	histories = make([]session.ChatHistory, 0, len(candidates))
+	histories := make([]session.ChatHistory, 0, len(candidates))
 	for _, candidate := range candidates {
 		if strings.HasPrefix(string(candidate.id), "agent-thread_") || metadata.children[candidate.id] {
 			continue

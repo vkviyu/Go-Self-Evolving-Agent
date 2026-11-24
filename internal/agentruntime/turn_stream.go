@@ -14,9 +14,33 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
+// An in-place retry already displayed the confirmed prefix. Drain it in
+// Eino's ordered output without emitting another copy to the caller.
+type replayPresentation struct {
+	active    bool
+	remaining int
+}
+
+func (p *replayPresentation) sinkFor(role schema.RoleType, sink EventSink) EventSink {
+	if !p.active {
+		return sink
+	}
+	if role == schema.Tool {
+		return nil
+	}
+	if role == schema.Assistant {
+		if p.remaining > 0 {
+			p.remaining--
+			return nil
+		}
+		p.active = false
+	}
+	return sink
+}
+
 // consumeIterator translates Eino's event variants into the runtime's small
 // live-event vocabulary and returns the final assistant message.
-func (t *Turn) consumeIterator(ctx context.Context, iterator *adk.AsyncIterator[*adk.AgentEvent], sink EventSink, resumed bool) (Result, error) {
+func (t *Turn) consumeIterator(ctx context.Context, iterator *adk.AsyncIterator[*adk.AgentEvent], sink EventSink, resumed bool, presentation replayPresentation) (Result, error) {
 	var final *schema.Message
 	streamedAny := false
 	for {
@@ -52,7 +76,8 @@ func (t *Turn) consumeIterator(ctx context.Context, iterator *adk.AsyncIterator[
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			continue
 		}
-		message, streamed, err := consumeMessageVariant(ctx, event.Output.MessageOutput, t.turnID, sink)
+		variant := event.Output.MessageOutput
+		message, streamed, err := consumeMessageVariant(ctx, variant, t.turnID, presentation.sinkFor(variant.Role, sink))
 		if err != nil {
 			return Result{}, t.fail(ctx, err)
 		}

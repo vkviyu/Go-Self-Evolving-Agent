@@ -470,3 +470,21 @@ func writeConfig(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
+
+func TestModelStreamTimeoutConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("GSEA_HOME", home)
+	t.Setenv("GSEA_RESPONSE_HEADER_TIMEOUT", "")
+	t.Setenv("GSEA_STREAM_IDLE_TIMEOUT", "7m")
+	t.Setenv("GSEA_STREAM_EVENT_IDLE_TIMEOUT", "")
+	writeConfig(t, filepath.Join(home, configFileName), "[model]\nresponse_header_timeout = \"4m\"\nstream_idle_timeout = \"5m\"\nstream_event_idle_timeout = \"6m\"\n")
+	cfg, err := Load(LoadOptions{})
+	if err != nil || cfg.Model.ResponseHeaderTimeout != 4*time.Minute || cfg.Model.StreamIdleTimeout != 7*time.Minute ||
+		cfg.Model.StreamEventIdleTimeout != 6*time.Minute {
+		t.Fatalf("stream timeouts = %+v, err = %v", cfg.Model, err)
+	}
+	t.Setenv("GSEA_STREAM_EVENT_IDLE_TIMEOUT", "invalid")
+	if _, err := Load(LoadOptions{}); err == nil || !strings.Contains(err.Error(), "GSEA_STREAM_EVENT_IDLE_TIMEOUT") {
+		t.Fatalf("incorrect timeout error: %v", err)
+	}
+}

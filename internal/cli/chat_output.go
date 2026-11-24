@@ -33,6 +33,19 @@ func (output *turnOutput) Sink(_ context.Context, event agentruntime.Event) erro
 		return output.writeReasoning(event.Delta)
 	case agentruntime.EventAssistantTextDelta:
 		return output.writeAssistant(event.Delta)
+	case agentruntime.EventModelToolFormatRetry, agentruntime.EventModelTimeoutRetry:
+		if err := output.renderer.Finish(); err != nil {
+			return err
+		}
+		if output.reasoningOpen || output.assistantStarted {
+			if _, err := fmt.Fprintln(output.writer); err != nil {
+				return err
+			}
+		}
+		output.reasoningOpen = false
+		output.assistantStarted = false
+		output.reasoningFilter = render.TextSanitizer{}
+		return nil
 	default:
 		return nil
 	}

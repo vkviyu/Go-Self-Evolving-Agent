@@ -3,13 +3,144 @@ package runtimestore
 import (
 	"bytes"
 	"database/sql"
+	_ "embed"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/aterequest"
+	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
+
+// Frozen bytes of d0ff9dd's runtimeDDL + ateRequestsDDL + ateRequestRejectionsDDL.
+//
+//go:embed testdata/runtime_v1.sql
+var releasedRuntimeDDL string
+
+func createReleasedRuntime(t *testing.T) (*Database, string) {
+	t.Helper()
+	if checksum := sha256Hex([]byte(releasedRuntimeDDL)); checksum != runtimeV1Checksum {
+		t.Fatalf("released schema fixture drifted: %s", checksum)
+	}
+	path := filepath.Join(t.TempDir(), "runtime-v3.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	if _, err := raw.Exec(releasedRuntimeDDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO runtime_schema VALUES(1, ?)`, runtimeV1Checksum); err != nil {
+		t.Fatal(err)
+	}
+	return &Database{db: raw}, path
+}
+
+func TestRuntimeDatabaseReopensReleasedFormatWithoutChangingEvidence(t *testing.T) {
+	ctx := t.Context()
+	previous, path := createReleasedRuntime(t)
+	checkpoint := []byte("original checkpoint")
+	if err := previous.Checkpoints().Set(ctx, "turn", checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	pending := atePendingRecord(t, "pending")
+	if err := previous.ATERequests().BindAuthority(ctx, pending.StoreID); err != nil {
+		t.Fatal(err)
+	}
+	if err := previous.ATERequests().Insert(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := previous.ATERequests().BeginAttempt(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	manifest := runtimeManifest(t, "original")
+	id, err := manifest.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := tool.SnapshotReference{Kind: "turn", Scope: "session", ID: "turn"}
+	if err := previous.RuntimeSnapshots().WithReferenceGuard(allowSnapshotReference).Save(ctx, manifest, ref); err != nil {
+		t.Fatal(err)
+	}
+	// Opaque retired bytes must never be loaded as executable code or erased.
+	archived := []byte("retained evidence")
+	if _, err := previous.db.Exec(`INSERT INTO plugin_blobs VALUES('retained', ?)`, archived); err != nil {
+		t.Fatal(err)
+	}
+	if err := previous.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		current, err := OpenRuntime(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = current.Close() })
+		got, found, err := current.Checkpoints().Get(ctx, "turn")
+		if err != nil || !found || !bytes.Equal(got, checkpoint) {
+			t.Fatalf("checkpoint changed: %q %v", got, err)
+		}
+		request, found, err := current.ATERequests().Get(ctx, pending.Request.Key())
+		if err != nil || !found || !request.Attempted || request.Digest != pending.Digest || !bytes.Equal(request.Request.Body, pending.Request.Body) {
+			t.Fatalf("pending request lost identity/body/attempt: %+v %v", request, err)
+		}
+		if err := current.ATERequests().BindAuthority(ctx, "other-store"); !errors.Is(err, aterequest.ErrConflict) {
+			t.Fatalf("original authority lost: %v", err)
+		}
+		restored, err := current.RuntimeSnapshots().Load(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if restoredID, err := restored.ID(); err != nil || restoredID != id {
+			t.Fatalf("snapshot changed: %s %v", restoredID, err)
+		}
+		refs, err := current.RuntimeSnapshots().References(ctx, id)
+		if err != nil || !slices.Equal(refs, []tool.SnapshotReference{ref}) {
+			t.Fatalf("references changed: %+v %v", refs, err)
+		}
+		var version int
+		var checksum string
+		if err := current.db.QueryRow(`SELECT version, checksum FROM runtime_schema`).Scan(&version, &checksum); err != nil || version != 1 || checksum != runtimeV1Checksum {
+			t.Fatalf("old schema relabeled: %d %s %v", version, checksum, err)
+		}
+		if err := current.db.QueryRow(`SELECT source FROM plugin_blobs WHERE content_sha='retained'`).Scan(&got); err != nil || !bytes.Equal(got, archived) {
+			t.Fatalf("retired evidence changed: %q %v", got, err)
+		}
+		if err := current.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRuntimeDatabaseRefusesDamagedReleasedSchema(t *testing.T) {
+	for _, damage := range []string{
+		`DROP TABLE plugin_blobs`,
+		`ALTER TABLE plugin_revisions ADD COLUMN unexpected TEXT`,
+		`DROP TABLE ate_pending_requests`,
+		`UPDATE runtime_schema SET checksum='wrong'`,
+	} {
+		t.Run(damage, func(t *testing.T) {
+			previous, path := createReleasedRuntime(t)
+			if err := previous.Checkpoints().Set(t.Context(), "keep", []byte("original")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := previous.db.Exec(damage); err != nil {
+				t.Fatal(err)
+			}
+			if current, err := OpenRuntime(t.Context(), path); err == nil {
+				_ = current.Close()
+				t.Fatal("damaged released schema accepted")
+			}
+			got, found, err := previous.Checkpoints().Get(t.Context(), "keep")
+			if err != nil || !found || string(got) != "original" {
+				t.Fatalf("failed open changed evidence: %q %v", got, err)
+			}
+		})
+	}
+}
 
 // TestRuntimeDatabaseHasNoBusinessHistory makes accidental SQL fallback fail
 // at the storage boundary rather than silently creating a second authority.
@@ -35,6 +166,13 @@ func TestRuntimeDatabaseHasNoBusinessHistory(t *testing.T) {
 		if count != 0 {
 			t.Errorf("runtime database contains business table %s", table)
 		}
+	}
+	var version, retiredObjects int
+	if err := db.db.QueryRowContext(ctx, `SELECT version,(SELECT count(*) FROM sqlite_master WHERE name GLOB 'plugin_*') FROM runtime_schema`).Scan(&version, &retiredObjects); err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 || retiredObjects != 0 {
+		t.Fatalf("fresh runtime: version=%d retired objects=%d", version, retiredObjects)
 	}
 	payload := []byte("opaque runtime checkpoint")
 	if err := db.Checkpoints().Set(ctx, "ate-turn-reference", payload); err != nil {
@@ -130,7 +268,7 @@ func TestRuntimeDatabaseRefusesDamagedSchema(t *testing.T) {
 		`DROP TABLE ate_pending_requests`,
 		`ALTER TABLE agent_checkpoints ADD COLUMN unexpected TEXT`,
 		`UPDATE runtime_schema SET checksum='wrong'`,
-		`INSERT INTO runtime_schema VALUES(2,'extra')`,
+		`INSERT INTO runtime_schema VALUES(3,'extra')`,
 		`DELETE FROM runtime_schema`,
 		`CREATE VIEW business_view AS SELECT * FROM agent_checkpoints`,
 	} {

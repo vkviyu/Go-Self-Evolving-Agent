@@ -9,7 +9,7 @@
 - ATE 保存 Session、Task、Agent、Model、Tool、Memory、Recovery 和相关业务事实；
 - GSEA 拥有 Agent Loop、模型调用、工具执行、Task 调度、Workspace 和合并决策；
 - GSEA 与 ATE 使用 native stdio，不使用 MCP；
-- 本地 SQLite 只保存 checkpoint、工具快照、插件运行资源、Workspace 租约和未完成 ATE 请求；
+- 本地保存 checkpoint、工具快照清单与引用、Workspace 租约和未完成 ATE 请求。
 - 已尝试但结果未知的请求必须保留原始 RequestKey、请求字节和 Store ID，不能盲目重放。
 
 现有 Session、Turn、Goal、编排 Task、Agent、Team、Thread、Agent Run 和 ATE Task/Execution/Step 的边界仍然有效，本文不重新定义它们。本文增加的是一层连接这些对象的 Query Plan 和长期执行协议。
@@ -319,7 +319,7 @@ Branch ID
 
 ## Memory 设计
 
-Memory 必须区分“读取”“检索”“判断适用”“采用”和“写入”。
+当前 CLI 在 Eino 循环中提供 `memory_query` 和 `memory_manage`。下面的 MemoryMode 与 direct_read 是提案中的规划类型。实际查阅与采用的示例见[跨任务记忆指南](../EVOLUTION.md)。
 
 ```go
 type MemoryMode string
@@ -334,7 +334,7 @@ const (
 )
 ```
 
-### 直接统计
+### 自然语言统计与拟议的直接查询
 
 ```text
 用户：你当前有多少条记忆？
@@ -352,12 +352,12 @@ Side effects:
     none
 ```
 
-直接从 ATE 查询当前可见 Memory，不进入完整 Experience.Prepare，不调用辅助模型，也不等待 Experience.Complete。
+上图的零模型请求只描述拟议的结构化直接读取。现在用户以自然语言询问数量，主 Agent 可调用 `memory_query` 的 `count`，再依据结果答复。统计范围是当前允许复用的已晋升记忆。
 
 ### 显式引用
 
 ```text
-用户：@memory:preferences/testing 这个偏好适合当前测试吗？
+用户从 @memory: 的补全列表选中一条记忆，再问“这个偏好适合当前测试吗？”
 ```
 
 执行：
@@ -381,7 +381,7 @@ Side effects:
 执行：
 
 ```text
-检索候选 Memory
+用 memory_query 的 search 搜索当前可复用的 Memory，按 ref 读取来源
 → 模型判断适用性
 → 读取当前工作区
 → 修改代码
@@ -404,7 +404,7 @@ Applicability
 
 ### Memory 写入
 
-Memory 写入属于后台维护：
+普通 CLI 中，模型经审批用 `memory_manage` 的 `create_candidate` 写入带当前会话来源的候选。该工具返回的候选可按准确引用读取。下图描述嵌入宿主显式配置 `Complete` 时的维护流程。
 
 ```text
 turn.completed
@@ -1017,7 +1017,7 @@ turn.completed 已持久化
 结果已经安全交付
 ```
 
-后台经验维护可以继续运行，但不能阻塞已经成功的直接回答。
+在本提案的异步维护设计中，宿主先交付当前结果，再推进已配置的维护工作。普通 CLI 成功完成 Turn 即可结束。
 
 ## ATE 与 GSEA 的职责映射
 

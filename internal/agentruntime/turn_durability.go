@@ -44,6 +44,11 @@ func (t *Turn) fail(ctx context.Context, cause error) error {
 		"recoverable": checkpointAvailable || journalAvailable, "journal_available": journalAvailable,
 		"checkpoint_id": t.checkpointID,
 	}
+	if kind, ok := orchestration.ExecutionStopKindOf(cause); ok {
+		payload["stop_kind"] = kind
+	} else if errors.Is(cause, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		payload["stop_kind"] = "cancelled"
+	}
 	if errors.Is(cause, ErrRepeatedToolCycle) {
 		payload["failure_code"] = session.TurnFailureToolCycle
 		payload["recoverable"] = false

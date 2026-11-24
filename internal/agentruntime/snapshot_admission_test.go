@@ -25,7 +25,7 @@ func TestNewTurnCannotStartWithoutDurableSnapshot(t *testing.T) {
 	events := memorystore.New()
 	registry := tool.NewRegistry()
 	store := &unavailableSnapshotStore{}
-	if err := registry.ConfigurePersistence(store, nil); err != nil {
+	if err := registry.ConfigurePersistence(store); err != nil {
 		t.Fatal(err)
 	}
 	engine, err := policy.DefaultDeny()

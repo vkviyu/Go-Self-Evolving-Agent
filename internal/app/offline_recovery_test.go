@@ -118,13 +118,6 @@ func TestOfflineRetentionFailsClosedWithoutOpeningStorage(t *testing.T) {
 	if _, err := ArchiveSession(ctx, cfg, "root", "plan", false); err == nil {
 		t.Fatal("unconfirmed archive accepted")
 	}
-	_, pluginPreviewErr := PreviewPluginCollection(ctx, cfg, "tool", "v1")
-	_, collectErr := CollectPlugin(ctx, cfg, "tool", "v1", "plan", true)
-	for _, err := range []error{pluginPreviewErr, collectErr} {
-		if err == nil {
-			t.Fatal("maintenance accepted missing authority configuration")
-		}
-	}
 }
 
 type offlineBindingStub struct {

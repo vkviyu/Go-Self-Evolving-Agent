@@ -53,7 +53,7 @@ func TestCompletionAppendFailureRetainsRecoverableCheckpoint(t *testing.T) {
 	iterator, generator := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
 	generator.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("done", nil)}}})
 	generator.Close()
-	if _, err := turn.consumeIterator(context.Background(), iterator, nil, false); err == nil {
+	if _, err := turn.consumeIterator(context.Background(), iterator, nil, false, replayPresentation{}); err == nil {
 		t.Fatal("completion persistence failure ignored")
 	}
 	if payload := loadTurnFailurePayload(t, store.Store, "s"); !payload.Recoverable || payload.CheckpointID != "cp" {

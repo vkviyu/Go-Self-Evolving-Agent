@@ -46,15 +46,6 @@ func runWithDependencies(ctx context.Context, arguments []string, stdin io.Reade
 			return 1
 		}
 		return 0
-	case "plugins":
-		if err := runPlugins(ctx, arguments[1:], stdout, stderr); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return 0
-			}
-			fmt.Fprintf(stderr, "gsea plugins: %v\n", err)
-			return 1
-		}
-		return 0
 	case "maintenance":
 		if err := runMaintenance(ctx, arguments[1:], stdout, stderr); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
@@ -150,6 +141,5 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  eval     run and export language-neutral coding Agent evaluations")
 	fmt.Fprintln(writer, "  session  create, list, inspect and remove managed Agent Sessions")
 	fmt.Fprintln(writer, "  maintenance  preview/close finished recovery and compact freed database pages")
-	fmt.Fprintln(writer, "  plugins  stage, verify, publish, retire and collect exact WASM revisions")
 	fmt.Fprintln(writer, "  strategy  propose, verify, publish and roll back bounded LoopSpecs")
 }

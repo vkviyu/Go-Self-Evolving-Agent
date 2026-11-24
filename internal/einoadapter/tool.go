@@ -21,8 +21,7 @@ import (
 	appTool "github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
-// Tool is a turn-scoped Eino adapter. Its registry snapshot never changes
-// while the turn is running, even if a new plugin revision is activated.
+// Tool is an Eino adapter bound to the registry snapshot captured for its turn.
 type Tool struct {
 	descriptor        appTool.Descriptor
 	pipeline          *appTool.Pipeline

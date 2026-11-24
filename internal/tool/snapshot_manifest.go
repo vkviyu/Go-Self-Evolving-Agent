@@ -163,7 +163,3 @@ type SnapshotStore interface {
 	Save(context.Context, SnapshotManifest, SnapshotReference) error
 	Load(context.Context, string) (SnapshotManifest, error)
 }
-
-// BindingResolver may only reconstruct a trusted, exact retained executable.
-// Registry checks the complete returned binding again before adopting it.
-type BindingResolver func(context.Context, SnapshotEntry) (Binding, error)

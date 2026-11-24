@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
-	pluginwasm "github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
 
@@ -46,7 +45,6 @@ type (
 		// CoordinationDirectory holds cross-home workspace rendezvous locks. Load
 		// resolves it outside GSEA_HOME; empty disables cross-home exclusion.
 		CoordinationDirectory string
-		WASM                  pluginwasm.Config
 		Model                 ModelConfig
 		// Agent configures the root Agent; Agents bounds delegated child Agents.
 		Agent  AgentConfig
@@ -75,14 +73,17 @@ type (
 	// ModelConfig contains non-secret model selection. APIKeyEnvironment names the
 	// environment variable that ModelGateway resolves at construction time.
 	ModelConfig struct {
-		Provider          string
-		WireAPI           string
-		Name              string
-		TokenizerEncoding string
-		BaseURL           string
-		APIKeyEnvironment string
-		ReasoningEffort   string
-		Timeout           time.Duration
+		Provider               string
+		WireAPI                string
+		Name                   string
+		TokenizerEncoding      string
+		BaseURL                string
+		APIKeyEnvironment      string
+		ReasoningEffort        string
+		Timeout                time.Duration
+		ResponseHeaderTimeout  time.Duration
+		StreamIdleTimeout      time.Duration
+		StreamEventIdleTimeout time.Duration
 	}
 
 	// AgentConfig contains runtime defaults that are safe to keep in config.toml.
@@ -132,7 +133,7 @@ func Default() (Config, error) {
 // Resolve validates paths and creates the private application directory.
 func (c Config) Resolve() (Config, error) {
 	var ateErr error
-	c.ATE, ateErr = resolveATE(c)
+	c.ATE, ateErr = c.ResolveATE()
 	if ateErr != nil {
 		return Config{}, ateErr
 	}

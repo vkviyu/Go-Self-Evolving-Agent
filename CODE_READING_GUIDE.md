@@ -29,7 +29,7 @@
 | Agent profile               | [profile.go](internal/agentprofile/profile.go)、[profile.go](internal/agentruntime/profile.go)                                                                                           | 配置快照必须约束实际模型、工具和工作区访问，不能只改提示词                                  |
 | 工具快照                    | [snapshot_identity.go](internal/tool/snapshot_identity.go)、[snapshot_manifest.go](internal/tool/snapshot_manifest.go)、[snapshot_persistence.go](internal/tool/snapshot_persistence.go) | 内容地址、实现身份、产物解析与 consumer 引用；generation 不是恢复身份                       |
 
-ATE 的 `agentprofile` 是另一仓库中的持久化状态机协议。要看本项目怎样使用它，读 [execution.go](internal/atebridge/execution.go)：`EnsureExecution` 为 Turn 建立记录用途的 Task/Execution/Step，供经验与证据作用域使用。不要把它解释为宿主 Task DAG 的调度实现，也不要把 Flow Step 当作 ATE Step。
+ATE 的 `agentprofile` 是另一仓库中的持久化状态机协议。可选经验服务通过 `EnsureExecution` 为 Turn 建立记录用的 Task/Execution/Step。显式采用则单独为这次记忆调用建立作用域，并在保存 Observation 后退役。宿主自己的 Task DAG 由 Supervisor 调度。[经验执行作用域](internal/atebridge/execution.go) · [采用作用域](internal/experience/tools_adopt.go)
 
 ## 第二遍：确认事实到底写在哪里
 
@@ -41,8 +41,8 @@ ATE 的 `agentprofile` 是另一仓库中的持久化状态机协议。要看本
 | 业务 state 事务  | [store.go](internal/ateauthority/store.go) → [tx.go](internal/ateauthority/tx.go)                                                                                                                                       | 固定 view、根 CAS、有界 write set；已明确拒绝的冲突才允许重算 callback，callback 不得有外部副作用                   |
 | 编排仓库         | [core.go](internal/orchestration/atestore/core.go) → [root.go](internal/orchestration/atestore/root.go) → [tasks.go](internal/orchestration/atestore/tasks.go) → [events.go](internal/orchestration/atestore/events.go) | 一个 batch 中包含哪些状态、索引和事件；“存在 event 类型”本身不能证明事务边界                                        |
 | 准确请求与核对   | [executor.go](internal/aterequest/executor.go) → [authority.go](internal/app/authority.go)                                                                                                                              | 发送前保存原 envelope、BeginAttempt、回执验证、已提交但 pending 清理失败，以及 attempted 后查无记录为何仍是 unknown |
-| 运行资源         | [runtime_database.go](internal/runtimestore/runtime_database.go) → [runtime_snapshots.go](internal/runtimestore/runtime_snapshots.go)                                                                                   | 当前 DDL、authority 绑定、checkpoint/插件/快照等资源；旧业务格式被拒绝，不自动迁移                                  |
-| 自进化业务记录   | [store.go](internal/evolutionstore/store.go)、[strategies.go](internal/evolutionstore/strategies.go)、[plugin_builds.go](internal/evolutionstore/plugin_builds.go)                                                      | 业务证据写 ATE；WASM blob、运行版本和快照资源另由本地服务保存                                                       |
+| 运行资源 | [runtime_database.go](internal/runtimestore/runtime_database.go) → [runtime_snapshots.go](internal/runtimestore/runtime_snapshots.go) | authority 绑定、checkpoint、工具快照及恢复引用 |
+| 跨任务记忆 | [temporal.go](internal/app/temporal.go) → [tools_manage.go](internal/experience/tools_manage.go) → [tools_adopt.go](internal/experience/tools_adopt.go) | 候选引用哪条原始会话事件，ATE 如何记录采用、来源纠正与撤回 |
 
 读日志时先确定是哪一种：SessionEvent 按 Session sequence 组织；orchestration event 按业务 stream 与 global sequence 组织；ATE 物理 journal 按存储提交组织。`turn_journal.go` 的模型回放与 workspace apply journal 又有各自用途，它们不能替代请求回执。
 
@@ -53,7 +53,7 @@ ATE 的 `agentprofile` 是另一仓库中的持久化状态机协议。要看本
 按下面顺序区分结果与收尾：
 
 1. [turn_stream.go](internal/agentruntime/turn_stream.go) 和 [completed_turn.go](internal/agentruntime/completed_turn.go)：Turn 的候选输出和耐久终态。
-2. [candidate_events.go](internal/conversation/candidate_events.go)、[goal_loop.go](internal/conversation/goal_loop.go)、[goal_transition.go](internal/conversation/goal_transition.go)：候选缓冲、验收、继续和停止。
+2. Conversation 如何接收 Turn 结果、关联执行契约并选择恢复阶段。[run.go](internal/conversation/run.go) · [execution.go](internal/conversation/execution.go) · [recovery.go](internal/conversation/recovery.go)
 3. [supervisor_run.go](internal/agentmanager/supervisor_run.go)、[agent_completion.go](internal/orchestration/agent_completion.go)、[agents.go](internal/orchestration/atestore/agents.go)：先保存工作结果，再完成协调结算。
 4. [finalization.go](internal/workspacecoord/finalization.go)：文件应用后的外部验证与 Task/view 结算。
 
@@ -64,7 +64,7 @@ ATE 的 `agentprofile` 是另一仓库中的持久化状态机协议。要看本
 
 ### “重启后应该继续哪一步？”
 
-先读 [recovery.go](internal/conversation/recovery.go) 的只读发现，再读 [resume.go](internal/conversation/resume.go) 与 [goal_recovery.go](internal/conversation/goal_recovery.go)。区分执行、验收、已有 verdict 和 unavailable，避免把“恢复”统一理解成重跑 Turn。
+从只读发现进入续跑路径，查看宿主如何按原 Turn 的状态、执行绑定和已确认回执选择下一步。[recovery.go](internal/conversation/recovery.go) · [resume.go](internal/conversation/resume.go)
 
 随后核对 [startup_recovery.go](internal/app/startup_recovery.go)、[authority_scope.go](internal/app/authority_scope.go) 和 [recovery.go](internal/session/atestore/recovery.go)：只有拥有对应 Session 的 runtime 才能推进该 Session 的请求计划；普通启动核对 ACK，不自动提交所有旧业务请求。
 
@@ -84,11 +84,11 @@ ATE 的 `agentprofile` 是另一仓库中的持久化状态机协议。要看本
 
 这些步骤分别涉及副本、冻结候选、三方合并、文件应用和验证结算。不要把文件应用成功等同于 Task 完成。实际资源互斥另读 [domain.go](internal/workspacedomain/domain.go) 和 [root_io.go](internal/codingtools/root_io.go)：前者协调实例/租约，后者保护具体文件访问。共享可写子 Agent 当前串行；隔离或只读工作才使用其他并行槽。
 
-### “profile、Flow 和插件怎样共享工具治理？”
+### “profile 和 Flow 怎样共享工具治理？”
 
 读 [profile.go](internal/agentruntime/profile.go)、[context.go](internal/tool/context.go)、[pipeline.go](internal/tool/pipeline.go)，确认可信 ActorScope 与 profile guard 如何到达每次调用。再读 [operators.go](internal/agentflow/operators.go) 和 [runtime.go](internal/agentflow/runtime.go)：控制算子由宿主执行，工具/编排效果通过 Pipeline。
 
-插件服务由 [open.go](internal/app/open.go) 接线。进一步读 [plugin](internal/plugin)、[pluginbuild](internal/pluginbuild) 与 [wasm](internal/plugin/wasm)，重点理解构建、验证、发布和调用的边界。已开始的 Turn/Flow 固定快照，新发布不会把旧快照中的实现替换成当前版本。
+对照宿主注册的 `workspace_read` 和 `memory_query` 看一个普通工具如何进入快照。Turn/Flow 保存清单的内容 ID，恢复时核对原宿主和工具绑定。[工具装配](internal/app/open.go) · [快照清单](internal/tool/snapshot_manifest.go)
 
 ### “上下文、经验和自进化分别改了什么？”
 
@@ -96,8 +96,9 @@ ATE 的 `agentprofile` 是另一仓库中的持久化状态机协议。要看本
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
 | 当前模型上下文 | [context_policy.go](internal/agentruntime/context_policy.go)、[context_artifacts.go](internal/agentruntime/context_artifacts.go)、[compaction.go](internal/agentruntime/compaction.go)           | 压缩决策、外置大结果和保留消息；区分上下文窗口与累计预算       |
 | 请求与用量     | [model_accounting.go](internal/agentruntime/model_accounting.go)、[usage.go](internal/orchestration/atestore/usage.go)、[usage_recovery.go](internal/orchestration/atestore/usage_recovery.go)   | 预留、确定响应和恢复估算；不要把估算写成供应商账单或严格上限   |
-| 经验复用       | [experience.go](internal/agentruntime/experience.go)、[service.go](internal/experience/service.go)、[prepare.go](internal/experience/prepare.go)、[complete.go](internal/experience/complete.go) | Prepare / Check / Complete、历史截点、来源证据和独立维护状态   |
-| 策略与工具进化 | [evolution_scope.go](internal/app/evolution_scope.go)、[strategy](internal/strategy)、[evolutionstore](internal/evolutionstore)                                                                  | 候选、评估与激活分别由谁负责；模型建议怎样经过宿主校验和持久化 |
+| 默认记忆工具 | [memory_tools.go](internal/app/memory_tools.go)、[tools.go](internal/experience/tools.go)、[agent_factory.go](internal/app/agent_factory.go) | 查 `memory_query` 的搜索范围和精读结果。对照 `memory_manage` 的写审批、宿主身份与来源检查 |
+| 可选经验服务 | [prepare.go](internal/experience/prepare.go)、[complete.go](internal/experience/complete.go)、[experience.go](internal/agentruntime/experience.go) | 显式接入时的选择、派发前复核、证据审查及维护重试 |
+| 宿主策略 | [evolution_scope.go](internal/app/evolution_scope.go)、[strategy](internal/strategy)、[evolutionstore](internal/evolutionstore) | LoopSpec 的会话归属、影子对比和策略版本固定 |
 
 ### “只读查询、归档和关闭为什么有独立入口？”
 
@@ -130,14 +131,15 @@ ATE 业务关闭计划 / 准入墓碑
 | 工作完成后的协调结算                | [supervisor_completion_test.go](internal/agentmanager/supervisor_completion_test.go)、[supervisor_delivery_test.go](internal/agentmanager/supervisor_delivery_test.go)                                    |
 | Flow 的 native 恢复                 | [native_recovery_test.go](internal/agentflow/native_recovery_test.go)、[snapshot_recovery_test.go](internal/agentflow/snapshot_recovery_test.go)                                                          |
 | 执行所有权与只读边界                | [authority_scope_test.go](internal/app/authority_scope_test.go)、[control_scope_test.go](internal/app/control_scope_test.go)                                                                              |
-| ATE 业务关闭与本地资源释放          | [retention_native_test.go](internal/orchestration/atestore/retention_native_test.go)、[runtime_retention_test.go](internal/runtimestore/runtime_retention_test.go)                                        |
+| ATE 业务关闭与本地资源释放 | [control_maintenance_test.go](internal/app/control_maintenance_test.go)、[runtime_retention_test.go](internal/runtimestore/runtime_retention_test.go) |
+| 按需使用记忆、来源与采用 | [memory_routing_test.go](internal/app/memory_routing_test.go)、[tools_test.go](internal/experience/tools_test.go) |
 | 包依赖与资源关闭                    | [architecture_test.go](internal/architecture/architecture_test.go)、[close_test.go](internal/app/close_test.go)                                                                                           |
 
 修改某个行为时，应选择覆盖该边界及中断窗口的测试，并记录实际执行结果。文档中的测试链接只说明去哪读，不能替代测试运行。
 
 ## 当前名称与阅读时的检查点
 
-`internal/runtimestore` 是运行资源入口：checkpoint、插件/LSP/快照引用与未完成 ATE 请求。它不含业务历史；`OpenRuntime` 拒绝旧业务库或混合格式，不隐式迁移。
+`internal/runtimestore` 保存 checkpoint、LSP 诊断、工具快照及引用、未完成的 ATE 请求。`OpenRuntime` 校验库格式，业务历史直接读 ATE。
 
 `internal/ateports` 定义宿主对 ATE 的历史读取与决策状态端口，没有投递队列或镜像语义。`internal/atebridge` 通过它承接经验与执行生命周期；`agentruntime/turn_journal.go` 是现用的模型回放逻辑，不应按名称归为已删除的 delivery journal。
 

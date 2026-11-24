@@ -12,6 +12,7 @@ import (
 // unwrapped model text. Scroll restoration, disclosure and query navigation all
 // use these same coordinates.
 type transcriptSpan struct {
+	toolEnd    int
 	blockIndex int
 	start      int
 	end        int
@@ -79,6 +80,9 @@ func (model *Model) currentQuestion() (queryAnchor, bool) {
 }
 
 func (model *Model) renderQuestionNavigation(width int) string {
+	if model.toolInspector != nil {
+		return model.toolInspectionHeader(width)
+	}
 	if query, ok := model.currentQuestion(); ok && query.end <= model.viewport.YOffset {
 		prefix, hint := "↑ ", "  Alt+P"
 		preview := ansi.Truncate(query.preview, max(1, width-ansi.StringWidth(prefix+hint)), "…")
@@ -172,6 +176,10 @@ func (model *Model) handleHeaderMouse(message tea.MouseMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	if event.Y == model.headerHeight() {
+		if model.toolInspector != nil {
+			model.backFromTool()
+			return nil, true
+		}
 		if query, ok := model.currentQuestion(); ok && query.end <= model.viewport.YOffset {
 			model.jumpToQuestion()
 			return nil, true

@@ -22,22 +22,47 @@ type recoveryUIFake struct {
 	resumedID     string
 }
 
-func TestRecoveryNoticeSummarizesStartupAndShowsOnlyApplicableActions(t *testing.T) {
+func TestContinuationWordingIsAnOrdinaryQuestion(t *testing.T) {
+	model := newTestModel(t)
+	before := len(model.blocks)
+	model.submitInputForTest("继续好吗？")
+	if len(model.blocks) != before+1 || model.blocks[before].kind != blockUser ||
+		model.blocks[before].content != "继续好吗？" || model.stage != "Starting request" {
+		t.Fatalf("input lost its ordinary prompt behavior: stage=%q blocks=%+v", model.stage, model.blocks)
+	}
+}
+
+func TestUnavailableTurnLeavesSessionReadyWithSingleNotice(t *testing.T) {
+	model := newTestModel(t)
+	model.conversation = &recoveryUIFake{}
+	before := len(model.blocks)
+	failure := fmt.Errorf("restore turn %q: %w", "old", tool.ErrSnapshotHostChanged)
+	for range 2 {
+		model.startResume("")
+		model.finishTurn(turnDoneMsg{err: failure})
+	}
+	if model.stage != "Ready" || model.busy || model.completedTurns != 0 ||
+		len(model.blocks) != before+1 || model.blocks[before].content != failure.Error() {
+		t.Fatalf("stage=%s completed=%d blocks=%+v", model.stage, model.completedTurns, model.blocks)
+	}
+	model.submitInputForTest("follow up")
+	if !model.busy || model.blocks[len(model.blocks)-1].content != "follow up" {
+		t.Fatalf("session did not accept follow-up: %+v", model.blocks)
+	}
+}
+
+func TestRecoveriesShowsOnlyApplicableActions(t *testing.T) {
 	model := newTestModel(t)
 	items := []conversation.Recovery{
 		{TurnID: "journal-turn", Phase: "execution"},
 		{TurnID: "unbound", Phase: "unavailable", Reason: "no durable turn"},
 	}
 	model.showRecoveries(recoveriesMsg{items: items})
-	if notice := model.blocks[len(model.blocks)-1]; notice.kind != blockSystem || !strings.Contains(notice.content, "(2) · /recoveries") || strings.Contains(notice.content, "journal-turn") {
-		t.Fatalf("startup recovery notice: %#v", notice)
-	}
-	model.showRecoveries(recoveriesMsg{items: items, explicit: true})
 	text := model.blocks[len(model.blocks)-1].content
 	if !strings.Contains(text, "turn journal-turn  execution") || !strings.Contains(text, "turn unbound  unavailable — no durable turn") || !strings.Contains(text, "/resume <turn-id>") || strings.Contains(text, "missing checkpoints") {
 		t.Fatalf("recovery detail: %s", text)
 	}
-	model.showRecoveries(recoveriesMsg{items: items[1:], explicit: true})
+	model.showRecoveries(recoveriesMsg{items: items[1:]})
 	if text := model.blocks[len(model.blocks)-1].content; strings.Contains(text, "/resume") {
 		t.Fatalf("unavailable work advertised execution: %s", text)
 	}
@@ -150,8 +175,17 @@ func TestRecoveryCommandsDiscoverWithoutRunningAndResumeWithoutNewInput(t *testi
 	if fake.runs != 0 || fake.resumes != 0 || model.busy {
 		t.Fatal("listing executed work")
 	}
-	if command, _ := model.handleCommand("/resume"); command != nil || model.busy {
-		t.Fatal("missing ID started recovery")
+	if command, _ := model.handleCommand("/resume original extra"); command != nil || model.busy {
+		t.Fatal("invalid command started recovery")
+	}
+	command, handled = model.handleCommand("/resume")
+	if !handled || command == nil || !model.busy || len(model.inputHistory) != 0 {
+		t.Fatal("foreground recovery was treated as new user input")
+	}
+	command().(tea.BatchMsg)[0]()
+	model.Update(<-model.turnEvents)
+	if fake.resumes != 1 || fake.resumedID != "" {
+		t.Fatalf("foreground recovery used the wrong operation: %#v", fake)
 	}
 	command, handled = model.handleCommand("/resume original")
 	if !handled || command == nil || !model.busy || len(model.inputHistory) != 0 {
@@ -161,7 +195,7 @@ func TestRecoveryCommandsDiscoverWithoutRunningAndResumeWithoutNewInput(t *testi
 	batch[0]() // Run only the operation; UI waits/spinner are separate commands.
 	message := <-model.turnEvents
 	model.Update(message)
-	if fake.runs != 0 || fake.resumes != 1 || fake.resumedID != "original" || model.busy {
+	if fake.runs != 0 || fake.resumes != 2 || fake.resumedID != "original" || model.busy {
 		t.Fatalf("wrong dispatch: %#v", fake)
 	}
 }

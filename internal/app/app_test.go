@@ -18,7 +18,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	pluginwasm "github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
@@ -182,7 +181,6 @@ func TestAppRepositoriesAreIndependentOfDatabaseOwner(t *testing.T) {
 func TestClosedAppRejectsSupervisorInitialization(t *testing.T) {
 	application, err := testOpen(t, context.Background(), config.Config{
 		DataDirectory: t.TempDir(),
-		WASM:          pluginwasm.Config{DefaultTimeout: time.Second},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +202,6 @@ func TestDoctorRunsThroughDurablePipeline(t *testing.T) {
 	directory := t.TempDir()
 	application, err := testOpen(t, context.Background(), config.Config{
 		DataDirectory: directory,
-		WASM:          pluginwasm.Config{DefaultTimeout: time.Second},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +263,6 @@ func TestNewSupervisorCleansBindingsWhenRecoveryFails(t *testing.T) {
 	t.Parallel()
 	application, err := testOpen(t, context.Background(), config.Config{
 		DataDirectory: t.TempDir(),
-		WASM:          pluginwasm.Config{DefaultTimeout: time.Second},
 	})
 	if err != nil {
 		t.Fatal(err)

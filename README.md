@@ -1,6 +1,8 @@
 # Go Self-Evolving Agent
 
-本地优先的可信 Agent Runtime。通用 Agent Loop 复用 Eino ADK；动态工具由 Go 1.27.0 编译为 WASI reactor，并在 wazero 的能力受限沙箱中执行。
+假设昨天排查一次模型流超时，工具记录显示响应头已到、响应体一直没有新字节。今天另一个项目也报告超时，主 Agent 可以在共享的 Agent Temporal Engine（ATE）中查找已验证且仍可复用的排查经验，核对来源，再用今天的请求记录判断是否适用。两次故障的原因要分别取证。
+
+这就是 GSEA 名称里 **Evolving** 的含义。任务留下的事实可以形成带来源的记忆，供其他任务查询、核验和显式采用。发现反例或来源失效时，可以纠正或撤回其复用资格。GSEA 在本地用 Eino ADK 运行模型与工具循环，是否查记忆由主 Agent 按需决定。[跨任务记忆指南](./EVOLUTION.md)
 
 会话、任务、消息和执行事实直接保存在 ATE；GSEA 的 `runtime-v3.db` 只保存 checkpoint、宿主运行资源及未完成请求。旧版 `runtime.db` 和 `runtime-v2.db` 不会被当前版本读取或迁移。权威存储切换已完成并通过自动化集成验收，验证范围与恢复边界见 [ATE 权威存储迁移](./docs/ATE_AUTHORITY_CUTOVER.md)。
 
@@ -10,6 +12,8 @@
 
 功能边界补齐后的 F1–F5 架构重构已完成，不改变现有权限与持久化协议；各批次交付及全量/静态/竞态验收记录见 [重构计划](./REFACTORING.md)。
 
+排查模型流超时、工具等待或并行子 Agent 运行时，可以按会话和请求查看本地诊断轨迹。见[执行观察与排障](./docs/EXECUTION_OBSERVATION.md)。
+
 ## 已实现
 
 - Eino `ChatModelAgent` / `Runner` 的真实 ReAct 循环；
@@ -17,12 +21,9 @@
 - Eino Tool Adapter，模型 tool-call ID 贯穿策略与审计事件；
 - 默认拒绝的 Policy Engine，以及统一的提议、审批、执行、结果管线；
 - ATE 原生只追加 Session Event Store，带乐观序列、事件校验和及可追溯的历史来源；
-- Host-owned Blob Handle ABI v1，Guest 不接触宿主指针；
-- 每次调用使用 fresh instance 的 wazero Runtime，限制内存、Blob 配额和执行时间；
-- Plugin Manager 分离 Stage 与 Activate，支持 Revision 热切换和显式回滚；
-- 受控自进化闭环：Eino 提案、隔离 Go 编译、WASM 行为测试、修复和独立审批发布；版本化 LoopSpec 的工具禁用影子对比、Turn 边界切换、失败隔离回退。使用方法与限制见 [自进化与运维指南](./EVOLUTION.md)；
-- `maintenance` 完成消费者归档、`plugins` 管理与离线 revision GC；保留历史证据，不按零引用自动删除；
-- Go 1.27.0 `-buildmode=c-shared` WASI 插件端到端测试；
+- `memory_query` 只读查询 ATE，`memory_manage` 经审批写入候选、记录采用、撤回或纠正来源。候选需经过独立验证和晋升才有资格供后续任务检索。
+- 宿主可单独评估版本化 LoopSpec。影子对比、审批和回退约束后续 Turn 的策略选择。
+- `maintenance` 可预览并归档已结束的恢复消费者，按回执释放本地工具快照引用。
 - `gsea doctor` 启动自检。
 - OpenAI-compatible / Ollama ModelGateway 与可恢复的 `gsea chat` 多轮会话；
 - OpenAI Responses SSE 与 Eino 流式消息统一转换，CLI 实时输出 assistant delta；
@@ -56,7 +57,7 @@ internal/ateprocess         原生 ATE stdio 子进程、paired binary 解析和
 internal/aterequest         原生请求身份、未完成请求核对与确认后正文清理
 internal/ateauthority       ATE 截面读取、原子实体事务、条件提交和原生分页
 internal/atebridge          ATE 原生来源证据、经验与执行生命周期
-internal/experience         模型驱动的经验检索、采用、审查、Memory 提炼和 Space 整理
+internal/experience         ATE 记忆查询、来源核验、候选、显式采用与撤回；可选经验整理
 internal/experienceport     runtime 使用的稳定经验端口类型，隔离具体实现
 internal/ateports           宿主对 ATE 的端口：精确历史读取与语义决策状态；不是投递日志或 outbox
 internal/agentflow          命名 Flow Catalog、流式组合算子和 durable Flow Runtime
@@ -73,8 +74,8 @@ internal/artifact           content-addressed Artifact Store
 internal/modelcontext       上下文窗口、最大输出与输入预算解析
 internal/tokenizer          本地 BPE tokenizer 选择与估算标记
 internal/tokenusage         模型请求预留/派发/回执/核销账本
-internal/evolutiontools     自进化工具描述、严格 JSON 解码与可信调用者适配
-internal/evolutionstore     ATE 中的策略、发布回退、插件构建与验证证据
+internal/evolutiontools     策略工具描述、严格 JSON 解码与可信调用者适配
+internal/evolutionstore     ATE 中的 LoopSpec、影子对比报告和策略状态
 internal/einoadapter        Eino Tool 到统一执行管线的适配
 internal/modelgateway       OpenAI Chat Completions / Responses、Ollama provider 构造
 internal/render             headless 流式 Markdown、Chroma 代码高亮和 ANSI
@@ -90,17 +91,13 @@ internal/session            append-only 事件协议、EventStore 与 Checkpoint
 internal/session/memorystore 测试与临时运行的内存 Store
 internal/session/atestore   ATE 原生会话事件、载荷、历史读取及来源引用
 internal/orchestration/atestore ATE 上的任务、Agent、Goal、Flow、消息与编排事实
-internal/runtimestore      本地运行资源、checkpoint、插件/LSP/快照引用与未完成请求；不含业务历史
-internal/plugin             持久目录与 Stage / Activate / Retire / Rollback
-internal/pluginbuild        固定 SDK、受限源码和离线 OS 沙箱编译
+internal/runtimestore      本地运行资源、checkpoint、LSP 缓存、工具快照引用与未完成请求
 internal/strategy           不可变 LoopSpec、可信影子样例与准入规则
-internal/retention          显式恢复关闭、精确 revision 回收计划/回执
-internal/plugin/wasm        wazero Host Runtime 和 Blob Handle 所有权
+internal/retention          显式关闭恢复的计划与回执
 internal/architecture       仅测试：依赖方向与关键构造点白名单
-sdk/pluginabi               Go WASI 插件 SDK
 ```
 
-依赖方向保持从装配层指向稳定领域边界。Eino 不直接执行原生/WASM 实现，wazero 不直接访问文件、网络或凭证，工具也不能绕过 Policy 与 Event Store。
+App 装配领域服务。Eino 发出的工具调用统一经过宿主的 Policy 与 Event Store。
 
 ### 当前运行时结构
 
@@ -112,13 +109,13 @@ cmd/gsea
 internal/cli                 命令解析与应用编排
   ├─ chat：TTY 进入 internal/tui，管道进入 headless runner
   ├─ doctor：调用本地诊断，不创建模型连接
-  └─ session / control / eval / maintenance / plugins / strategy
+  └─ session / control / eval / maintenance / strategy
           │
           ▼
 internal/app                  Composition Root
   ├─ config → ATE 会话与编排仓库（原生 stdio）
   ├─ runtime-v3.db → checkpoint、宿主运行资源、未完成请求
-  ├─ WASM Runtime + Plugin Manager
+  ├─ experience → ATE 语义空间、记忆与采用记录
   ├─ LSP Manager（按 workspace/worktree 懒启动）
   ├─ Policy Engine + Tool Registry
   ├─ Tool Pipeline
@@ -143,19 +140,17 @@ internal/einoadapter → internal/tool.Pipeline
   proposed → policy → approval → started → executor → succeeded/failed
 ```
 
-`cmd/gsea` 只负责进程生命周期；`internal/cli` 负责命令协议和依赖编排；`internal/app` 负责应用生命周期和依赖装配；`internal/agentruntime` 只负责 Eino Agent 与 Turn 协议；`internal/tui` 和 `internal/render` 只负责各自的输出边界。所有工具（原生或 WASM）都必须经过同一个 `internal/tool.Pipeline`。这些边界可以独立测试，也避免 Eino、WASM 实现或 CLI 直接绕过策略和事件存储。
+`cmd/gsea` 管理进程生命周期，`internal/cli` 解析命令并编排依赖，`internal/app` 负责应用装配和关闭。`internal/agentruntime` 管理 Eino Agent 与 Turn 协议，`internal/tui` 和 `internal/render` 负责展示。Agent 调用工具时统一经过 `internal/tool.Pipeline`。
 
-当前 `chat` 启动时注册 `runtime_diagnostics`、`artifact_read` 和完整的 Coding Agent workspace 工具集。启用 LSP 时还注册只读 `workspace_diagnostics`；`workspace_write`、`workspace_edit` 和 `shell_exec` 成功后会把 bounded unified diff 与被动诊断合并进同一个工具结果。小 Diff 直接内联，大 Diff 写入 content-addressed artifact 并返回 `artifact_ref`，可通过 `artifact_read` 分段读取。TUI 会自动展开包含 Diff 的工具结果，`/diff` 可再次汇总展开当前 transcript 中的 Diff。WASM 插件通过 `App.Plugins()` 使用 `Stage`、`Activate`、`Retire` 和 `Rollback` 生命周期 API；插件控制面仍由宿主显式装配，不会被模型直接晋升或绕过审批。
+当前 `chat` 启动时注册 `runtime_diagnostics`、`artifact_read`、记忆工具和 Coding Agent workspace 工具集。启用 LSP 时还注册只读 `workspace_diagnostics`。`workspace_write`、`workspace_edit` 和 `shell_exec` 成功后会把 bounded unified diff 与被动诊断合并进同一个工具结果。小 Diff 直接内联，大 Diff 写入 content-addressed artifact 并返回 `artifact_ref`，可通过 `artifact_read` 分段读取。TUI 在工具详情中展示 Diff，`/diff` 可直接查看当前记录中的代码变更。
 
-插件产物、manifest 与激活状态保存在同一个 SQLite 数据库中，重启后校验并恢复当前激活集合；`Artifact(name, revision)` 和 `Inventory()` 可查询保留的版本。暂存不会自动激活，停用不会删除代码。发布持久化出错后必须重开运行时核对状态，避免不确定提交下重复变更。插件不能覆盖宿主工具或其他插件的同名工具；资源配置漂移、损坏记录或名称冲突会拒绝启动。每个 WASM 最大 32 MiB，manifest 最大 64 KiB，按 revision 引用累计源字节最大 128 MiB，重复 blob 在磁盘去重。
+普通工具也有快照。每个 Turn/Flow 在执行前保存当时可用的工具名称、Schema、实现身份及消费者引用。恢复时宿主按原内容 ID 核对工具和环境，身份不兼容就停止。`App.RuntimeSnapshotReferences` 可查未释放引用，`RuntimeSnapshotReferenceHistory` 可查释放原因。
 
-新 Turn/Flow 在执行前会保存完整工具快照清单和引用。恢复时可按原内容 ID 重建包含退休插件的历史组合，不把全局激活状态切回旧版；工作目录、宿主程序或工具身份不兼容时仍会拒绝。模型、Profile、预算和审批检查不因重建而放宽。宿主可用 `App.RuntimeSnapshotReferences` 查询未释放引用，`RuntimeSnapshotReferenceHistory` 查询包含释放原因的完整历史；它们不是活跃任务列表。
-
-完成的 Turn、终态 Goal、子 Agent 和关联终态 Flow 可通过离线 `maintenance plan/archive` 显式关闭恢复并释放引用；`plugins gc-plan/collect` 独占复核保留引用和历史消费者后，仅回收指定的非 active WASM revision。不会自动释放或删除历史证据，没有清单的旧任务也不会被猜造成可恢复。“零引用”不是删除证明；未知 legacy 身份仍保守阻止回收。完整命令与不可逆边界见 [自进化与运维指南](./EVOLUTION.md)，实现见 [架构导读](./ARCHITECTURE.md)。
+离线 `maintenance plan` 和 `maintenance archive` 可为符合条件的 Turn、子 Agent 和 Flow 关闭恢复，待 ATE 确认后释放本地快照引用。原有会话历史和记忆来源仍可按权限核查。[恢复与归档边界](./EVOLUTION.md)
 
 ## 安装与运行
 
-在仓库根目录用 Go 1.27.0 构建并运行 `gsea`：
+当前 `go.mod` 通过本地 replacement 使用 sibling ATE 工作区；先准备匹配版本的 ATE 源码，再在仓库根目录用 Go 1.27.0 构建成对的 `gsea` 与 `ate`。这不是脱离工作区的独立安装流程：
 
 ```bash
 mkdir -p "$HOME/.local/bin"
@@ -165,12 +160,6 @@ go build -o "$HOME/.local/bin/gsea" ./cmd/gsea
 ```
 
 在仓库中可以用 `make build` 同时生成 `bin/ate` 与 `bin/gsea`，再运行 `./bin/gsea doctor`。使用 `go run` 时，临时可执行目录不包含配套 `ate`，需要把它加入 `PATH`，或显式设置 `GSEA_ATE_BINARY="$PWD/bin/ate"`。
-
-### 配置插件编译器
-
-从 Go 源码生成 WASM 插件时，在启动 GSEA 前将 `GSEA_GO_ROOT` 设为可信 Go 1.27.0 安装根目录的绝对路径，该目录下应有 `bin/go`。如果已确认当前 `go` 为可信的 1.27.0，可运行 `export GSEA_GO_ROOT="$(go env GOROOT)"`。GSEA 在隔离环境中离线编译，Linux 使用 `bwrap`，macOS 使用系统 Seatbelt。
-
-普通聊天、`doctor` 和执行已有 WASM 插件无需设置 `GSEA_GO_ROOT`。构建新插件时，GSEA 会报告缺失或无效的路径以及不匹配的 Go 版本。插件构建与发布示例见 [自进化与运维指南](./EVOLUTION.md)。
 
 ## 开发与验证
 
@@ -184,7 +173,7 @@ go test -race ./...
 go run ./cmd/gsea doctor --data-dir /tmp/gsea-doctor
 ```
 
-依赖已缓存时可为测试命令设置 `GOPROXY=off`，避免下载。全量测试包含架构依赖约束、工具描述/迁移契约和真实本地 Go→WASM 集成；阶段验收记录见 [重构计划](./REFACTORING.md)。
+依赖已缓存时可为测试命令设置 `GOPROXY=off`，避免下载。记忆工具的权限、路由及 ATE 读写契约可从 `internal/app` 和 `internal/experience` 的测试查起。[阶段验收记录](./REFACTORING.md)
 
 ## 配置与本地对话
 
@@ -198,7 +187,7 @@ go run ./cmd/gsea doctor --data-dir /tmp/gsea-doctor
 
 `chat` 自动在 ATE 登记会话及其工作区和数据目录，历史也直接写入同一个 ATE 权威存储。通过 `session create` 创建的托管会话默认使用独立的 `$GSEA_HOME/sessions/<session-id>/data/runtime-v3.db` 保存运行资源。工作区可以是任意普通目录。同一 ATE 会话另有独占执行锁，更换本地数据目录不能同时运行该会话。
 
-在终端运行 `gsea resume` 会打开当前工作区的会话选择器，可以按标题、工作区或会话 ID 搜索。`--list` 只列出历史，`--last` 打开最近一次会话，`--all` 也显示其他工作区及工作区未记录的会话。目录和历史以 ATE 为准；旧 `sessions.db` 原地保留，不在启动时自动导入或作为恢复后备源。读取历史不依赖旧运行库，恢复执行仍需核对 checkpoint 和原工具资源是否可用。
+在终端运行 `gsea resume` 会打开当前工作区的会话选择器，可以按标题、工作区或会话 ID 搜索。`--list` 直接打印列表，`--last` 打开最近一次会话，`--all` 也显示其他工作区及工作区未记录的会话。列表和历史直接从 ATE 读取。打开具体会话执行时，GSEA 再校验该会话的运行库与 ATE 身份、checkpoint 和原工具资源。旧 `sessions.db` 原地保留，不在启动时自动导入或作为恢复后备源。
 
 ```bash
 go run ./cmd/gsea session create \
@@ -215,11 +204,11 @@ go run ./cmd/gsea resume <session-id>
 
 带有中心登记的 `chat --session` 会自动使用 Session 绑定的 workspace 和 data directory；显式传入 `--workspace` 或 `--data-dir` 时，命令行参数优先。同一 Session 内的可写子 Agent 默认在私有 snapshot view（`<data_directory>/views`）中并行工作，结果经合并审批后写回，不需要 Git branch 或 worktree；多个 Session 指向同一源目录时由 workspacedomain 协调写 lease（写操作互斥而非并行）；直接在主工作区按 `owned_paths` 并行写入（P4）尚未实现。Session 的 artifacts 也保存在其 runtime data directory，不写入用户工作区。
 
-关闭超时不等于后台工作已停止。自进化或 Supervisor worker 未退出时，App 会返回错误并保留其可能使用的资源和所有权；重复关闭仍返回原错误，需要退出该进程后再重开。离线维护和评测后的 durable 用量读取同样遵守所有权检查，不能绕过仍存活的实例。
+关闭超时时，仍在运行的策略比较或 Supervisor worker 可能继续使用资源。App 会返回错误并保留所有权，重复关闭仍返回原错误，需要退出该进程后再重开。离线维护和评测后的 durable 用量读取同样遵守所有权检查。
 
 `workspace_directory`（或 `GSEA_WORKSPACE_DIRECTORY`、`chat --workspace`）定义 Coding Agent 的文件和命令边界；未指定时使用启动目录。内置读取和搜索工具自动允许，文件写入、精确编辑和 shell 命令必须在 TUI 中审批；普通非 TTY 管道运行仍会对这些高风险工具拒绝执行。隔离 benchmark runner 可以显式传入 `--evaluation-mode` 和 `--workspace`，此时只自动批准 `workspace_write`、`workspace_edit`、`shell_exec` 与子 Agent snapshot 合并的 `merge_apply` 审批请求，其他需要审批的工具继续拒绝。
 
-内置 Coding Agent 工具包括：`workspace_read`、`workspace_list`、`workspace_glob`、`workspace_grep`、可选的 `workspace_diagnostics`、`workspace_write`、`workspace_edit`、`shell_exec` 和只读分段召回工具 `artifact_read`。`workspace_read` 在完整读取的文件不超过 4 MiB 时返回整个文件的 `sha256` 指纹及 `fingerprint_complete=true`，可用于后续 `expected_sha256` 校验；超过 4 MiB 的文件仍可分页读取，`fingerprint_complete=false`。`max_bytes` 约束所选行范围的内容，默认 16 KiB。读取大文档时可用返回的 `next_start_line` 或 `next_offset` 接着读取。`shell_exec` 可用 `timeout_ms` 为单条命令设置执行时限。省略时沿用调用方的上下文和取消信号。结构化 write/edit 的输入和输出同样最多 4 MiB，扩大替换在分配前检查。结构化写入结果的 `diff` 对象和 `shell_exec` 结果的 `diffs` 数组均包含路径、变化类型、状态和 unified diff 内容；`binary`、`unavailable`、`partial` 状态会明确说明限制。多 Agent 控制工具包括 `agent_spawn`、`agent_continue`、`agent_list`、`agent_wait`、`agent_interrupt`、`agent_message`，以及 `task_create`、`task_list`、`task_transition`、`task_verify`、`task_claim`、`task_release`、`task_add_dependency`、`task_remove_dependency`；配置了 workspace coordinator 时还有 `merge_list`、`merge_requeue` 和仅 root 可用的 `merge_run`。Flow 控制工具包括 `flow_list`、`flow_run`、`runtime_budget` 和 `human_confirm`。带 `verification_profile` 的任务在 worker 完成后进入 `verification`，必须由本 Task 当前 attempt 指派、匹配 Profile 且不同于 worker 的 reviewer Agent 调用 `task_verify`；通过后才进入 `completed`，拒绝则回到 `ready` 并递增 attempt。Task claim 默认有 30 分钟 TTL，过期 claim 只会在没有 live Agent 的情况下回收到 `ready`，并递增 attempt、记录 `task.claim_expired` 事件。工具调用统一经过注册表快照、完整 JSON Schema 参数校验、策略判定、审批和事件持久化；同一 session/turn/call 的已成功结果可安全回放，跨 turn 重用 provider call ID 不会错误去重；Pipeline 依赖只能通过构造器注入，且会拒绝来自其他 Registry 的快照；TUI 会在执行修改或命令前暂停等待用户决定，并自动展开包含 unified diff 的结果。
+内置 Coding Agent 工具包括：`workspace_read`、`workspace_list`、`workspace_glob`、`workspace_grep`、可选的 `workspace_diagnostics`、`workspace_write`、`workspace_edit`、`shell_exec` 和只读分段召回工具 `artifact_read`。`workspace_read` 在完整读取的文件不超过 4 MiB 时返回整个文件的 `sha256` 指纹及 `fingerprint_complete=true`，可用于后续 `expected_sha256` 校验；超过 4 MiB 的文件仍可分页读取，`fingerprint_complete=false`。`max_bytes` 约束所选行范围的内容，默认 16 KiB。读取大文档时可用返回的 `next_start_line` 或 `next_offset` 接着读取。`shell_exec` 可用 `timeout_ms` 为单条命令设置执行时限。省略时沿用调用方的上下文和取消信号。结构化 write/edit 的输入和输出同样最多 4 MiB，扩大替换在分配前检查。结构化写入结果的 `diff` 对象和 `shell_exec` 结果的 `diffs` 数组均包含路径、变化类型、状态和 unified diff 内容；`binary`、`unavailable`、`partial` 状态会明确说明限制。多 Agent 控制工具包括 `agent_spawn`、`agent_continue`、`agent_list`、`agent_wait`、`agent_interrupt`、`agent_message`，以及 `task_create`、`task_list`、`task_transition`、`task_verify`、`task_claim`、`task_release`、`task_add_dependency`、`task_remove_dependency`；配置了 workspace coordinator 时还有 `merge_list`、`merge_requeue` 和仅 root 可用的 `merge_run`。Flow 控制工具包括 `flow_list`、`flow_run`、`runtime_budget` 和 `human_confirm`。带 `verification_profile` 的任务在 worker 完成后进入 `verification`，必须由本 Task 当前 attempt 指派、匹配 Profile 且不同于 worker 的 reviewer Agent 调用 `task_verify`；通过后才进入 `completed`，拒绝则回到 `ready` 并递增 attempt。Task claim 默认有 30 分钟 TTL，过期 claim 只会在没有 live Agent 的情况下回收到 `ready`，并递增 attempt、记录 `task.claim_expired` 事件。工具调用统一经过注册表快照、完整 JSON Schema 参数校验、策略判定、审批和事件持久化；同一 session/turn/call 的已成功结果可安全回放，跨 turn 重用 provider call ID 不会错误去重；Pipeline 依赖只能通过构造器注入，且会拒绝来自其他 Registry 的快照；TUI 会在执行需要审批的修改或命令前暂停并等待用户决定。审批卡会展示待确认的 unified diff。
 
 在本仓库工作区可以直接问「请阅读 `@ARCHITECTURE.md`，解释 Turn 中断后如何恢复」。也支持 `@"ARCHITECTURE.md"` 这种引号写法，路径含空格时用引号包住完整路径。可明确识别的普通路径和工作区内的绝对路径也会解析为工作区相对路径。首个模型请求可附带文件字节数、完整扫描后得到的 UTF-8 字符数和行数，以及 Markdown 标题的行号。元信息沿用当前 Agent 的工作区和 `workspace_read` 权限，只扫描有限字节，并按当前请求的输入空间裁减。模型据此自行选择 `workspace_read` 的行范围或字节量，文件正文由工具按需读取。
 
@@ -229,13 +218,13 @@ LSP 默认通过 stdio 懒启动 `gopls serve`。结构化写工具直接产生�
 
 子 worktree 的 `.git` 若指向父仓库的共享元数据，Shell 中依赖该元数据的 Git 命令也会受限；不能为此开放父目录。补丁捕获和受控合并由宿主的 `workspacecoord` 执行，后续可为 Agent 增加专门的 Git capability。
 
-只有显式 `--evaluation-mode --shell-sandbox container` 且进程已位于容器内时，才把文件系统、进程与网络边界委托给外层一次性评测容器；该选项不能写入持久配置，也不能在普通 chat 中启用。容器模式仍过滤凭证，并拒绝无法由外层容器强制隔离的、更窄的子 Agent worktree。Shell 变更和 Diff 快照最多读取 8 MiB，单文件最多 4 MiB，单个内联 Diff 最多 96 KiB；超出后保留变更摘要并返回截断状态或 artifact 引用。WASM 插件继续使用 wazero 独立实例和窄宿主 ABI，适合不可信或用户扩展逻辑；文件、进程等特权能力必须由宿主 Capability/Policy 层显式提供。
+只有显式 `--evaluation-mode --shell-sandbox container` 且进程已位于容器内时，才把文件系统、进程与网络边界委托给外层一次性评测容器。该选项只供评测调用。容器模式仍过滤凭证，并拒绝无法由外层容器强制隔离的、更窄的子 Agent worktree。Shell 变更和 Diff 快照最多读取 8 MiB，单文件最多 4 MiB，单个内联 Diff 最多 96 KiB。超出后保留变更摘要并返回截断状态或 artifact 引用。
 
 ### 恢复与产物保留
 
 - 新 Turn/Flow 使用内容寻址的 Registry ID，包含工具描述、版本、动态实现身份和宿主可执行文件摘要，不再用进程内 generation 判断跨进程身份。同一内容的注册顺序可以改变；工具或程序变化、以及旧 `registry-N` 中断 checkpoint 会明确拒绝恢复，不会猜测兼容。已完成的会话历史仍可读取；先检查之前的副作用，再决定是否新开回合。
 - 同一 session/turn/call 已持久成功时，恢复只返回原结果。有 `tool.started`、但没有成功结果的写入/执行/敏感调用会返回 `OutcomeUnknownError` 并停止自动重放，需要先核对真实外部状态；只读/纯计算调用可以重试。这不等于所有工具具备 exactly-once 语义，也不对新的 call ID 去重。
-- `Conversation.ResumeTurn` 按 durable Goal 阶段恢复：执行已完成但未验收时只做验收；验收结论已保存时复用结论，只有明确的 `continue` 才进入下一轮。继续反馈和部分结果跨重启保留，资源上限不会重新计时。根会话加载后列出中断任务，由用户通过 `/resume <turn-id>` 明确选择；Supervisor 对已委派子任务沿用原 Run ID 自动恢复，不以新 Turn 替代旧任务。
+- `Conversation.ResumeTurn` 按 durable Goal 阶段恢复：执行已完成但未验收时只做验收；验收结论已保存时复用结论，只有明确的 `continue` 才进入下一轮。继续反馈和部分结果跨重启保留，资源上限不会重新计时。根会话加载后提示有中断任务，可用 `/resume` 恢复前台 Turn，或通过 `/resume <turn-id>` 明确选择；Supervisor 对已委派子任务沿用原 Run ID 自动恢复，不以新 Turn 替代旧任务。
 - 新压缩事件同时保存摘要与保留的完整消息后缀，不把尚未提交的新用户输入重复写进历史；工具调用及其结果不会被压缩边界拆开。旧压缩事件继续兼容原有投影语义。
 - Git worktree 的 Agent 结束或合并完成后，保存包含新增、删除和二进制文件的补丁及 `workspace.view_preserved` 事件，原目录保留用于检查。补丁捕获使用私有 Git index，不改动 worker 的暂存区；忽略文件不进补丁，但仍留在目录中。保存失败也不会删除目录。只有没有改动、没有忽略/未跟踪文件、HEAD 未偏离基线的 worktree 才能走普通释放；自动合并授权及产物 GC 不由任务终态隐式触发。默认的 snapshot view 则在 Agent 结束时：无改动直接丢弃；merge 处于 pending/running/conflicted 时保留；合并已应用后丢弃；其余有改动的情况保留目录并记录 `workspace.view_preserved`（含 work digest）。
 
@@ -265,6 +254,10 @@ base_url = "https://2xa.cc.cd/v1"
 api_key_environment = "XAPI_API_KEY"
 reasoning_effort = "medium"
 timeout = "2m"
+# 可选的流式超时覆盖，按阶段计时
+# response_header_timeout = "2m" # 等响应头，默认沿用 timeout
+# stream_idle_timeout = "5m" # 等响应体新字节
+# stream_event_idle_timeout = "5m" # Responses 持续收到字节但没有有效事件
 # 可选：私有 OpenAI-compatible 模型的 tokenizer 编码覆盖，例如 cl100k_base
 # tokenizer_encoding = "cl100k_base"
 
@@ -307,6 +300,8 @@ max_diagnostics_per_file = 5
 max_diagnostics_total = 20
 ```
 
+聊天的流式计时按单次模型请求分段，长任务可跨越这些时长。可用 `--response-header-timeout`、`--stream-idle-timeout` 和 `--stream-event-idle-timeout` 分别覆盖，也可用同名大写 `GSEA_*` 环境变量。显式传入 `--timeout` 会影响非流式请求、流式响应头和字节空闲，专用 CLI 参数优先。模型请求超时后，会话会从原 turn 自动重试一次并复用已确认的工具结果；再遇超时则暂停。见[执行观察与排障](./docs/EXECUTION_OBSERVATION.md)。
+
 上下文窗口默认自动选择：兼容网关 `/models/{id}` 声明的容量优先，其次是内置官方模型目录；无法识别时使用明确标记为 `fallback` 的 32768-token 保护预算，不代表已知模型容量。Ollama 仅从 `/api/ps` 读取已加载模型的实际 `context_length`，不把理论架构窗口当作运行时部署容量，也不套用同名云模型数据。发现请求有 2 秒上限，不发生成探测。标准 OpenAI Models API 不保证提供容量信息，模型别名也不能证明第三方部署的实际容量，因此不能把成功请求的 input tokens 当作最大窗口。
 
 用户仍可用配置文件、配置 Profile、环境变量 `GSEA_CONTEXT_WINDOW_TOKENS` / `GSEA_COMPACTION_TRIGGER_TOKENS` 或同名 CLI 参数设定工作预算；允许覆盖可能过时的目录或 fallback 默认值，但不能超过服务端已明确声明的硬窗口。旧配置中的 `32768` 仍是显式预算；改为 `0` 启用自动模式。窗口和最大输出分别发现、分别标明来源，`max_tokens` 不会被误认为窗口。输出预留自动取 `min(8192, 窗口/4)`，并受已知最大输出约束；显式正数也不能超过已知最大输出。总工作窗口始终保留完整含义，输入预算只扣除一次输出预留与安全余量。
@@ -346,7 +341,9 @@ Task 的 `Contract` 承载 objective、scope、criteria、constraints、verifica
 
 `--timeout` 默认 `2m`。非流式请求使用单次总时限。流式请求等待 HTTP 响应头或读取时连续没有数据达到该时限会暂停，持续有数据的流可以运行更久。Agent 还会在连续四次重复相同工具调用和结果的周期时停止当前 Turn，最多比较长度为三轮的循环。
 
-TTY 环境中的 `chat` 直接启动基于 Bubble Tea 的完整终端 UI，并使用独立的备用屏幕缓冲区隔离 shell 输出：输入框处于 raw terminal 模式，支持多行编辑、历史召回、命令补全、鼠标和 PageUp/PageDown 滚动、transcript 内鼠标拖动复制、实时 reasoning/assistant delta、工具调用状态、Markdown 与多语言代码高亮、窗口缩放和上下文 token 状态栏。状态栏显示 `ctx used / window status`，其中 `exact` 表示本地模型 tokenizer 可用，`provider` 表示已用服务端 `input_tokens` 校准，`estimated`/`unavailable` 表示当前只能估算；当 OpenAI Responses、OpenAI Chat Completions 或 DeepSeek-compatible 响应返回缓存用量时，还会显示缓存 token 数和命中率。非 TTY 输出使用 `cached=` 与 `cache_hit=` 展示同一份 provider usage。上下文达到配置阈值会自动压缩，也可以使用 `/compress` 手动触发同一套持久化压缩策略。使用 `Ctrl+G` 或 `/agents`（`/activity` 为别名）可展开/收起 Team 活动面板，查看 Agent、Task、Workspace View、Lease 和 Merge 状态；面板内 `↑`/`↓` 选择、`Enter`/`o` 打开子 Agent transcript、连按 `x x` 中断、`r` 重新请求合并审批、连按 `d d` 丢弃候选、`Esc` 返回；`/merge` 可将当前已加载的冲突及 resolution task 摘要复制到 transcript；`/diff` 会展开当前 transcript 中所有 unified diff。滚动区域是 Agent 自己维护的 transcript；程序接管终端之前由 Bash 输出的历史属于 shell，应用无法重新读取，退出 TUI 后主屏和 shell 历史会恢复。`Enter` 提交，`Ctrl+J` 插入换行；运行中 `Ctrl+C` 取消当前 turn，空闲时先清空输入、再次按下退出；空输入时 `Ctrl+D` 退出。内置命令为 `/help`、`/session`、`/recoveries`、`/resume <turn-id>`、`/clear`、`/compress`、`/context`、`/reasoning`、`/info`、`/question`、`/agents`（别名 `/activity`）、`/merge`（别名 `/merges`）、`/diff`（别名 `/diffs`）和 `/exit`（别名 `/quit`）。
+TTY 环境中的 `chat` 直接启动基于 Bubble Tea 的完整终端 UI，并使用独立的备用屏幕缓冲区隔离 shell 输出：输入框处于 raw terminal 模式，支持多行编辑、历史召回、命令补全、鼠标和 PageUp/PageDown 滚动、transcript 内鼠标拖动复制、实时 reasoning/assistant delta、工具调用状态、Markdown 与多语言代码高亮、窗口缩放和上下文 token 状态栏。状态栏显示 `ctx used / window status`，其中 `exact` 表示本地模型 tokenizer 可用，`provider` 表示已用服务端 `input_tokens` 校准，`estimated`/`unavailable` 表示当前只能估算；当 OpenAI Responses、OpenAI Chat Completions 或 DeepSeek-compatible 响应返回缓存用量时，还会显示缓存 token 数和命中率。非 TTY 输出使用 `cached=` 与 `cache_hit=` 展示同一份 provider usage。上下文达到配置阈值会自动压缩，也可以使用 `/compress` 手动触发同一套持久化压缩策略。使用 `Ctrl+G` 或 `/agents`（`/activity` 为别名）可展开/收起 Team 活动面板，查看 Agent、Task、Workspace View、Lease 和 Merge 状态；面板内 `↑`/`↓` 选择、`Enter`/`o` 打开子 Agent transcript、连按 `x x` 中断、`r` 重新请求合并审批、连按 `d d` 丢弃候选、`Esc` 返回；`/merge` 可将当前已加载的冲突及 resolution task 摘要复制到 transcript；`/diff` 打开当前记录的 Diff 视图。滚动区域是 Agent 自己维护的 transcript；程序接管终端之前由 Bash 输出的历史属于 shell，应用无法重新读取，退出 TUI 后主屏和 shell 历史会恢复。`Enter` 提交，`Ctrl+J` 插入换行；运行中 `Ctrl+C` 取消当前 turn，空闲时先清空输入、再次按下退出；空输入时 `Ctrl+D` 退出。内置命令为 `/help`、`/session`、`/recoveries`、`/resume [turn-id]`、`/clear`、`/compress`、`/context`、`/reasoning`、`/info`、`/question`、`/agents`（别名 `/activity`）、`/merge`（别名 `/merges`）、`/diff`（别名 `/diffs`）和 `/exit`（别名 `/quit`）。
+
+聊天记录把相邻的已结束工具调用合并为一行，显示调用次数、工具名和失败数。点击该行可查看这组调用，再点某次调用可查看参数、结果和 Diff。单次调用直接打开详情。`Ctrl+O`（或 `Alt+O`）可查看当前 Agent 的工具记录，再按一次回到聊天。详情内用滚轮或方向键浏览，点击上方的 `‹ Back` 或按 `Esc` 逐级返回。需要检查历史中断时，可输入 `/recoveries` 查看详情。
 
 顶部默认显示一行会话标题，点击标题栏、按 `Alt+I` 或输入 `/info` 可展开/收起 model、workspace、session 信息。已命名的 managed Session 沿用名称，普通会话从最早真实提问提取短标题，不额外调用模型；恢复时读取原始事件中的首问，避免标题随上下文压缩改变。浏览长回答时，原问题滚出视口后，顶部导航栏显示它的简短预览；点击该栏、按 `Alt+P` 或输入 `/question` 可跳回提问。会话标题固定，问题导航随阅读位置变化；跳转不改动输入草稿。
 
@@ -426,7 +423,9 @@ API Key 的值不会作为 CLI 参数传递或写入 Session Event。`--api-key-
 go run ./cmd/gsea chat --session chat-20260827T120000Z-0123456789abcdef
 ```
 
-在聊天中使用 `/recoveries` 查看中断任务，使用 `/resume <turn-id>` 恢复指定 Turn。也可直接使用命令行：
+运行 `gsea resume`，选中会话后即可查看历史。直接输入新问题会在该会话创建一个 Turn。模型会收到已完成的对话，以及当前未完成工作的原始请求、最后记录的执行阶段和有界的工具结果摘录。直接输入「继续」或补充条件即可让模型结合这些记录接着做。界面也会显示中断时留下的部分回复，模型使用的是已确认的记录。
+
+输入 `/resume` 可从当前中断的前台 Turn 续跑，沿用原请求和已确认的工具结果。没有明确的前台 Turn 时，可用 `/recoveries` 查看原始请求和 Turn ID，再用 `/resume <turn-id>` 选择。普通聊天输入会按原文发送。宿主程序已经变化的 Turn 需要原来的 GSEA 可执行文件才能原地恢复。核对先前的执行结果后，也可以直接在当前会话描述下一步。
 
 ```bash
 go run ./cmd/gsea chat --session <session-id> --list-recoveries
@@ -448,19 +447,12 @@ go run ./cmd/gsea chat --session SESSION_ID \
 
 此操作只放弃指定 Turn 的恢复，不撤销已经发生的工具副作用，也不会替代 Task、Agent、Flow 或 merge 的生命周期管理。必须提供原因并显式确认，不能与恢复、新 prompt 或 evaluation mode 混用。命令输出 JSON 回执；相同目标和原因重复执行返回原回执，不重复释放。已完成的 Turn 不通过此入口清理。
 
-这是保存在 ATE 中的终止恢复决定，不是撤销副作用或成功验收。它先提交关闭准备记录和原生审计事实，确认权威回执完成后，再释放本地快照引用并删除目标 Turn 的 checkpoint。跨存储步骤可按同一请求继续，不属于同一个数据库事务；本地清理失败不撤销已完成的关闭事实。事件、Task 结果、插件产物和工作区保留。不会退还用量、确认 mailbox 或代替用户取消其他工作。存在非终态子 Agent、团队 Task 或本会话 Flow 时拒绝操作；子会话需走 Supervisor 生命周期，不能强制绕过。该入口不启动模型、WASM 或 Supervisor，没有聊天内 `/abandon` 命令。确认外部状态后，可以显式发起新的工作，但不会复用被放弃的旧执行。
+ATE 保存终止恢复的决定。宿主先提交关闭准备记录和原生审计事实，确认权威回执完成后，再释放本地快照引用并删除目标 Turn 的 checkpoint。本地清理失败可按同一请求继续。事件、Task 结果、用量和工作区保留。存在非终态子 Agent、团队 Task 或本会话 Flow 时拒绝操作，子会话需走 Supervisor 生命周期。确认外部状态后，可以显式发起新的工作。
 
-端到端 WASM 测试会现场编译 `internal/plugin/wasm/testdata/echo`，并验证正常往返和无限循环超时。短测试可使用：
+开发时也可运行短测试。
 
 ```bash
 go test -short ./...
-```
-
-手工插件使用同一固定工具链构建：
-
-```bash
-GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 \
-  go build -buildmode=c-shared -o plugin.wasm ./path/to/plugin
 ```
 
 依赖版本固定在 `go.mod`，包括 OpenAI provider v0.1.13 与 Ollama provider v0.1.9；可复现构建中不使用浮动的 `@latest`。

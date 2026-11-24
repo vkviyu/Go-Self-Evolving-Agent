@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/conversation"
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
@@ -46,10 +47,12 @@ func TestResponsesStreamDiagnosticsAndResumeThroughCLI(t *testing.T) {
 		failedProviderID    = "resp-diagnostics-idle"
 		recoveredProviderID = "resp-diagnostics-recovered"
 		partial             = "unconfirmed reply prefix"
+		comment             = ": upstream keepalive\n"
+		unfinished          = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"unfinished private text"
 		prompt              = "Read fixture.txt and summarize it."
 	)
 	var calls atomic.Int32
-	requests := make(chan []byte, 3)
+	requests := make(chan []byte, 4)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			http.NotFound(w, r) // Optional discovery of model metadata.
@@ -67,7 +70,7 @@ func TestResponsesStreamDiagnosticsAndResumeThroughCLI(t *testing.T) {
 			return
 		}
 		n := calls.Add(1)
-		if n > 3 {
+		if n > 4 {
 			t.Errorf("unexpected Responses request %d", n)
 			http.Error(w, "unexpected request", http.StatusConflict)
 			return
@@ -77,17 +80,23 @@ func TestResponsesStreamDiagnosticsAndResumeThroughCLI(t *testing.T) {
 		switch n {
 		case 1:
 			fmt.Fprint(w, `data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fixture-item","call_id":"fixture-read","name":"workspace_read","arguments":"{\"path\":\"fixture.txt\"}"}}`+"\n\n")
-		case 2:
+		case 2, 3:
 			w.Header().Set("X-Request-ID", failedProviderID)
 			fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\n", partial)
+			fmt.Fprint(w, comment, unfinished)
 			if err := http.NewResponseController(w).Flush(); err != nil {
 				t.Errorf("flush partial model stream: %v", err)
 				return
 			}
+			if n == 2 {
+				if err := os.WriteFile(filepath.Join(workspace, "fixture.txt"), []byte("changed before automatic retry\n"), 0o600); err != nil {
+					t.Errorf("change fixture before retry: %v", err)
+				}
+			}
 			// Keep the body open so this is a read-idle timeout, rather than EOF.
 			<-r.Context().Done()
 			return
-		case 3:
+		case 4:
 			w.Header().Set("X-Request-ID", recoveredProviderID)
 			fmt.Fprint(w, `data: {"type":"response.output_text.delta","delta":"confirmed answer"}`+"\n\n")
 		}
@@ -112,7 +121,7 @@ func TestResponsesStreamDiagnosticsAndResumeThroughCLI(t *testing.T) {
 	stdout, stderr, err := runChat(prompt, "--prompt-file", "-")
 	if err == nil || stdout != "" || !strings.Contains(stderr, "execution paused (transport)") ||
 		!strings.Contains(stderr, "model stream read timed out after 1s") ||
-		!strings.Contains(stderr, "last SSE event response.output_text.delta") || calls.Load() != 2 {
+		!strings.Contains(stderr, "last SSE event response.output_text.delta") || calls.Load() != 3 {
 		t.Fatalf("expected a body-read timeout after one confirmed tool: stdout=%q stderr=%q requests=%d err=%v", stdout, stderr, calls.Load(), err)
 	}
 	// A repeated workspace read would now produce different model input.
@@ -125,18 +134,18 @@ func TestResponsesStreamDiagnosticsAndResumeThroughCLI(t *testing.T) {
 	}
 	var recoveries []conversation.Recovery
 	if err := json.Unmarshal([]byte(stdout), &recoveries); err != nil ||
-		len(recoveries) != 1 || recoveries[0].TurnID == "" || recoveries[0].Phase != "execution" || calls.Load() != 2 {
+		len(recoveries) != 1 || recoveries[0].TurnID == "" || recoveries[0].Phase != "execution" || calls.Load() != 3 {
 		t.Fatalf("expected one original interrupted turn without a provider call: %q, %v", stdout, err)
 	}
 	turnID := recoveries[0].TurnID
-	stdout, stderr, err = runChat("", "--resume-turn", turnID)
+	stdout, stderr, err = runChat("/resume\n/exit\n")
 	var result headlessJSONResult
 	if err != nil || json.Unmarshal([]byte(stdout), &result) != nil || result.Schema != "gsea.chat.result.v1" ||
-		result.Content != "confirmed answer" || calls.Load() != 3 {
+		result.Content != "confirmed answer" || calls.Load() != 4 {
 		t.Fatalf("resume original turn: stdout=%q stderr=%q requests=%d err=%v", stdout, stderr, calls.Load(), err)
 	}
-	initial, failed, recovered := <-requests, <-requests, <-requests
-	if bytes.Contains(initial, []byte(fixtureBody)) || !bytes.Contains(failed, []byte(fixtureBody)) || !bytes.Equal(failed, recovered) {
+	initial, failed, retried, recovered := <-requests, <-requests, <-requests, <-requests
+	if bytes.Contains(initial, []byte(fixtureBody)) || !bytes.Contains(failed, []byte(fixtureBody)) || !bytes.Equal(failed, retried) || !bytes.Equal(failed, recovered) {
 		t.Fatal("expected original failed and resumed requests to carry the same confirmed tool output")
 	}
 
@@ -148,6 +157,57 @@ func TestResponsesStreamDiagnosticsAndResumeThroughCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkResponsesDiagnosticsHistory(t, events, turnID, failedProviderID, recoveredProviderID, partial, secret)
+	traces, err := filepath.Glob(filepath.Join(data, "diagnostics", "*.jsonl"))
+	if err != nil || len(traces) != 2 {
+		t.Fatalf("expected distinct traces for execution and resume, got %d: %v", len(traces), err)
+	}
+	var streams, timeouts, retryEvents int
+	for _, path := range traces {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, private := range []string{prompt, fixtureBody, partial, secret, "upstream keepalive", "unfinished private text", "confirmed answer"} {
+			if bytes.Contains(raw, []byte(private)) {
+				t.Fatal("execution trace retained private payload bytes")
+			}
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		started := make(map[string]bool)
+		for {
+			var event observation.Event
+			if err := decoder.Decode(&event); err != nil {
+				if err != io.EOF {
+					t.Fatal(err)
+				}
+				break
+			}
+			switch event.Name {
+			case "model.request.started":
+				started[event.RequestID] = true
+			case "model.timeout.retry":
+				retryEvents++
+			case "responses.stream":
+				streams++
+				if event.SessionID != string(sessionID) || event.TurnID != turnID || event.AgentID == "" ||
+					event.RequestID == "" || !started[event.RequestID] {
+					t.Fatalf("stream cannot be joined to the model request in this turn: %+v", event.Scope)
+				}
+				if event.Status == "stream_read_timeout" {
+					timeouts++
+					m := event.Metrics
+					if m["comment_bytes"] != int64(len(comment)) || m["unfinished_bytes"] != int64(len(unfinished)) ||
+						m["text_bytes"] != int64(len(partial)) || m["body_bytes"] != m["comment_bytes"]+m["unfinished_bytes"]+m["frame_bytes"] ||
+						event.Labels["last_event"] != "response.output_text.delta" {
+						t.Fatalf("unexpected idle stream accounting: metrics=%v labels=%v", m, event.Labels)
+					}
+				}
+			}
+		}
+	}
+	if streams != 4 || timeouts != 2 || retryEvents != 1 {
+		t.Fatalf("observed %d completed or interrupted streams, %d timeouts, %d retries", streams, timeouts, retryEvents)
+	}
 }
 
 func checkResponsesDiagnosticsHistory(t *testing.T, events []session.Event, turnID, failedProviderID, recoveredProviderID, partial, secret string) {
@@ -168,7 +228,8 @@ func checkResponsesDiagnosticsHistory(t *testing.T, events []session.Event, turn
 	}
 	var (
 		toolResults, userTurns, completedTurns int
-		failedSeen, recoveredSeen              bool
+		failedAttempts                         int
+		recoveredSeen                          bool
 		postToolRequest                        string
 	)
 	for _, event := range events {
@@ -183,7 +244,7 @@ func checkResponsesDiagnosticsHistory(t *testing.T, events []session.Event, turn
 		case session.EventToolSucceeded:
 			toolResults++
 		case session.EventModelRequested:
-			if toolResults != 1 || failedSeen {
+			if toolResults != 1 {
 				continue
 			}
 			var payload struct {
@@ -214,7 +275,7 @@ func checkResponsesDiagnosticsHistory(t *testing.T, events []session.Event, turn
 			}
 			switch diagnostic.RequestID {
 			case failedProviderID:
-				failedSeen = true
+				failedAttempts++
 				if event.Type != session.EventModelFailed || payload.RequestID == "" || payload.RequestID != postToolRequest ||
 					payload.TurnID != turnID || event.CorrelationID != turnID || diagnostic.Status != http.StatusOK ||
 					diagnostic.ContentType != "text/event-stream" || diagnostic.BodyBytes == 0 || diagnostic.Completed ||
@@ -233,8 +294,8 @@ func checkResponsesDiagnosticsHistory(t *testing.T, events []session.Event, turn
 			}
 		}
 	}
-	if toolResults != 1 || userTurns != 1 || completedTurns != 1 || !failedSeen || !recoveredSeen {
-		t.Fatalf("unexpected durable results: tools=%d user_turns=%d completed_turns=%d timeout=%t recovered=%t",
-			toolResults, userTurns, completedTurns, failedSeen, recoveredSeen)
+	if toolResults != 1 || userTurns != 1 || completedTurns != 1 || failedAttempts != 2 || !recoveredSeen {
+		t.Fatalf("unexpected durable results: tools=%d user_turns=%d completed_turns=%d timeouts=%d recovered=%t",
+			toolResults, userTurns, completedTurns, failedAttempts, recoveredSeen)
 	}
 }

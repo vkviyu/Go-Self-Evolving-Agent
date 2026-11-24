@@ -57,20 +57,23 @@ func TestSnapshotRestoreIsOwnedImmutableAndDoesNotActivate(t *testing.T) {
 	ctx := context.Background()
 	store := newSnapshotMemoryStore()
 	oldBinding := testBinding("v1", "old")
-	oldBinding.ImplementationID = "artifact-v1"
+	oldBinding.ImplementationID = "native-fixture"
 	old := identityRegistry(t, oldBinding)
-	if err := old.ConfigurePersistence(store, nil); err != nil {
+	if err := old.ConfigurePersistence(store); err != nil {
 		t.Fatal(err)
 	}
 	if err := old.RetainSnapshot(ctx, old.Snapshot(), SnapshotReference{"turn", "session", "turn"}); err != nil {
 		t.Fatal(err)
 	}
 	identity := requireSnapshotID(t, old)
-	newBinding := testBinding("v2", "new")
-	newBinding.ImplementationID = "artifact-v2"
-	current := identityRegistry(t, newBinding)
+	extra := testBinding("v1", "extra")
+	extra.Descriptor.Name = "extra"
+	current := NewRegistry()
+	if _, err := current.ActivateMany(oldBinding, extra); err != nil {
+		t.Fatal(err)
+	}
 	active := current.Snapshot()
-	if err := current.ConfigurePersistence(store, func(_ context.Context, entry SnapshotEntry) (Binding, error) { return oldBinding, nil }); err != nil {
+	if err := current.ConfigurePersistence(store); err != nil {
 		t.Fatal(err)
 	}
 	var group sync.WaitGroup
@@ -101,6 +104,9 @@ func TestSnapshotRestoreIsOwnedImmutableAndDoesNotActivate(t *testing.T) {
 	if !current.OwnsSnapshot(restored) || current.Snapshot() != active {
 		t.Fatal("restore replaced active snapshot or foreign ownership")
 	}
+	if _, ok := restored.Get("extra"); ok {
+		t.Fatal("restored view exposed a tool absent from the original turn")
+	}
 	if local, ok := current.SnapshotAt(restored.Generation()); !ok || local != restored {
 		t.Fatal("restored generation not owned")
 	}
@@ -126,7 +132,7 @@ func TestSnapshotRestoreRejectsDriftWithoutFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"missing", "host", "native", "resolver", "metadata", "storage", "canceled"} {
+	for _, scenario := range []string{"missing", "host", "revision", "removed", "implementation", "metadata", "storage", "canceled"} {
 		t.Run(scenario, func(t *testing.T) {
 			store := newSnapshotMemoryStore()
 			candidate, err := original.Snapshot().Manifest()
@@ -148,18 +154,19 @@ func TestSnapshotRestoreRejectsDriftWithoutFallback(t *testing.T) {
 			if scenario == "storage" {
 				store.failure = errors.New("read failure")
 			}
-			registry := identityRegistry(t, testBinding("v2", "two"))
-			var resolver BindingResolver
-			if scenario == "resolver" || scenario == "metadata" {
-				wrong := binding
-				if scenario == "resolver" {
-					wrong.ImplementationID = "different code"
-				} else {
-					wrong.Descriptor.RiskClass = RiskWrite
-				}
-				resolver = func(context.Context, SnapshotEntry) (Binding, error) { return wrong, nil }
+			registered := binding
+			switch scenario {
+			case "removed":
+				registered.Descriptor.Name = "other"
+			case "implementation":
+				registered.ImplementationID = "different code"
+			case "metadata":
+				registered.Descriptor.RiskClass = RiskWrite
+			default:
+				registered.Descriptor.Revision = "v2"
 			}
-			if err := registry.ConfigurePersistence(store, resolver); err != nil {
+			registry := identityRegistry(t, registered)
+			if err := registry.ConfigurePersistence(store); err != nil {
 				t.Fatal(err)
 			}
 			active := registry.Snapshot()
@@ -169,8 +176,17 @@ func TestSnapshotRestoreRejectsDriftWithoutFallback(t *testing.T) {
 				callCtx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			if _, err := registry.ResolveSnapshot(callCtx, id); err == nil {
-				t.Fatal("resolved unavailable/drifting snapshot")
+			want := ErrSnapshotUnavailable
+			switch scenario {
+			case "host":
+				want = ErrSnapshotHostChanged
+			case "storage":
+				want = store.failure
+			case "canceled":
+				want = context.Canceled
+			}
+			if _, err := registry.ResolveSnapshot(callCtx, id); !errors.Is(err, want) {
+				t.Fatalf("restore error = %v, want %v", err, want)
 			}
 			if registry.Snapshot() != active || len(registry.snapshots) != 2 {
 				t.Fatal("failure mutated registry")

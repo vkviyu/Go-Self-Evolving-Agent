@@ -41,11 +41,12 @@ func newResponsesModel(config responsesModelConfig) (*responsesModel, error) {
 		return nil, err
 	}
 	return &responsesModel{
-		apiKey:          config.APIKey,
-		model:           config.Model,
-		endpoint:        endpoint,
-		reasoningEffort: reasoningEffort,
-		httpClient:      client,
+		apiKey:                 config.APIKey,
+		model:                  config.Model,
+		endpoint:               endpoint,
+		reasoningEffort:        reasoningEffort,
+		httpClient:             client,
+		streamEventIdleTimeout: config.StreamEventIdleTimeout,
 	}, nil
 }
 
@@ -129,7 +130,8 @@ func (m *responsesModel) Stream(ctx context.Context, input []*schema.Message, op
 		return nil, fmt.Errorf("encode streaming Responses request: %w", err)
 	}
 
-	observation := modeltelemetry.Stream{StartedAt: time.Now().UTC()}
+	observation := responsesObservation{Stream: modeltelemetry.Stream{StartedAt: time.Now().UTC()}}
+	observation.enable(ctx)
 	response, err := m.doResponsesRequest(ctx, payload, &observation)
 	if err != nil {
 		recordResponsesTransport(ctx, &observation, err)
@@ -140,7 +142,8 @@ func (m *responsesModel) Stream(ctx context.Context, input []*schema.Message, op
 	go func() {
 		defer writer.Close()
 		defer response.Body.Close()
-		err := streamResponsesBody(response.Body, writer, &observation)
+		watchdog := startModelEventWatchdog(ctx, m.streamEventIdleTimeout)
+		err := streamResponsesBody(response.Body, writer, &observation, watchdog)
 		recordResponsesTransport(ctx, &observation, err)
 		if err != nil {
 			writer.Send(nil, err)
@@ -317,8 +320,8 @@ func decodeResponsesMessage(body []byte) (*schema.Message, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
-	if response.Error != nil && response.Error.Message != "" {
-		return nil, errors.New(response.Error.Message)
+	if response.Error != nil && (response.Error.Message != "" || response.Error.Code != "") {
+		return nil, responsesProviderFailure(response.Error.Code, response.Error.Message, firstNonEmpty(response.Error.Message, response.Error.Code))
 	}
 	message := schema.AssistantMessage("", nil)
 	for _, rawItem := range response.Output {

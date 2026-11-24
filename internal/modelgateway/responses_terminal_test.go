@@ -10,7 +10,6 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/vkviyu/go-self-evolving-agent/internal/modeltelemetry"
 )
 
 func responseFrames(frames ...string) string {
@@ -28,7 +27,7 @@ func consumeResponseFrames(body io.ReadCloser) ([]*schema.Message, error) {
 	go func() {
 		defer body.Close()
 		defer writer.Close()
-		if err := streamResponsesBody(body, writer, new(modeltelemetry.Stream)); err != nil {
+		if err := streamResponsesBody(body, writer, new(responsesObservation), nil); err != nil {
 			writer.Send(nil, err)
 		}
 	}()

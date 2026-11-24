@@ -51,13 +51,13 @@ func TestRegistryIdentityIgnoresPublicationOrderAndSchemaWhitespace(t *testing.T
 	}
 }
 
-func TestRegistryIdentityRejectsRevisionAndArtifactDrift(t *testing.T) {
+func TestRegistryIdentityRejectsRevisionAndImplementationDrift(t *testing.T) {
 	binding := testBinding("v1", "value")
-	binding.ImplementationID = "wasm:original:timeout:100"
+	binding.ImplementationID = "native:original"
 	id := requireSnapshotID(t, identityRegistry(t, binding))
 	for _, change := range []func(*Binding){
 		func(b *Binding) { b.Descriptor.Revision = "v2" },
-		func(b *Binding) { b.ImplementationID = "wasm:changed:timeout:100" },
+		func(b *Binding) { b.ImplementationID = "native:changed" },
 		func(b *Binding) { b.Descriptor.RiskClass = RiskWrite },
 	} {
 		changed := binding

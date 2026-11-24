@@ -82,7 +82,7 @@ func OpenControl(ctx context.Context, cfg config.Config) (_ *App, resultErr erro
 	bound.storeID = resources.storeID
 	resources.bound = bound
 	a.authority = resources
-	if err := a.controlRepositories(controlReadOnlyPending{}); err != nil {
+	if err := a.controlRepositories(readOnlyAuthorityPending{}); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -286,27 +286,4 @@ type controlLeases struct{ orchestration.LeaseRepository }
 
 func (controlLeases) ReapAbandonedLeases(ctx context.Context) (int, error) {
 	return 0, ctx.Err()
-}
-
-// A rejecting pending store makes accidental writes fail before submission.
-// Authority reads do not need a local SQLite database or pending replay.
-type controlReadOnlyPending struct{}
-
-func (controlReadOnlyPending) Insert(context.Context, aterequest.Record) error {
-	return ateauthority.ErrReadOnly
-}
-func (controlReadOnlyPending) Get(context.Context, api.RequestKey) (aterequest.Record, bool, error) {
-	return aterequest.Record{}, false, ateauthority.ErrReadOnly
-}
-func (controlReadOnlyPending) List(context.Context, aterequest.ListOptions) ([]aterequest.Record, error) {
-	return nil, ateauthority.ErrReadOnly
-}
-func (controlReadOnlyPending) BeginAttempt(context.Context, aterequest.Record) (bool, error) {
-	return false, ateauthority.ErrReadOnly
-}
-func (controlReadOnlyPending) DeleteAcknowledged(context.Context, aterequest.Record, api.CommitResult) error {
-	return ateauthority.ErrReadOnly
-}
-func (controlReadOnlyPending) DeleteRejected(context.Context, aterequest.Record, api.CommitResult) error {
-	return ateauthority.ErrReadOnly
 }

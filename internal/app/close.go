@@ -1,26 +1,21 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 )
 
-func closeOpenResources(database *runtimestore.Database, wasmRuntime *wasm.Runtime, approvalBroker *approval.Broker, diagnostics *lsp.Manager) {
+func closeOpenResources(database *runtimestore.Database, approvalBroker *approval.Broker, diagnostics *lsp.Manager) {
 	if diagnostics != nil {
 		_ = diagnostics.Close()
 	}
 	if approvalBroker != nil {
 		_ = approvalBroker.Close()
-	}
-	if wasmRuntime != nil {
-		_ = wasmRuntime.Close(context.Background())
 	}
 	if database != nil {
 		_ = database.Close()
@@ -41,14 +36,12 @@ func (a *App) Close() error {
 			a.evolutionCancel()
 		}
 		supervisor := a.supervisor
-		plugins := a.plugins
 		diagnostics := a.diagnostics
 		approvalBroker := a.approval
-		wasmRuntime := a.wasm
 		database := a.database
 		a.stateMu.Unlock()
 		if !a.joinEvolution() {
-			// Do not release the database, modules or owner while a worker may
+			// Do not release the database or owner while a worker may
 			// still commit evidence. A wedged provider requires process exit.
 			a.retainUntilExit()
 			a.closeErr = errors.New("evolution worker did not stop; runtime ownership retained until process exit")
@@ -70,11 +63,6 @@ func (a *App) Close() error {
 				closeErrs = append(closeErrs, fmt.Errorf("close Agent supervisor: %w", err))
 			}
 		}
-		if plugins != nil {
-			if err := plugins.Close(context.Background()); err != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("close plugins: %w", err))
-			}
-		}
 		if diagnostics != nil {
 			if err := diagnostics.Close(); err != nil {
 				closeErrs = append(closeErrs, fmt.Errorf("close diagnostics: %w", err))
@@ -83,11 +71,6 @@ func (a *App) Close() error {
 		if approvalBroker != nil {
 			if err := approvalBroker.Close(); err != nil {
 				closeErrs = append(closeErrs, fmt.Errorf("close approval broker: %w", err))
-			}
-		}
-		if wasmRuntime != nil {
-			if err := wasmRuntime.Close(context.Background()); err != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("close WASM runtime: %w", err))
 			}
 		}
 		if a.temporalProcess != nil {

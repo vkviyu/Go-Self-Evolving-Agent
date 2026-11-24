@@ -30,7 +30,7 @@ func TestFlowSnapshotRecoveryReopensExactViewAndReplaysPriorWrite(t *testing.T) 
 		newCalls.Add(1)
 		return json.RawMessage(`{"revision":"new"}`), nil
 	})
-	open := func(binding tool.Binding) (*runtimestore.Database, *tool.Registry, *agentflow.Runtime, orchestration.RootThread) {
+	open := func(bindings ...tool.Binding) (*runtimestore.Database, *tool.Registry, *agentflow.Runtime, orchestration.RootThread) {
 		database, err := runtimestore.OpenRuntime(ctx, path)
 		if err != nil {
 			t.Fatal(err)
@@ -42,11 +42,11 @@ func TestFlowSnapshotRecoveryReopensExactViewAndReplaysPriorWrite(t *testing.T) 
 			t.Fatal(err)
 		}
 		registry := tool.NewRegistry()
-		if _, err := registry.Activate(binding); err != nil {
+		if _, err := registry.ActivateMany(bindings...); err != nil {
 			t.Fatal(err)
 		}
 		snapshots := database.RuntimeSnapshots().WithReferenceGuard(repositories.CheckSnapshotReference)
-		if err := registry.ConfigurePersistence(snapshots, func(context.Context, tool.SnapshotEntry) (tool.Binding, error) { return oldBinding, nil }); err != nil {
+		if err := registry.ConfigurePersistence(snapshots); err != nil {
 			t.Fatal(err)
 		}
 		engine, err := policy.DefaultDeny(policy.Rule{ID: "allow-fixture", ToolPattern: "write_once", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow})
@@ -86,13 +86,22 @@ func TestFlowSnapshotRecoveryReopensExactViewAndReplaysPriorWrite(t *testing.T) 
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	database, registry, runtime, _ := open(newBinding)
-	active := registry.Snapshot()
+	database, _, runtime, _ = open(newBinding)
 	// Omitting the original ID must not silently rebind an existing Flow.
 	if _, err := runtime.Run(ctx, definition, invocation); !errors.Is(err, orchestration.ErrIdempotencyConflict) {
 		t.Fatalf("Flow rebound to latest registry: %v", err)
 	}
 	invocation.RuntimeSnapshotID = first.Run.RuntimeSnapshotID
+	if _, err := runtime.Run(ctx, definition, invocation); !errors.Is(err, tool.ErrSnapshotUnavailable) {
+		t.Fatalf("incompatible tool revision accepted on restart: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	extra := newBinding
+	extra.Descriptor.Name = "extra"
+	database, registry, runtime, _ := open(oldBinding, extra)
+	active := registry.Snapshot()
 	second, err := runtime.Run(ctx, definition, invocation)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +132,7 @@ func (failingFlowSnapshots) Load(context.Context, string) (tool.SnapshotManifest
 
 func TestFlowCannotExecuteBeforeSnapshotIsRetained(t *testing.T) {
 	harness := newFlowHarness(t, nil)
-	if err := harness.registry.ConfigurePersistence(failingFlowSnapshots{}, nil); err != nil {
+	if err := harness.registry.ConfigurePersistence(failingFlowSnapshots{}); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32

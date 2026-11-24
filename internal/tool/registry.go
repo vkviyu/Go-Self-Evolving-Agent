@@ -1,5 +1,4 @@
-// Package tool defines the stable tool registry and execution boundary used by
-// Eino, native tools and WASM plugins.
+// Package tool defines the native tool registry and execution boundary used by Eino.
 package tool
 
 import (
@@ -154,12 +153,11 @@ func (s *Snapshot) Descriptors() []Descriptor {
 
 // Registry publishes copy-on-write snapshots. Existing turns retain their old view.
 type Registry struct {
-	mu              sync.Mutex
-	current         atomic.Pointer[Snapshot]
-	snapshots       map[uint64]*Snapshot
-	generation      uint64
-	snapshotStore   SnapshotStore
-	bindingResolver BindingResolver
+	mu            sync.Mutex
+	current       atomic.Pointer[Snapshot]
+	snapshots     map[uint64]*Snapshot
+	generation    uint64
+	snapshotStore SnapshotStore
 }
 
 // NewRegistry creates an empty generation-zero registry.
@@ -211,11 +209,8 @@ func (r *Registry) ActivateMany(bindingsToActivate ...Binding) (*Snapshot, error
 	return r.ActivateManyWithCommit(nil, bindingsToActivate...)
 }
 
-// PublicationCommit validates ownership and commits durable control-plane
-// state before a new snapshot becomes visible. It runs under the registry
-// publication lock and must not call Registry methods that acquire that lock.
-// An error leaves the current snapshot unchanged; retained snapshots are never
-// modified. The hook must have its own bounded I/O deadline.
+// PublicationCommit lets the host check ownership before a new set of tools
+// becomes visible. It runs under the registry lock. An error rejects the batch.
 type PublicationCommit func(previous, next *Snapshot) error
 
 func (r *Registry) ActivateManyWithCommit(commit PublicationCommit, bindingsToActivate ...Binding) (*Snapshot, error) {
@@ -272,10 +267,6 @@ func (r *Registry) Retire(name, revision string) (*Snapshot, error) {
 // published. This keeps composition-root rollback from exposing a partially
 // retired binding set to a newly created turn.
 func (r *Registry) RetireMany(bindingsToRetire ...Binding) (*Snapshot, error) {
-	return r.RetireManyWithCommit(nil, bindingsToRetire...)
-}
-
-func (r *Registry) RetireManyWithCommit(commit PublicationCommit, bindingsToRetire ...Binding) (*Snapshot, error) {
 	if len(bindingsToRetire) == 0 {
 		return nil, errors.New("at least one tool binding is required")
 	}
@@ -308,11 +299,6 @@ func (r *Registry) RetireManyWithCommit(commit PublicationCommit, bindingsToReti
 		}
 	}
 	next := &Snapshot{generation: r.generation + 1, bindings: bindings}
-	if commit != nil {
-		if err := commit(old, next); err != nil {
-			return nil, err
-		}
-	}
 	r.snapshots[next.generation] = next
 	r.generation = next.generation
 	r.current.Store(next)

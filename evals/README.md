@@ -3,6 +3,13 @@
 `gsea eval` evaluates GSEA as a black-box coding Agent. The task and
 result protocols do not assume a programming language or test framework.
 
+Runtime evaluations need a matching `gsea`/`ate` pair and an isolated ATE
+store; a fresh `--data-dir` alone does not isolate shared ATE history. Build
+from the sibling-module workspace described in the [installation guide](../README.md#安装与运行),
+and set `GSEA_ATE_BINARY` / `GSEA_ATE_DIRECTORY` for the evaluation environment.
+The historical Harbor adapter below has not been migrated from the old
+SQLite export path and is not a working current-runtime recipe.
+
 ## Task protocol
 
 Each line is one `gsea.eval.task.v1` JSON object:
@@ -216,10 +223,13 @@ solver launches the real GSEA executable and places its answer in
 headless approver denies write, edit and shell tools.
 
 ```bash
+go build -o /tmp/ate github.com/vkviyu/agent-temporal-engine/cmd/ate
 go build -o /tmp/gsea ./cmd/gsea
 
 PYTHONPATH="$PWD" \
 GSEA_BINARY=/tmp/gsea \
+GSEA_ATE_BINARY=/tmp/ate \
+GSEA_ATE_DIRECTORY=/tmp/gsea-inspect-ate \
 GSEA_BENCH_DATA_ROOT=/tmp/gsea-inspect-data \
 /tmp/gsea-harnesses/bin/inspect eval \
   evals/inspect_local_smoke.py@local_biology \
@@ -326,9 +336,17 @@ and overwrites `--tasks` with one `directory_copy` task. Its only native check
 is a `patch-produced` general check, so the native `resolved` bit only means
 that a non-empty diff exists.
 
-### Terminal-Bench 2.1 (Harbor 0.22)
+### Terminal-Bench 2.1 (Harbor 0.22, historical adapter)
 
-Build a static Linux executable and use the Harbor 0.22 `BaseAgent` adapter.
+**Blocked for the current ATE-backed runtime.** The adapter still uploads
+only `gsea` and exports usage/trajectory from the retired `sessions.db`
+business tables. It does not provision the matching Linux `ate` binary or
+export native ATE history. Building an extra binary alone does not repair
+this integration. The description and commands below document the earlier
+SQLite-based experiment, not a current installation or acceptance procedure.
+Adapter migration and end-to-end validation remain separate work.
+
+The historical run used a static Linux executable with the Harbor 0.22 `BaseAgent` adapter.
 The dataset reference below is intentionally immutable. The adapter selects
 GSEA's explicit `container` shell boundary only inside the disposable task
 container, exports the full durable token totals, and projects the append-only
@@ -336,7 +354,7 @@ session events to an ATIF v1.7 trajectory for audit. It reads the API key by
 environment-variable name and never writes the secret value into job config or
 command arguments.
 
-`GSEAHarborAgent` uploads the binary to `/opt/gsea/gsea`, runs
+The retained `GSEAHarborAgent` implementation uploads the binary to `/opt/gsea/gsea`, runs
 `chat --evaluation-mode --shell-sandbox container --workspace /app
 --data-dir /tmp/gsea-data` with `GSEA_LSP_ENABLED=false`,
 retries the process only on transient model-stream failures
@@ -352,6 +370,7 @@ ATIF projection (`python -m unittest evals.tests.test_harbor_gsea` in the
 harness environment).
 
 ```bash
+# Historical pre-ATE recipe; not runnable against the current runtime as-is.
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
   go build -o /tmp/gsea-linux ./cmd/gsea
 
@@ -388,7 +407,8 @@ Do not add task filters, timeout multipliers, verifier timeout overrides, or res
 overrides to a comparable run. A one-task or one-attempt run is an integration
 smoke test and its scorecard will explicitly set `comparable: false`. The
 legacy `terminal_bench_gsea.py` adapter remains only for reproducing older
-Terminal-Bench 0.2.x experiments; new results use Harbor.
+Terminal-Bench 0.2.x experiments. New Harbor results require the ATE migration
+and validation noted above.
 
 ### AgentDojo
 

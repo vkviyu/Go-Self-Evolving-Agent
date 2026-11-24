@@ -281,13 +281,10 @@ func requireOwned(databasePath string) error {
 // longer accesses them. Production timeout recovery requires process exit.
 func closeRetainedTestResources(t *testing.T, a *App) {
 	t.Helper()
-	if err := a.plugins.Close(context.Background()); err != nil {
-		t.Error(err)
-	}
 	if err := a.temporalProcess.Close(); err != nil {
 		t.Error(err)
 	}
-	closeOpenResources(a.database, a.wasm, a.approval, a.diagnostics)
+	closeOpenResources(a.database, a.approval, a.diagnostics)
 	for _, owner := range a.sessionOwners {
 		if err := owner.Close(); err != nil {
 			t.Error(err)

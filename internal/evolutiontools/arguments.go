@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-
-	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 )
 
+const maxStrategyArgumentBytes = 256 << 10
+
 func decodeEvolutionArgs(raw []byte, target any) error {
-	if len(raw) > pluginbuild.MaxRequestBytes {
+	if len(raw) > maxStrategyArgumentBytes {
 		return errors.New("candidate request exceeds limit")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))

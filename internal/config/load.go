@@ -16,7 +16,6 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
-	pluginwasm "github.com/vkviyu/go-self-evolving-agent/internal/plugin/wasm"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
 
@@ -46,7 +45,6 @@ type (
 		Agent              fileAgentConfig  `toml:"agent"`
 		Agents             fileAgentsConfig `toml:"agents"`
 		LSP                fileLSPConfig    `toml:"lsp"`
-		WASM               fileWASMConfig   `toml:"wasm"`
 		Usage              fileUsageConfig  `toml:"usage"`
 		ATE                fileATEConfig    `toml:"ate"`
 	}
@@ -59,14 +57,17 @@ type (
 	}
 
 	fileModelConfig struct {
-		Provider          *string `toml:"provider"`
-		WireAPI           *string `toml:"wire_api"`
-		Name              *string `toml:"name"`
-		TokenizerEncoding *string `toml:"tokenizer_encoding"`
-		BaseURL           *string `toml:"base_url"`
-		APIKeyEnvironment *string `toml:"api_key_environment"`
-		ReasoningEffort   *string `toml:"reasoning_effort"`
-		Timeout           *string `toml:"timeout"`
+		Provider               *string `toml:"provider"`
+		WireAPI                *string `toml:"wire_api"`
+		Name                   *string `toml:"name"`
+		TokenizerEncoding      *string `toml:"tokenizer_encoding"`
+		BaseURL                *string `toml:"base_url"`
+		APIKeyEnvironment      *string `toml:"api_key_environment"`
+		ReasoningEffort        *string `toml:"reasoning_effort"`
+		Timeout                *string `toml:"timeout"`
+		ResponseHeaderTimeout  *string `toml:"response_header_timeout"`
+		StreamIdleTimeout      *string `toml:"stream_idle_timeout"`
+		StreamEventIdleTimeout *string `toml:"stream_event_idle_timeout"`
 	}
 
 	fileAgentConfig struct {
@@ -99,13 +100,6 @@ type (
 		DiagnosticTimeout     *string   `toml:"diagnostic_timeout"`
 		MaxDiagnosticsPerFile *int      `toml:"max_diagnostics_per_file"`
 		MaxDiagnosticsTotal   *int      `toml:"max_diagnostics_total"`
-	}
-
-	fileWASMConfig struct {
-		MemoryLimitPages *uint32 `toml:"memory_limit_pages"`
-		MaxBlobBytes     *uint64 `toml:"max_blob_bytes"`
-		MaxCallBytes     *uint64 `toml:"max_call_bytes"`
-		DefaultTimeout   *string `toml:"default_timeout"`
 	}
 
 	// fileUsageConfig is the [usage] table: [usage.prices."provider/model"]
@@ -240,12 +234,12 @@ func Load(options LoadOptions) (Config, error) {
 	if err := applyEnvironment(&config); err != nil {
 		return Config{}, err
 	}
-	config.ATE, err = resolveATE(config)
+	config.ATE, err = config.ResolveATE()
 	if err != nil {
 		return Config{}, err
 	}
 
-	// Check the final merged timeout, iteration, token, child Agent, LSP and WASM settings.
+	// Check the final merged runtime settings.
 	// Zero token limits are allowed and defer to automatic model capacity resolution.
 	// This does not create resources or verify model/provider availability.
 	if err := validate(config); err != nil {
@@ -347,12 +341,6 @@ func builtInConfig(home string) Config {
 			MaxDiagnosticsPerFile: 5,
 			MaxDiagnosticsTotal:   20,
 		},
-		WASM: pluginwasm.Config{
-			MemoryLimitPages: 1024,
-			MaxBlobBytes:     16 << 20,
-			MaxCallBytes:     32 << 20,
-			DefaultTimeout:   30 * time.Second,
-		},
 	}
 }
 
@@ -449,6 +437,9 @@ func applyFileConfig(target *Config, source fileConfig) error {
 		}
 		target.Model.Timeout = duration
 	}
+	if err := applyModelStreamTimeouts(&target.Model, source.Model.ResponseHeaderTimeout, source.Model.StreamIdleTimeout, source.Model.StreamEventIdleTimeout, "model."); err != nil {
+		return err
+	}
 	if source.Agent.Instruction != nil {
 		target.Agent.Instruction = *source.Agent.Instruction
 	}
@@ -536,22 +527,6 @@ func applyFileConfig(target *Config, source fileConfig) error {
 	if source.LSP.MaxDiagnosticsTotal != nil {
 		target.LSP.MaxDiagnosticsTotal = *source.LSP.MaxDiagnosticsTotal
 	}
-	if source.WASM.MemoryLimitPages != nil {
-		target.WASM.MemoryLimitPages = *source.WASM.MemoryLimitPages
-	}
-	if source.WASM.MaxBlobBytes != nil {
-		target.WASM.MaxBlobBytes = *source.WASM.MaxBlobBytes
-	}
-	if source.WASM.MaxCallBytes != nil {
-		target.WASM.MaxCallBytes = *source.WASM.MaxCallBytes
-	}
-	if source.WASM.DefaultTimeout != nil {
-		duration, err := time.ParseDuration(strings.TrimSpace(*source.WASM.DefaultTimeout))
-		if err != nil || duration <= 0 {
-			return fmt.Errorf("wasm.default_timeout must be a positive duration")
-		}
-		target.WASM.DefaultTimeout = duration
-	}
 	applyUsageConfig(&target.Usage, source.Usage)
 	return nil
 }
@@ -592,6 +567,32 @@ func setIfPresent[T any](destination *T, value *T) {
 // and parses booleans, integers and durations. GSEA_MODEL and GSEA_MODEL_BASE_URL
 // take precedence over provider-specific variables. Zero token limits select
 // automatic resolution; errors do not roll back prior assignments.
+func applyModelStreamTimeouts(model *ModelConfig, headers, bytes, events *string, prefix string) error {
+	for _, setting := range []struct {
+		name  string
+		value *string
+		dst   *time.Duration
+	}{
+		{"response_header_timeout", headers, &model.ResponseHeaderTimeout},
+		{"stream_idle_timeout", bytes, &model.StreamIdleTimeout},
+		{"stream_event_idle_timeout", events, &model.StreamEventIdleTimeout},
+	} {
+		if setting.value == nil {
+			continue
+		}
+		duration, err := time.ParseDuration(strings.TrimSpace(*setting.value))
+		if err != nil || duration <= 0 {
+			name := setting.name
+			if prefix == "GSEA_" {
+				name = strings.ToUpper(name)
+			}
+			return fmt.Errorf("%s%s must be a positive duration", prefix, name)
+		}
+		*setting.dst = duration
+	}
+	return nil
+}
+
 func applyEnvironment(target *Config) error {
 	if err := applyATEEnvironment(&target.ATE); err != nil {
 		return err
@@ -646,6 +647,16 @@ func applyEnvironment(target *Config) error {
 			return errors.New("GSEA_TIMEOUT must be a positive duration")
 		}
 		target.Model.Timeout = duration
+	}
+	modelTimeoutEnv := func(name string) *string {
+		value := strings.TrimSpace(os.Getenv("GSEA_" + strings.ToUpper(name)))
+		if value == "" {
+			return nil
+		}
+		return &value
+	}
+	if err := applyModelStreamTimeouts(&target.Model, modelTimeoutEnv("response_header_timeout"), modelTimeoutEnv("stream_idle_timeout"), modelTimeoutEnv("stream_event_idle_timeout"), "GSEA_"); err != nil {
+		return err
 	}
 	if value := strings.TrimSpace(os.Getenv("GSEA_MAX_ITERATIONS")); value != "" {
 		parsed, err := strconv.Atoi(value)
@@ -796,12 +807,12 @@ func validateProfileName(profile string) error {
 	return nil
 }
 
-// validate checks merged timeout, iteration, token, child Agent, LSP, WASM and usage settings.
+// validate checks merged timeout, iteration, token, child Agent, LSP and usage settings.
 // Zero token limits select automatic resolution; an explicit context window must
 // exceed the compaction trigger. It does not create resources, inspect directories
 // or verify model names and provider availability.
 func validate(config Config) error {
-	if _, err := resolveATE(config); err != nil {
+	if _, err := config.ResolveATE(); err != nil {
 		return err
 	}
 	if config.Model.Timeout <= 0 {
@@ -840,9 +851,6 @@ func validate(config Config) error {
 	}
 	if err := config.LSP.Validate(); err != nil {
 		return err
-	}
-	if config.WASM.MemoryLimitPages == 0 || config.WASM.MaxBlobBytes == 0 || config.WASM.MaxCallBytes == 0 || config.WASM.DefaultTimeout <= 0 {
-		return errors.New("wasm limits and timeout must be positive")
 	}
 	for key, price := range config.Usage.Prices {
 		if key == "" || price.InputMicrosPerMillion < 0 || price.CachedInputMicrosPerMillion < 0 || price.OutputMicrosPerMillion < 0 || price.ReasoningMicrosPerMillion < 0 {

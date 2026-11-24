@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,16 @@ import (
 )
 
 func TestTruncatedResponsesStreamPausesAndResumesOriginalTurn(t *testing.T) {
+	t.Run("truncated", func(t *testing.T) {
+		testInterruptedResponsesRecovery(t, false)
+	})
+	t.Run("timeout_retries_automatically", func(t *testing.T) {
+		testInterruptedResponsesRecovery(t, true)
+	})
+}
+
+func testInterruptedResponsesRecovery(t *testing.T, timeout bool) {
+	t.Helper()
 	ctx := t.Context()
 	appConfig := config.Config{DataDirectory: t.TempDir(), WorkspaceDirectory: t.TempDir()}
 
@@ -42,6 +53,13 @@ func TestTruncatedResponsesStreamPausesAndResumesOriginalTurn(t *testing.T) {
 		case 1:
 			requests <- payload
 			fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"unconfirmed text\"}\n\n")
+			if timeout {
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					t.Error(err)
+					return
+				}
+				<-r.Context().Done()
+			}
 		case 2:
 			requests <- payload
 			fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"confirmed answer\"}\n\n")
@@ -81,19 +99,21 @@ func TestTruncatedResponsesStreamPausesAndResumesOriginalTurn(t *testing.T) {
 	}
 	application, chatSession := openChat()
 	result, err := chatSession.RunTurn(ctx, "Explain the parser.", nil)
-	kind, paused := orchestration.ExecutionStopKindOf(err)
-	if !paused || kind != orchestration.ExecutionTransport || result.Final != nil {
-		t.Fatalf("incomplete model stream was not paused: result=%+v err=%v", result, err)
+	if !timeout {
+		kind, paused := orchestration.ExecutionStopKindOf(err)
+		if !paused || kind != orchestration.ExecutionTransport || result.Final != nil {
+			t.Fatalf("incomplete model stream was not paused: result=%+v err=%v", result, err)
+		}
+		if err := application.Close(); err != nil {
+			t.Fatal(err)
+		}
+		_, chatSession = openChat()
+		items, listErr := chatSession.Recoveries(ctx)
+		if listErr != nil || len(items) != 1 || items[0].Phase != "execution" || items[0].TurnID == "" {
+			t.Fatalf("interrupted turn not recoverable: %+v err=%v", items, listErr)
+		}
+		result, err = chatSession.ResumeTurn(ctx, items[0].TurnID, nil)
 	}
-	if err := application.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_, chatSession = openChat()
-	items, err := chatSession.Recoveries(ctx)
-	if err != nil || len(items) != 1 || items[0].Phase != "execution" || items[0].TurnID == "" {
-		t.Fatalf("interrupted turn not recoverable: %+v err=%v", items, err)
-	}
-	result, err = chatSession.ResumeTurn(ctx, items[0].TurnID, nil)
 	if err != nil || result.Final == nil || result.Final.Content != "confirmed answer" || calls.Load() != 2 {
 		t.Fatalf("unexpected recovery: result=%+v calls=%d err=%v", result, calls.Load(), err)
 	}
@@ -270,5 +290,62 @@ func TestTruncatedResponsesAfterConfirmedToolResumesWithoutRepeatingTool(t *test
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResponsesSlowFirstByteKeepsATEAvailable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	cfg := config.Config{ATE: config.ATEConfig{Timeout: 1500 * time.Millisecond}}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Error(err)
+			return
+		}
+		select {
+		case <-time.After(2200 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"slow answer\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	t.Setenv("GSEA_TEST_RECOVERY_KEY", "local-test-only")
+	backend, err := modelgateway.New(ctx, modelgateway.Config{
+		Provider: modelgateway.ProviderOpenAI, WireAPI: modelgateway.WireAPIResponses, Model: "test",
+		BaseURL: server.URL, APIKeyEnvironment: "GSEA_TEST_RECOVERY_KEY", StreamIdleTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := testOpen(t, ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	const id session.ID = "slow-first-byte"
+	root, _, err := app.EnsureRootThread(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory, err := app.NewAgentFactory(backend, agentruntime.Config{ActorScope: root.ActorScope(), MaxOutputTokens: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := conversation.Open(ctx, factory, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := conversation.RunTurn(ctx, "Explain this.", nil)
+	if err != nil || requests.Load() != 1 || result.Final == nil || result.Final.Content != "slow answer" {
+		t.Fatalf("valid slow response could not finish: requests=%d result=%+v err=%v", requests.Load(), result, err)
 	}
 }

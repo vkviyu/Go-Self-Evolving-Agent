@@ -36,22 +36,27 @@ const (
 )
 
 const (
-	defaultOllamaBaseURL = "http://127.0.0.1:11434"
-	defaultTimeout       = 2 * time.Minute
+	defaultOllamaBaseURL          = "http://127.0.0.1:11434"
+	defaultTimeout                = 2 * time.Minute
+	DefaultStreamIdleTimeout      = 5 * time.Minute
+	defaultStreamEventIdleTimeout = 5 * time.Minute
 )
 
 // Config intentionally contains only the environment variable name for a
 // credential, never the credential value itself.
 type Config struct {
-	Provider          Provider
-	WireAPI           WireAPI
-	Model             string
-	TokenizerEncoding string
-	BaseURL           string
-	APIKeyEnvironment string
-	ReasoningEffort   string
-	Timeout           time.Duration
-	HTTPClient        *http.Client
+	Provider               Provider
+	WireAPI                WireAPI
+	Model                  string
+	TokenizerEncoding      string
+	BaseURL                string
+	APIKeyEnvironment      string
+	ReasoningEffort        string
+	Timeout                time.Duration
+	ResponseHeaderTimeout  time.Duration
+	StreamIdleTimeout      time.Duration
+	StreamEventIdleTimeout time.Duration
+	HTTPClient             *http.Client
 }
 
 // NewTokenizer resolves the local model tokenizer without requiring provider
@@ -82,10 +87,25 @@ func newWithLookup(ctx context.Context, config Config, lookup environmentLookup)
 	if config.Model == "" {
 		return nil, errors.New("model name is required")
 	}
+	if config.ResponseHeaderTimeout < 0 || config.StreamIdleTimeout < 0 || config.StreamEventIdleTimeout < 0 {
+		return nil, errors.New("model stream timeouts must be positive when specified")
+	}
+	if config.StreamIdleTimeout == 0 {
+		config.StreamIdleTimeout = config.Timeout // legacy programmatic shorthand
+		if config.StreamIdleTimeout <= 0 {
+			config.StreamIdleTimeout = DefaultStreamIdleTimeout
+		}
+	}
+	if config.StreamEventIdleTimeout == 0 {
+		config.StreamEventIdleTimeout = defaultStreamEventIdleTimeout
+	}
 	if config.Timeout <= 0 {
 		config.Timeout = defaultTimeout
 	}
-	httpClient := modelTimingHTTPClient(config.HTTPClient, config.Timeout)
+	if config.ResponseHeaderTimeout == 0 {
+		config.ResponseHeaderTimeout = config.Timeout
+	}
+	httpClient := modelTimingHTTPClient(config.HTTPClient, config.ResponseHeaderTimeout, config.StreamIdleTimeout)
 	withTiming := func(chatModel model.ToolCallingChatModel) model.ToolCallingChatModel {
 		return &requestTimingModel{
 			ToolCallingChatModel: chatModel,
@@ -123,11 +143,12 @@ func newWithLookup(ctx context.Context, config Config, lookup environmentLookup)
 			return withTiming(chatModel), nil
 		case WireAPIResponses:
 			responsesModel, err := newResponsesModel(responsesModelConfig{
-				APIKey:          apiKey,
-				Model:           config.Model,
-				BaseURL:         config.BaseURL,
-				ReasoningEffort: config.ReasoningEffort,
-				HTTPClient:      httpClient,
+				APIKey:                 apiKey,
+				Model:                  config.Model,
+				BaseURL:                config.BaseURL,
+				ReasoningEffort:        config.ReasoningEffort,
+				HTTPClient:             httpClient,
+				StreamEventIdleTimeout: config.StreamEventIdleTimeout,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("construct OpenAI Responses model: %w", err)

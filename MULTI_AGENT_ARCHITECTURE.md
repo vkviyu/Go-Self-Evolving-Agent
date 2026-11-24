@@ -18,17 +18,18 @@ CLI / TUI / control
 大内容 → 内容寻址 artifact store
 ```
 
-| 责任                                                                             | 当前存储与入口                                                             |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 消息、工具审计、Turn 输入/模型回执和恢复事实                                     | ATE native Session/SessionEvent；`internal/session/atestore`               |
-| Team、Agent、Thread、Task、Mailbox、WaitSet、Goal、Flow、用量、合并与关闭回执    | ATE 逐实体 records；`internal/orchestration/atestore`                      |
-| LoopSpec、策略候选/报告、构建与插件测试证据                                      | ATE records；`internal/evolutionstore`                                     |
-| Eino opaque checkpoint、工具快照清单/本地引用、插件执行字节与 revision、LSP 缓存 | runtime SQLite；`internal/runtimestore`                                    |
-| 未决 ATE 请求                                                                    | runtime SQLite 的 exact request 信封；`internal/aterequest` 负责提交与对账 |
-| 跨实例工作区 lease、实例/子进程存活                                              | `internal/workspacedomain` 的协调库与 flock                                |
-| diff、文件内容等大对象                                                           | `internal/artifact` 的文件系统内容寻址存储                                 |
+| 责任                                                                          | 当前存储与入口                                                             |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 消息、工具审计、Turn 输入/模型回执和恢复事实                                  | ATE native Session/SessionEvent；`internal/session/atestore`               |
+| Team、Agent、Thread、Task、Mailbox、WaitSet、Goal、Flow、用量、合并与关闭回执 | ATE 逐实体 records；`internal/orchestration/atestore`                      |
+| 带来源的跨任务记忆及采用记录                                                  | ATE Memory、Knowledge，经 `internal/experience` 访问                       |
+| LoopSpec、策略候选与影子报告                                                  | ATE records，经 `internal/evolutionstore` 访问                             |
+| Eino opaque checkpoint、工具快照清单与本地引用、LSP 缓存                      | runtime SQLite，由 `internal/runtimestore` 管理                            |
+| 未决 ATE 请求                                                                 | runtime SQLite 的 exact request 信封；`internal/aterequest` 负责提交与对账 |
+| 跨实例工作区 lease、实例/子进程存活                                           | `internal/workspacedomain` 的协调库与 flock                                |
+| diff、文件内容等大对象                                                        | `internal/artifact` 的文件系统内容寻址存储                                 |
 
-`internal/app/open.go` 使用 `OpenRuntime`，装配 native Session、编排和自进化仓储。ATE 通过受管进程及 native client 接入，是必需依赖。runtime SQLite 只保留宿主执行资源和未决请求；当前 `runtime_schema` 为 v1，旧业务库、混合格式和未知格式会被拒绝，不隐式升级或回填业务历史。
+`internal/app/open.go` 使用 `OpenRuntime` 装配本地运行资源，通过受管进程与 native client 连接 ATE。Session、编排事实、策略与记忆各有仓库或服务入口。runtime SQLite 保存执行资源与未决请求，`OpenRuntime` 会拒绝旧业务库、混合格式和未知格式。
 
 单次编排仓储变更在同一 authority batch 中提交实体、领域事件、计数器与 global/stream/team 序号索引。实体直接维护，不提供从事件重建所有状态的 replay/repair 服务。查询走 native 索引/分页；Supervisor 的内存 signal 只负责唤醒，TUI/control 用 cursor 查询事件或重载快照。
 
@@ -42,10 +43,10 @@ CLI / TUI / control
 | Agent / Thread / Run                              | Agent 保存父子关系、Profile 和 Workspace；Thread 对应独立会话历史；Run 标识一次执行，恢复沿用原 Run，新指令另建 Run |
 | Task                                              | 带版本、依赖、claim、attempt 和验证门禁的任务                                                                       |
 | Mailbox / WaitSet                                 | 父子通信、结果投递与子 Agent 持久等待                                                                               |
-| ExecutionContract / Flow                          | Contract 管理验收、预算与截止时间；Flow 管理受控工具流程；均复用原有执行边界                              |
+| ExecutionContract / Flow                          | Contract 管理验收、预算与截止时间；Flow 管理受控工具流程；均复用原有执行边界                                        |
 | `internal/agentmanager`                           | Supervisor、控制工具、调度准入、Task/结果结算                                                                       |
 | `internal/agentprofile`                           | Profile 快照、权限和额度派生                                                                                        |
-| `internal/agentruntime` / `internal/conversation` | Eino Turn、历史、模型回执、Execution binding 与恢复                                                               |
+| `internal/agentruntime` / `internal/conversation` | Eino Turn、历史、模型回执、Execution binding 与恢复                                                                 |
 | `internal/orchestration`                          | 领域契约、状态机和仓储接口；Task/Mailbox 不另设虚构的独立包                                                         |
 | `internal/ateauthority` / `internal/aterequest`   | native batch/CAS 与 exact request 对账                                                                              |
 | `internal/workspacecoord`                         | snapshot/worktree、候选、合并、检查与收尾                                                                           |
@@ -130,7 +131,7 @@ task_add_dependency / task_remove_dependency
 merge_list / merge_run / merge_requeue
 ```
 
-`agent_interrupt` 只有取消语义，并向后代传播；steer、`agent_inspect` 和交互式 Thread 切换仍未实现。`artifact_read`、Flow、Goal 和自进化工具使用相同受控工具管线，但各自拥有独立契约。
+`agent_interrupt` 向后代传播取消。steer、`agent_inspect` 和交互式 Thread 切换仍待实施。`artifact_read`、Flow、`memory_query` 和 `memory_manage` 使用相同的工具管线。记忆写操作需要审批，采用记录绑定宿主提供的 Actor 与调用身份。
 
 ## 5. 恢复与跨提交协议
 
@@ -147,7 +148,7 @@ merge_list / merge_run / merge_requeue
 
 App 持有 runtime 数据库所有权锁，并按 ATE store identity + Session ID 获取共享会话执行锁。Supervisor 只枚举当前持有会话的 Team，reservation、Task claim 和 completion 恢复都受范围约束；共享 ATE 历史不授予全局执行权。
 
-离线归档先获取 runtime 和会话锁再对账；对无法证明作用域的既存、尚未 attempted 请求拒绝自动派发。插件回收使用资源作用域锁。工作区 lease 另由 `workspacedomain` 管理，不能与会话锁混为同一机制。
+离线归档取得 runtime 和会话锁后才对账，无法证明作用域的未派发请求继续保留。工作区 lease 另由 `workspacedomain` 管理。
 
 ### Turn、工具与 Agent 完成
 
@@ -172,7 +173,7 @@ reserved → turn_started → execution_started → consumed
 
 具体顺序由宿主的执行协议决定：先固定 Query Plan/Task 的 ExecutionContract，再绑定 Turn、Execution 和 Step；每个阶段都通过 ATE 事实与 CAS 校验推进。恢复必须读取绑定的实际状态并沿用原身份；缺少完整绑定时进入 unavailable，不能按普通聊天重放。
 
-归档、插件回收和显式放弃也遵循阶段回执：先提交权威关闭/意图，再清理资源或完成后续记录。失败只补相应阶段，不恢复已关闭消费者、不重跑外部副作用。
+归档与显式放弃按阶段取得回执。先提交权威关闭事实，再清理本地恢复引用。失败时仅补做有回执依据的后续步骤。
 
 ## 6. 工作区、合并与安全
 
@@ -211,7 +212,7 @@ Mailbox body 和 Task description 的领域上限为 1 MiB；native 单记录/�
 - Team cancel 尚未提供等待审批的后台 merge 的独立 per-Team 取消/等待生命周期。
 - 未实现 durable 审批、steer、Agent 独立预算、关键路径调度、worktree 池及所有权 epoch/revoking。
 - 未实现分布式 worker、跨机器副作用 exactly-once、任意历史 checkpoint 回滚、自动撤销文件/网络副作用。
-- Linux 实机隔离、编译进程硬 RSS 和宿主总 RSS 上限不能由 macOS 测试推定。
+- Linux 实机隔离、Shell 子进程资源限制和宿主总 RSS 上限不能由 macOS 测试推定；退役扩展编译器不再属于待完善能力。
 
 ## 8. 分阶段路线图
 
@@ -230,13 +231,13 @@ Phase 5 整体尚未实现。评测目标是受预算、权限和冲突约束的
 
 ## 9. 后续验收与待核实
 
-本次仅核对文档与源码，不运行或宣称全量测试通过。并行清理结束后，应使用配套 ATE binary 验证：
+2026-11-24 已运行全量测试：除 CLI 的 `TestControlScopeProductionJSONL` 因 ATE 运行库所有权冲突失败外，其余包通过。build、vet 和 tool/runtimestore/app 定向 race 通过，具体范围见[本轮验证记录](IMPLEMENTATION_REMAINING.md#验证状态与待核实项)。后续变更应继续覆盖以下边界：
 
 1. native batch/CAS、事件分页、同 key 异内容冲突、attempted unknown 不重发、store identity 更换拒绝。
 2. 不同 runtime 共享 ATE 时的 Session 锁、所属 Team claim/reservation/completion 恢复及离线维护作用域。
 3. Execution binding 各阶段崩溃；Session 与 authority 分别失败；Turn 失败与策略回退分别失败。
 4. checkpoint 缺失、模型回执恢复、工具 OutcomeUnknown、WaitSet 取消/超时、Mailbox 重复投递。
 5. reviewer/attempt 校验、细化/改派安全、候选冻结、snapshot apply 中断、检查 dispatched 后未知。
-6. 关闭/归档与本地资源清理的阶段间失败、插件共享引用和 tombstone、取消时资源所有权保留。
+6. 关闭/归档与本地快照引用释放之间的失败、关闭后的恢复准入、取消时资源所有权保留。
 
-对应测试集中于 `internal/orchestration/atestore`、`internal/session/atestore`、`internal/aterequest`、`internal/app`、`internal/agentmanager`、`internal/agentruntime`、`internal/conversation` 和 `internal/workspacecoord`。旧 SQL 升级测试与过去的全库通过记录不能作为当前验收证据；runtime 资源包最终命名及遗留源文件删除范围由源码清理结果确认。
+对应测试集中于 `internal/orchestration/atestore`、`internal/session/atestore`、`internal/aterequest`、`internal/app`、`internal/agentmanager`、`internal/agentruntime`、`internal/conversation` 和 `internal/workspacecoord`，本地执行资源由 `internal/runtimestore` 管理。旧 SQL 升级测试与过去的全库通过记录不能作为当前验收证据。

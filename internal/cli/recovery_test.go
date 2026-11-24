@@ -16,8 +16,8 @@ import (
 )
 
 type headlessRecoveryFake struct {
-	runs, resumes int
-	resumedID     string
+	runs, resumes, inspections int
+	resumedID                  string
 }
 
 func (*headlessRecoveryFake) ID() session.ID      { return "recovery-session" }
@@ -26,7 +26,8 @@ func (fake *headlessRecoveryFake) RunTurn(context.Context, string, agentruntime.
 	fake.runs++
 	return agentruntime.Result{}, nil
 }
-func (*headlessRecoveryFake) Recoveries(context.Context) ([]conversation.Recovery, error) {
+func (fake *headlessRecoveryFake) Recoveries(context.Context) ([]conversation.Recovery, error) {
+	fake.inspections++
 	return []conversation.Recovery{{TurnID: "original", Phase: "assessment"}}, nil
 }
 func (fake *headlessRecoveryFake) ResumeTurn(_ context.Context, id string, _ agentruntime.EventSink) (agentruntime.Result, error) {
@@ -41,7 +42,7 @@ func TestHeadlessResumeIsAnOperationNotANewPrompt(t *testing.T) {
 			fake := &headlessRecoveryFake{}
 			var stdout, stderr bytes.Buffer
 			err := runHeadlessChat(context.Background(), strings.NewReader("/recoveries\n/resume original\n/exit\n"), &stdout, &stderr, fake, chatOptions{headlessFormat: format})
-			if err != nil || fake.runs != 0 || fake.resumes != 1 || fake.resumedID != "original" {
+			if err != nil || fake.inspections != 1 || fake.runs != 0 || fake.resumes != 1 || fake.resumedID != "original" {
 				t.Fatalf("dispatch=%#v err=%v", fake, err)
 			}
 			if !strings.Contains(stdout.String(), "assessment") || !strings.Contains(stdout.String(), "recovered result") {

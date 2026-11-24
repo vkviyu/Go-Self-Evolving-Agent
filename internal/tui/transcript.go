@@ -60,6 +60,9 @@ type transcriptBlock struct {
 	cachedToolName          string
 	cachedToolArguments     string
 	cachedToolResult        string
+	cachedFailureName       string
+	cachedFailureResult     string
+	cachedFailure           string
 	cachedApprovalReason    string
 	cachedArgumentsExpanded bool
 	cachedResultExpanded    bool
@@ -67,13 +70,13 @@ type transcriptBlock struct {
 	cachedApproval          approvalState
 	cachedApprovalChoice    int
 	cachedOutput            string
-	toolGroupExpanded       bool
 }
 
 type transcriptPart struct {
 	rendered string
 	block    *transcriptBlock
 	index    int
+	toolEnd  int // exclusive block index for a clickable tool header
 }
 
 func blocksFromHistory(messages []*schema.Message) []transcriptBlock {
@@ -110,9 +113,6 @@ func blocksFromHistory(messages []*schema.Message) []transcriptBlock {
 			if index, ok := toolBlocks[message.ToolCallID]; ok {
 				blocks[index].toolResult = message.Content
 				blocks[index].pending = false
-				if hasDiffPayload(message.Content) {
-					blocks[index].resultExpanded = true
-				}
 				continue
 			}
 			content := message.Content
@@ -122,9 +122,6 @@ func blocksFromHistory(messages []*schema.Message) []transcriptBlock {
 				toolResult = message.Content
 			}
 			block := transcriptBlock{kind: blockTool, content: content, toolName: message.ToolName, toolResult: toolResult}
-			if hasDiffPayload(toolResult) {
-				block.resultExpanded = true
-			}
 			blocks = append(blocks, block)
 		}
 	}
@@ -135,10 +132,10 @@ func (model *Model) refreshTranscript(forceBottom bool) {
 	if !model.ready {
 		return
 	}
-	if forceBottom {
+	if forceBottom && model.toolInspector == nil {
 		model.autoScroll = true
 	}
-	follow := model.autoScroll
+	follow := model.autoScroll && model.toolInspector == nil
 	position := model.readingPosition()
 	transcriptParts := model.transcriptParts()
 	content, layout, queries := layoutTranscriptParts(transcriptParts)
@@ -157,22 +154,26 @@ func (model *Model) refreshTranscript(forceBottom bool) {
 
 func (model *Model) transcriptParts() []transcriptPart {
 	blocks := model.displayBlocks()
+	if model.toolInspector != nil {
+		return model.toolInspectionParts(blocks)
+	}
 	parts := make([]transcriptPart, 0, len(blocks))
 	for index := 0; index < len(blocks); index++ {
 		block := &blocks[index]
 		if block.kind == blockReasoning && !model.showReasoning {
 			continue
 		}
-		if isCompletedToolBlock(block) && !block.toolGroupExpanded {
+		if isCompletedToolBlock(block) {
 			end := index + 1
 			for end < len(blocks) && isCompletedToolBlock(&blocks[end]) {
 				end++
 			}
-			if end-index > 1 && (end == len(blocks) || !isCompactToolBlock(&blocks[end])) {
+			if end-index > 1 {
 				parts = append(parts, transcriptPart{
 					rendered: ansi.Hardwrap(model.renderToolGroupSummary(blocks[index:end]), max(1, model.viewport.Width), true),
 					block:    block,
 					index:    index,
+					toolEnd:  end,
 				})
 				index = end - 1
 				continue
@@ -183,7 +184,11 @@ func (model *Model) transcriptParts() []transcriptPart {
 			// wider than its wrap setting. Viewport clips such lines horizontally;
 			// normalize cell width here before counting lines or storing anchors.
 			rendered = scopeFileLinksByLine(ansi.Hardwrap(rendered, max(1, model.viewport.Width), true))
-			parts = append(parts, transcriptPart{rendered: rendered, block: block, index: index})
+			part := transcriptPart{rendered: rendered, block: block, index: index}
+			if isCompactToolBlock(block) && (block.toolArguments != "" || block.toolResult != "") {
+				part.toolEnd = index + 1
+			}
+			parts = append(parts, part)
 		}
 	}
 	return parts
@@ -201,7 +206,7 @@ func layoutTranscriptParts(parts []transcriptPart) (string, []transcriptSpan, []
 			line += strings.Count(separator, "\n")
 		}
 		height := strings.Count(part.rendered, "\n") + 1
-		spans = append(spans, transcriptSpan{blockIndex: part.index, start: line, end: line + height})
+		spans = append(spans, transcriptSpan{blockIndex: part.index, start: line, end: line + height, toolEnd: part.toolEnd})
 		if part.block != nil && part.block.kind == blockUser {
 			queries = append(queries, queryAnchor{start: line, end: line + height, preview: singleLinePreview(part.block.content, 160)})
 		}
@@ -220,13 +225,19 @@ func isCompletedToolBlock(block *transcriptBlock) bool {
 
 func (model *Model) renderToolGroupSummary(group []transcriptBlock) string {
 	failures := 0
+	counts := make(map[string]int)
+	var names []string
 	for index := range group {
 		block := &group[index]
 		name := strings.TrimSpace(block.toolName)
 		if name == "" {
-			name = strings.TrimSpace(block.content)
+			name = "Tool result"
 		}
-		if toolFailureSummary(name, block.toolResult) != "" {
+		if counts[name] == 0 {
+			names = append(names, name)
+		}
+		counts[name]++
+		if block.failureSummary() != "" {
 			failures++
 		}
 	}
@@ -234,6 +245,22 @@ func (model *Model) renderToolGroupSummary(group []transcriptBlock) string {
 	if failures > 0 {
 		label += fmt.Sprintf(" · %d failed", failures)
 	}
+	var previews []string
+	for _, name := range names[:min(len(names), 3)] {
+		preview := singleLinePreview(name, 45)
+		if counts[name] > 1 {
+			preview += fmt.Sprintf(" ×%d", counts[name])
+		}
+		previews = append(previews, preview)
+	}
+	if len(names) > len(previews) {
+		previews = append(previews, "…")
+	}
+	if len(previews) > 0 {
+		label += " · " + strings.Join(previews, ", ")
+	}
+	// Keep the disclosure and failure count visible even in a narrow terminal.
+	label = ansi.Truncate(label, max(1, model.viewport.Width-5), "…")
 	return model.styles.toolHeader.Render("• " + label + "  ▸")
 }
 
@@ -313,14 +340,19 @@ func highlightSelection(line string, left, right int, style lipgloss.Style) stri
 }
 
 func (model *Model) renderBlock(block *transcriptBlock) string {
+	return model.renderBlockWithDetails(block, block.argumentsExpanded, block.resultExpanded)
+}
+
+func (model *Model) renderBlockWithDetails(block *transcriptBlock, arguments, result bool) string {
 	width := max(12, model.viewport.Width-3)
-	if block.cachedContent == block.content && block.cachedToolName == block.toolName && block.cachedToolArguments == block.toolArguments && block.cachedToolResult == block.toolResult && block.cachedApprovalReason == block.approvalReason && block.cachedArgumentsExpanded == block.argumentsExpanded && block.cachedResultExpanded == block.resultExpanded && block.cachedWidth == width && block.cachedApproval == block.approvalState && (block.approvalState != approvalPending || block.cachedApprovalChoice == model.approvalChoice) {
+	if block.cachedContent == block.content && block.cachedToolName == block.toolName && block.cachedToolArguments == block.toolArguments && block.cachedToolResult == block.toolResult && block.cachedApprovalReason == block.approvalReason && block.cachedArgumentsExpanded == arguments && block.cachedResultExpanded == result && block.cachedWidth == width && block.cachedApproval == block.approvalState && (block.approvalState != approvalPending || block.cachedApprovalChoice == model.approvalChoice) {
 		return block.cachedOutput
 	}
 	// Sanitize a private presentation view, never the durable transcript. Host
 	// styling and file links are applied after removing untrusted commands.
 	original := block
 	safe := *block
+	safe.argumentsExpanded, safe.resultExpanded = arguments, result
 	safe.content = render.PlainText(block.content)
 	safe.toolName = render.PlainText(block.toolName)
 	safe.toolArguments = render.PlainText(block.toolArguments)
@@ -371,7 +403,7 @@ func (model *Model) renderBlock(block *transcriptBlock) string {
 		body = ansi.Hardwrap(block.content, width, false)
 	}
 	if block.kind == blockTool || block.kind == blockApproval {
-		if failure := toolFailureSummary(block.toolName, block.toolResult); failure != "" {
+		if failure := original.failureSummary(); failure != "" {
 			// Permission to execute is not evidence of successful execution.
 			// Keep failures visible even when the argument/result panes collapse.
 			marker, markerStyle = "!", model.styles.failure
@@ -388,8 +420,8 @@ func (model *Model) renderBlock(block *transcriptBlock) string {
 	block.cachedToolArguments = block.toolArguments
 	block.cachedToolResult = block.toolResult
 	block.cachedApprovalReason = block.approvalReason
-	block.cachedArgumentsExpanded = block.argumentsExpanded
-	block.cachedResultExpanded = block.resultExpanded
+	block.cachedArgumentsExpanded = arguments
+	block.cachedResultExpanded = result
 	block.cachedWidth = width
 	block.cachedApproval = block.approvalState
 	block.cachedApprovalChoice = model.approvalChoice

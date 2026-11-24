@@ -40,11 +40,5 @@ func (conversation *Conversation) RunBackgroundTurn(ctx context.Context, sink ag
 		return agentruntime.Result{}, err
 	}
 	result, err := turn.RunBackground(ctx, messages[:len(messages)-1], input, sink)
-	if err != nil {
-		return agentruntime.Result{}, err
-	}
-	if err := conversation.refreshHistory(ctx, "refresh session history"); err != nil {
-		return agentruntime.Result{}, err
-	}
-	return result, nil
+	return conversation.finishTurnExecution(ctx, turn.ID(), sink, result, err)
 }

@@ -19,9 +19,6 @@ func parseEvolutionOptions(command string, args []string, output io.Writer) (con
 	case "maintenance":
 		options, err := parseMaintenanceOptions(args, output)
 		return options.config, options.action, err
-	case "plugins":
-		options, err := parsePluginOptions(args, output)
-		return options.config, options.action, err
 	case "strategy":
 		options, err := parseStrategyOptions(args, output)
 		return options.config, options.action, err
@@ -47,16 +44,6 @@ func TestEvolutionOptionsAcceptEveryOperationWithoutOpeningRuntime(t *testing.T)
 		{"maintenance", []string{"plan", "--session", "owner", "--confirm=false"}},
 		{"maintenance", []string{"archive", "--session", "owner", "--plan-id", "plan", "--confirm"}},
 		{"maintenance", []string{"compact", "--confirm"}},
-		{"plugins", []string{"list"}},
-		{"plugins", []string{"build", "--request", "not-read-yet.json"}},
-		{"plugins", []string{"inspect-build", "--build-id", "build"}},
-		{"plugins", []string{"stage", "--manifest", "not-read-yet.json", "--wasm", "not-read-yet.wasm"}},
-		{"plugins", []string{"test", "--tool", "extension_test", "--revision", "v1", "--cases", "not-read-yet.json"}},
-		{"plugins", []string{"activate", "--tool", "extension_test", "--revision", "v1", "--report-id", "report", "--confirm"}},
-		{"plugins", []string{"rollback", "--tool", "extension_test", "--revision", "v1", "--report-id", "report", "--confirm"}},
-		{"plugins", []string{"retire", "--tool", "extension_test", "--revision", "v1", "--confirm"}},
-		{"plugins", []string{"gc-plan", "--tool", "extension_test", "--revision", "v1"}},
-		{"plugins", []string{"collect", "--tool", "extension_test", "--revision", "v1", "--plan-id", "plan", "--confirm"}},
 		{"strategy", []string{"propose", "--file", "not-read-yet.json"}},
 		{"strategy", []string{"suite", "--file", "not-read-yet.json", "--confirm"}},
 		{"strategy", []string{"inspect", "--candidate-id", "candidate"}},
@@ -92,19 +79,8 @@ func TestEvolutionOptionsPreserveValidationErrorsAndStopBeforeExecution(t *testi
 		{"maintenance", []string{"plan", "--session", "owner", "--confirm"}, "plan requires --session only; it does not apply changes"},
 		{"maintenance", []string{"archive", "--session", "owner", "--plan-id", "plan"}, "archive requires --session, --plan-id and --confirm"},
 		{"maintenance", []string{"compact", "--confirm", "--session", "owner"}, "compact requires --confirm and does not accept session/plan selection"},
-		{"plugins", nil, "plugins requires list, stage, build, inspect-build, test, activate, retire, rollback, gc-plan or collect"},
-		{"plugins", []string{"unknown"}, "unknown plugins operation"},
-		{"plugins", []string{"list", "extra"}, "plugins accepts no positional arguments"},
-		{"plugins", []string{"list", "--confirm=false"}, "--confirm is not valid for plugins list"},
-		{"plugins", []string{"stage", "--tool", "extension_test"}, "--tool is not valid for plugins stage"},
-		{"plugins", []string{"test"}, "operation requires exact --tool and --revision"},
-		{"plugins", []string{"activate", "--tool", "extension_test", "--revision", "v1", "--confirm"}, "publication requires --report-id and --confirm"},
-		{"plugins", []string{"retire", "--tool", "extension_test", "--revision", "v1"}, "operation requires --confirm"},
-		{"plugins", []string{"collect", "--tool", "extension_test", "--revision", "v1", "--confirm"}, "collection requires --plan-id"},
-		{"plugins", []string{"build"}, "build requires --request"},
-		{"plugins", []string{"inspect-build"}, "inspect-build requires --build-id"},
-		{"plugins", []string{"stage"}, "stage requires --manifest and --wasm"},
-		{"plugins", []string{"test", "--tool", "extension_test", "--revision", "v1"}, "test requires --cases"},
+		{"maintenance", []string{"gc-plan"}, "unknown maintenance operation"},
+		{"maintenance", []string{"collect"}, "unknown maintenance operation"},
 		{"strategy", nil, "strategy requires propose, suite, inspect, report, shadow, publish or rollback"},
 		{"strategy", []string{"unknown"}, "unknown strategy operation"},
 		{"strategy", []string{"inspect", "extra"}, "flags do not match strategy operation"},
@@ -139,7 +115,7 @@ func TestEvolutionOptionsPreserveValidationErrorsAndStopBeforeExecution(t *testi
 
 func TestEvolutionHelpDoesNotOpenRuntime(t *testing.T) {
 	t.Setenv(config.HomeEnvironment, t.TempDir())
-	for _, tc := range []struct{ command, action string }{{"maintenance", "plan"}, {"plugins", "stage"}, {"strategy", "shadow"}} {
+	for _, tc := range []struct{ command, action string }{{"maintenance", "plan"}, {"strategy", "shadow"}} {
 		data := filepath.Join(t.TempDir(), "unopened")
 		args := []string{tc.action, "--data-dir", data, "--help"}
 		var help bytes.Buffer
@@ -153,5 +129,27 @@ func TestEvolutionHelpDoesNotOpenRuntime(t *testing.T) {
 		if _, err := os.Stat(data); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("help opened runtime: %v", err)
 		}
+	}
+}
+
+func TestRemovedCommandIsAbsentFromHelpAndDispatch(t *testing.T) {
+	var out, log bytes.Buffer
+	ctx := context.Background()
+	if code := runWithDependencies(ctx, []string{"help"}, unreadAbandonmentInput{t}, &out, &log, dependencies{}); code != 0 {
+		t.Fatalf("help exit=%d stderr=%s", code, log.String())
+	}
+	help := out.String()
+	for _, command := range []string{"strategy", "maintenance", "doctor"} {
+		if !strings.Contains(help, "  "+command+" ") {
+			t.Errorf("missing %s in help: %s", command, help)
+		}
+	}
+	if strings.Contains(help, "plugins") {
+		t.Fatalf("obsolete command in help: %s", help)
+	}
+	out.Reset()
+	log.Reset()
+	if code := runWithDependencies(ctx, []string{"plugins", "list"}, unreadAbandonmentInput{t}, &out, &log, dependencies{}); code != 2 || out.Len() != 0 || !strings.Contains(log.String(), `unknown command "plugins"`) {
+		t.Fatalf("exit=%d stdout=%s stderr=%s", code, out.String(), log.String())
 	}
 }

@@ -61,21 +61,13 @@ func discoverChatSessions(ctx context.Context, resolved config.Config, options c
 	if err != nil {
 		return nil, err
 	}
-	registry, err := app.OpenSessionRegistry(ctx, resolved)
+	entries, histories, err := app.ReadChatCatalog(ctx, resolved, "", true)
 	if err != nil {
-		return nil, err
-	}
-	entries, listErr := registry.List(ctx)
-	if err := errors.Join(listErr, registry.Close()); err != nil {
 		return nil, err
 	}
 	registered := make(map[string]sessionregistry.Session, len(entries))
 	for _, item := range entries {
 		registered[item.ID] = item
-	}
-	histories, err := app.DiscoverChats(ctx, resolved, "")
-	if err != nil {
-		return nil, err
 	}
 	result := make([]sessionregistry.Session, 0, len(histories))
 	for _, history := range histories {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
@@ -22,12 +23,25 @@ type TurnRecord struct {
 	LoopStopped             bool
 	HasCheckpoint           bool
 	HasJournal              bool
+	ForegroundSequence      uint64
+	Background              bool
+	HasUserInput            bool
+	OpeningPreview          string
+	RuntimeSnapshotID       string
+	StartedSequence         uint64
+	CompletedSequence       uint64
 }
 
 // RequiresExecutionRecovery prevents an old admitted turn from being silently
 // resumed as ordinary chat.
 func (record TurnRecord) RequiresExecutionRecovery() bool {
 	return record.LegacyAdmissionRecord || record.ExecutionAdmissionToken != ""
+}
+
+// IsForegroundRequest identifies an opening user request, including starts
+// that predate the durable foreground marker.
+func (record TurnRecord) IsForegroundRequest() bool {
+	return !record.Background && record.RunID == "" && record.HasUserInput
 }
 
 func (f *Factory) CheckTurnRecovery(ctx context.Context, id session.ID, turnID string) error {
@@ -44,6 +58,19 @@ func (f *Factory) TurnRecords(ctx context.Context, id session.ID) ([]TurnRecord,
 	return LoadTurnRecords(ctx, f.events, f.checkpoints, id)
 }
 
+// CheckSnapshotHost performs the read-only host check used by recovery listings.
+func (f *Factory) CheckSnapshotHost(ctx context.Context, snapshotID string) error {
+	return f.registry.CheckSnapshotHost(ctx, snapshotID)
+}
+
+// SelectForegroundTurn persists the host's decision to resume an existing turn.
+func (f *Factory) SelectForegroundTurn(ctx context.Context, id session.ID, turnID string) error {
+	_, err := f.events.Append(ctx, id, session.AnySequence, session.PendingEvent{
+		Type: session.EventTurnForegroundSelected, CorrelationID: turnID, Payload: session.MustJSONPayload(struct{}{}),
+	})
+	return err
+}
+
 // LoadTurnRecords needs only read ports, not a model or executable registry.
 func LoadTurnRecords(ctx context.Context, events session.EventStore, checkpoints session.CheckpointStore, id session.ID) ([]TurnRecord, error) {
 	var records []TurnRecord
@@ -58,26 +85,57 @@ func LoadTurnRecords(ctx context.Context, events session.EventStore, checkpoints
 				Journal         *turnJournal        `json:"journal"`
 				LegacyAdmission bool                `json:"goal_mode"`
 				AdmissionToken  string              `json:"admission_token"`
+				Input           string              `json:"input"`
+				Foreground      bool                `json:"foreground"`
 			}
 			if err := json.Unmarshal(event.Payload, &metadata); err != nil {
 				return err
 			}
 			indices[event.CorrelationID] = len(records)
-			records = append(records, TurnRecord{TurnID: event.CorrelationID, RunID: metadata.RunID, LegacyAdmissionRecord: metadata.LegacyAdmission, ExecutionAdmissionToken: metadata.AdmissionToken, HasJournal: metadata.Journal != nil && metadata.Journal.Version == 1 && len(metadata.Journal.Input) > 0})
+			record := TurnRecord{
+				TurnID: event.CorrelationID, RunID: metadata.RunID, LegacyAdmissionRecord: metadata.LegacyAdmission,
+				ExecutionAdmissionToken: metadata.AdmissionToken, Background: metadata.Input == TurnInputBackground,
+				RuntimeSnapshotID: event.RuntimeSnapshotID,
+				StartedSequence:   event.Sequence,
+				HasJournal:        metadata.Journal != nil && metadata.Journal.Version == 1 && len(metadata.Journal.Input) > 0,
+			}
+			if metadata.Foreground {
+				record.ForegroundSequence = event.Sequence
+			}
+			records = append(records, record)
 		} else if index, exists := indices[event.CorrelationID]; exists {
+			record := &records[index]
 			switch event.Type {
+			case session.EventTurnForegroundSelected:
+				record.ForegroundSequence = event.Sequence
+			case session.EventUserMessage:
+				var payload struct {
+					Content string `json:"content"`
+				}
+				if err := json.Unmarshal(event.Payload, &payload); err != nil {
+					return err
+				}
+				record.HasUserInput = true
+				if input := strings.TrimSpace(payload.Content); input != "" {
+					preview := []rune(strings.Join(strings.Fields(input), " "))
+					if len(preview) > 80 {
+						preview = append(preview[:79], '…')
+					}
+					record.OpeningPreview = string(preview)
+				}
 			case session.EventTurnCompleted:
-				records[index].Completed = true
+				record.Completed = true
+				record.CompletedSequence = event.Sequence
 			case session.EventTurnAbandoned:
-				records[index].Abandoned = true
+				record.Abandoned = true
 			case session.EventTurnArchived:
-				records[index].Archived = true
+				record.Archived = true
 			case session.EventTurnFailed:
 				code, err := event.TurnFailureCode()
 				if err != nil {
 					return err
 				}
-				records[index].LoopStopped = records[index].LoopStopped || code == session.TurnFailureToolCycle
+				record.LoopStopped = record.LoopStopped || code == session.TurnFailureToolCycle
 			}
 		}
 		return nil

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
@@ -69,6 +70,8 @@ func (supervisor *Supervisor) run(ctx context.Context, agent orchestration.Agent
 		supervisor.signal()
 		return
 	}
+	ctx = observeAgentScope(ctx, running)
+	observation.Emit(ctx, observation.Event{Component: "supervisor", Name: "agent.run.started"})
 	if err := supervisor.startAssignedTask(ctx, running); err != nil {
 		supervisor.finish(running, orchestration.AgentResult{Status: orchestration.ResultFailed, Error: err.Error()}, err)
 		return
@@ -210,6 +213,7 @@ func (supervisor *Supervisor) executeRun(ctx context.Context, agent orchestratio
 			supervisor.finish(agent, orchestration.AgentResult{Status: orchestration.ResultFailed, Error: err.Error()}, err)
 			return orchestration.AgentResult{}, err, true
 		}
+		observation.Emit(ctx, observation.Event{Component: "supervisor", Name: "agent.run.suspended"})
 		supervisor.removeRunner(agent.ID)
 		supervisor.signal()
 		supervisor.startAvailable()
@@ -251,6 +255,7 @@ func (supervisor *Supervisor) finish(agent orchestration.AgentSnapshot, result o
 // finishContext keeps synchronous recovery on its caller's storage process.
 // Live workers use finish so cancellation still permits bounded settlement.
 func (supervisor *Supervisor) finishContext(ctx context.Context, agent orchestration.AgentSnapshot, result orchestration.AgentResult, runErr error) error {
+	ctx = observeAgentScope(ctx, agent)
 	supervisor.settlement.Lock()
 	defer supervisor.settlement.Unlock()
 	current, err := supervisor.agents.GetAgent(ctx, agent.ID)
@@ -266,6 +271,9 @@ func (supervisor *Supervisor) finishContext(ctx context.Context, agent orchestra
 			AgentID: current.ID, Expected: current.Version, Target: orchestration.AgentWaiting,
 			RunID: current.CurrentRunID, Activity: "recovery:" + string(kind), Reason: runErr.Error(),
 		})
+		if err == nil {
+			observation.Emit(ctx, observation.Event{Component: "supervisor", Name: "agent.run.paused", Status: string(kind)})
+		}
 		return err
 	}
 	completionStore, durable := supervisor.agents.(orchestration.AgentCompletionRepository)
@@ -315,6 +323,7 @@ func (supervisor *Supervisor) finishContext(ctx context.Context, agent orchestra
 	if err != nil {
 		return fmt.Errorf("commit Agent outcome: %w", err)
 	}
+	observation.Emit(ctx, observation.Event{Component: "supervisor", Name: "agent.run.finished", Status: string(target)})
 	if err := supervisor.afterAgentTransition(ctx, updated, target, result); err != nil {
 		return err
 	}
@@ -401,4 +410,15 @@ func (supervisor *Supervisor) afterAgentTransition(ctx context.Context, agent or
 		supervisor.scheduleMerges(agent.TeamID)
 	}
 	return nil
+}
+
+func observeAgentScope(ctx context.Context, agent orchestration.AgentSnapshot) context.Context {
+	return observation.WithExactScope(ctx, agentObservationScope(agent))
+}
+
+func agentObservationScope(agent orchestration.AgentSnapshot) observation.Scope {
+	return observation.Scope{
+		TeamID: string(agent.TeamID), AgentID: string(agent.ID), ParentAgentID: string(agent.ParentAgentID),
+		SessionID: string(agent.SessionID), RunID: string(agent.CurrentRunID), TaskID: string(agent.AssignedTaskID),
+	}
 }

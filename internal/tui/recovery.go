@@ -18,15 +18,14 @@ type RecoveryConversation interface {
 }
 
 type recoveriesMsg struct {
-	items    []conversation.Recovery
-	err      error
-	explicit bool
+	items []conversation.Recovery
+	err   error
 }
 
-func discoverRecoveries(ctx context.Context, source RecoveryConversation, explicit bool) tea.Cmd {
+func discoverRecoveries(ctx context.Context, source RecoveryConversation) tea.Cmd {
 	return func() tea.Msg {
 		items, err := source.Recoveries(ctx)
-		return recoveriesMsg{items: items, err: err, explicit: explicit}
+		return recoveriesMsg{items: items, err: err}
 	}
 }
 
@@ -37,13 +36,6 @@ func (model *Model) recoveryFailure(message string) {
 func (model *Model) showRecoveries(message recoveriesMsg) {
 	if message.err != nil {
 		model.recoveryFailure(message.err.Error())
-		return
-	}
-	if len(message.items) == 0 && !message.explicit {
-		return
-	}
-	if !message.explicit {
-		model.notice(blockSystem, fmt.Sprintf("Interrupted work in this session (%d) · /recoveries to inspect", len(message.items)))
 		return
 	}
 	text := "No interrupted turns"
@@ -61,9 +53,12 @@ func (model *Model) showRecoveries(message recoveriesMsg) {
 			if item.Reason != "" {
 				fmt.Fprintf(&output, " — %s", item.Reason)
 			}
+			if item.Prompt != "" {
+				fmt.Fprintf(&output, "\n    %s", singleLinePreview(item.Prompt, 80))
+			}
 		}
 		if canResume {
-			output.WriteString("\nUse /resume <turn-id> to try continuing the selected turn.")
+			output.WriteString("\nUse /resume for the current turn or /resume <turn-id> to choose one.")
 		}
 		text = output.String()
 	}
@@ -80,7 +75,9 @@ func (model *Model) startResume(id string) tea.Cmd {
 		model.recoveryFailure("recovery is unavailable")
 		return nil
 	}
-	model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "Resuming original turn " + id})
+	if id != "" {
+		model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "Resuming original turn " + id})
+	}
 	return model.startOperation("Recovering", func(ctx context.Context, events chan<- tea.Msg) tea.Cmd {
 		return runOperationCommand(ctx, func(ctx context.Context, sink agentruntime.EventSink) (agentruntime.Result, error) {
 			return source.ResumeTurn(ctx, id, sink)

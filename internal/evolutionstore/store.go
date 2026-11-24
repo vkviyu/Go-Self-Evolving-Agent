@@ -1,4 +1,4 @@
-// Package evolutionstore implements evolution evidence ports using individual
+// Package evolutionstore implements strategy evidence ports using individual
 // ATE authority records. It owns no local business database or cached projection.
 package evolutionstore
 
@@ -12,8 +12,6 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/ateauthority"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
-	"github.com/vkviyu/go-self-evolving-agent/internal/plugin"
-	"github.com/vkviyu/go-self-evolving-agent/internal/pluginbuild"
 	"github.com/vkviyu/go-self-evolving-agent/internal/retention"
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 )
@@ -21,10 +19,8 @@ import (
 type Store struct{ authority *ateauthority.Store }
 
 var (
-	_ strategy.Catalog       = (*Store)(nil)
-	_ strategy.ShadowStore   = (*Store)(nil)
-	_ pluginbuild.BuildStore = (*Store)(nil)
-	_ plugin.TestReportStore = (*Store)(nil)
+	_ strategy.Catalog     = (*Store)(nil)
+	_ strategy.ShadowStore = (*Store)(nil)
 )
 
 func New(authority *ateauthority.Store) (*Store, error) {

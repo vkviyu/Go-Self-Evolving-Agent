@@ -3,25 +3,28 @@ package modelgateway
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 )
 
 type responsesModelConfig struct {
-	APIKey          string
-	Model           string
-	BaseURL         string
-	ReasoningEffort string
-	HTTPClient      *http.Client
+	APIKey                 string
+	Model                  string
+	BaseURL                string
+	ReasoningEffort        string
+	HTTPClient             *http.Client
+	StreamEventIdleTimeout time.Duration
 }
 
 type responsesModel struct {
-	apiKey          string
-	model           string
-	endpoint        string
-	reasoningEffort string
-	httpClient      *http.Client
-	tools           []*schema.ToolInfo
+	apiKey                 string
+	model                  string
+	endpoint               string
+	reasoningEffort        string
+	httpClient             *http.Client
+	streamEventIdleTimeout time.Duration
+	tools                  []*schema.ToolInfo
 }
 
 type responsesRequest struct {
@@ -108,6 +111,7 @@ type responsesResponse struct {
 }
 
 type responsesResponseError struct {
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 

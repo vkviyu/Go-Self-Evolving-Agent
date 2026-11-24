@@ -29,7 +29,6 @@ func (model *Model) handleTranscriptMouse(message tea.MouseMsg) (tea.Cmd, bool) 
 			return nil, false
 		}
 		if model.toggleToolDisclosureAtLine(line) {
-			model.refreshTranscript(false)
 			return nil, true
 		}
 		column := max(0, event.X-1)
@@ -75,6 +74,9 @@ func (model *Model) handleInputMouse(message tea.MouseMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	inside := event.Y >= model.inputTopRow() && event.Y < model.inputTopRow()+model.input.Height()
+	if inside && event.Action == tea.MouseActionPress && event.Button == tea.MouseButtonLeft {
+		model.closeToolInspector()
+	}
 	if !inside && !model.inputSelection.dragging {
 		return nil, false
 	}

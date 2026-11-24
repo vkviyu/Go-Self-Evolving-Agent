@@ -56,34 +56,19 @@ func chatDataDirectory(resolved config.Config, options chatOptions) string {
 }
 
 func findChatSession(ctx context.Context, resolved config.Config, options chatOptions) (chatSession, error) {
-	registry, err := app.OpenSessionRegistry(ctx, resolved)
+	entries, histories, err := app.ReadChatCatalog(ctx, resolved, options.sessionID, options.requireExistingSession)
 	if err != nil {
 		return chatSession{}, err
 	}
-	item, getErr := registry.Get(ctx, string(options.sessionID))
-	if err := registry.Close(); err != nil {
-		return chatSession{}, errors.Join(getErr, err)
-	}
-	if getErr != nil && !errors.Is(getErr, sessionregistry.ErrNotFound) {
-		return chatSession{}, getErr
-	}
-	if getErr == nil {
+	if len(entries) != 0 {
+		item := entries[0]
 		if strings.TrimSpace(item.DataDirectory) == "" {
 			return chatSession{}, fmt.Errorf("session %q has no registered data directory", item.ID)
 		}
 		if options.dataExplicit && canonicalDirectory(item.DataDirectory) != canonicalDirectory(options.dataDirectory) {
 			return chatSession{}, fmt.Errorf("session %q uses data directory %s", item.ID, item.DataDirectory)
 		}
-		if !options.requireExistingSession {
-			return chatSession{Session: item, registered: true}, nil
-		}
-	}
-	histories, err := app.DiscoverChats(ctx, resolved, options.sessionID)
-	if err != nil {
-		return chatSession{}, err
-	}
-	if getErr == nil {
-		if len(histories) == 0 {
+		if options.requireExistingSession && len(histories) == 0 {
 			return chatSession{}, fmt.Errorf("session %q has no saved conversation", item.ID)
 		}
 		return chatSession{Session: item, registered: true}, nil

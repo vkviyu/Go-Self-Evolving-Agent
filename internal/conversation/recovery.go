@@ -8,15 +8,19 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
+	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
-// Recovery is discovery metadata, not authorization or a compatibility check.
-// The selected turn is revalidated at execution time.
+// Recovery describes an interrupted turn. Execution still validates the
+// original bindings, profile and authorization.
 type Recovery struct {
 	TurnID string `json:"turn_id,omitempty"`
 	Phase  string `json:"phase"`
 	Reason string `json:"reason,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
 }
+
+const hostRecoveryGuidance = "Use the original GSEA executable to resume this turn, or review prior effects and send a new instruction in this session."
 
 func (conversation *Conversation) Recoveries(ctx context.Context) ([]Recovery, error) {
 	conversation.mutex.Lock()
@@ -25,27 +29,26 @@ func (conversation *Conversation) Recoveries(ctx context.Context) ([]Recovery, e
 	if err != nil {
 		return nil, err
 	}
-	return recoveriesForTurns(turns), nil
+	return recoveriesForTurns(ctx, turns, conversation.factory.CheckSnapshotHost)
 }
 
-// DiscoverRecoveries is the offline read model, shared by chat and CLI. The
-// optional final arguments are accepted for source compatibility with callers
-// that still pass a repository; the removed Goal store is never consulted.
-func DiscoverRecoveries(ctx context.Context, id session.ID, events session.EventStore, checkpoints session.CheckpointStore, _ ...any) ([]Recovery, error) {
+// DiscoverRecoveries builds the same read model for an offline CLI caller.
+func DiscoverRecoveries(ctx context.Context, id session.ID, events session.EventStore, checkpoints session.CheckpointStore, checkHost func(context.Context, string) error) ([]Recovery, error) {
 	turns, err := agentruntime.LoadTurnRecords(ctx, events, checkpoints, id)
 	if err != nil {
 		return nil, err
 	}
-	return recoveriesForTurns(turns), nil
+	return recoveriesForTurns(ctx, turns, checkHost)
 }
 
-func recoveriesForTurns(turns []agentruntime.TurnRecord) []Recovery {
+func recoveriesForTurns(ctx context.Context, turns []agentruntime.TurnRecord, checkHost func(context.Context, string) error) ([]Recovery, error) {
 	var candidates []Recovery
+	checked := make(map[string]error)
 	for _, turn := range turns {
 		if turn.Abandoned || turn.Archived || turn.Completed {
 			continue
 		}
-		candidate := Recovery{TurnID: turn.TurnID, Phase: "execution"}
+		candidate := Recovery{TurnID: turn.TurnID, Phase: "execution", Prompt: turn.OpeningPreview}
 		if turn.RequiresExecutionRecovery() {
 			candidate.Phase = "unavailable"
 			candidate.Reason = "turn belongs to a removed execution admission protocol; inspect prior effects before starting new work"
@@ -55,10 +58,30 @@ func recoveriesForTurns(turns []agentruntime.TurnRecord) []Recovery {
 		} else if !turn.HasCheckpoint && !turn.HasJournal {
 			candidate.Phase = "unavailable"
 			candidate.Reason = "no checkpoint or turn journal; inspect prior effects before starting new work"
+		} else if turn.RuntimeSnapshotID == "" {
+			candidate.Phase = "unavailable"
+			candidate.Reason = "no recorded tool snapshot"
+		} else {
+			id := turn.RuntimeSnapshotID
+			err, ok := checked[id]
+			if !ok {
+				err = checkHost(ctx, id)
+				checked[id] = err
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err != nil {
+				candidate.Phase = "unavailable"
+				candidate.Reason = err.Error()
+				if errors.Is(err, tool.ErrSnapshotHostChanged) {
+					candidate.Reason = "requires the original GSEA executable"
+				}
+			}
 		}
 		candidates = append(candidates, candidate)
 	}
-	return candidates
+	return candidates, nil
 }
 
 // RecoverRun is the Supervisor adapter boundary. It never substitutes a fresh
@@ -85,15 +108,5 @@ func (conversation *Conversation) RecoverRun(ctx context.Context, runID orchestr
 	if latest.RequiresExecutionRecovery() {
 		return agentruntime.Result{}, errors.New("run belongs to a removed execution admission protocol; recovery is fail-closed")
 	}
-	if err := conversation.factory.CheckTurnRecovery(ctx, conversation.sessionID, latest.TurnID); err != nil {
-		return agentruntime.Result{}, err
-	}
-	if latest.Completed {
-		result, found, err := conversation.factory.CompletedTurn(ctx, conversation.sessionID, latest.TurnID)
-		if err == nil && !found {
-			err = errors.New("completed turn outcome disappeared")
-		}
-		return result, err
-	}
-	return conversation.resumeTurn(ctx, latest.TurnID, sink)
+	return conversation.resumeRecordedTurn(ctx, *latest, sink, false)
 }
