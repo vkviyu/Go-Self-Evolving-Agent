@@ -233,26 +233,6 @@ func TestLoadStrictConfigRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-func TestLoadLanguageServerConfig(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv(HomeEnvironment, home)
-	writeConfig(t, filepath.Join(home, configFileName), `[lsp]
-enabled = true
-command = "custom-gopls"
-args = ["serve", "-debug=localhost:0"]
-diagnostic_timeout = "7s"
-max_diagnostics_per_file = 3
-max_diagnostics_total = 9
-`)
-	loaded, err := Load(LoadOptions{WorkingDirectory: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !loaded.LSP.Enabled || loaded.LSP.Command != "custom-gopls" || len(loaded.LSP.Args) != 2 || loaded.LSP.DiagnosticTimeout.String() != "7s" || loaded.LSP.MaxDiagnosticsPerFile != 3 || loaded.LSP.MaxDiagnosticsTotal != 9 {
-		t.Fatalf("LSP config = %#v", loaded.LSP)
-	}
-}
-
 func TestResolveSecuresDataDirectory(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "data")
 	if err := os.MkdirAll(directory, 0o755); err != nil {

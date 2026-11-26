@@ -256,13 +256,14 @@ func (model *Model) Init() tea.Cmd {
 }
 
 func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch message.(type) {
+	case runtimeEventMsg, storageProgressMsg:
+		return model, model.updateTurnFrame(message)
+	}
 	previousStage := model.stage
 	defer func() {
 		if model.stage != previousStage {
 			model.stageStartedAt = time.Now()
-			if event, ok := message.(runtimeEventMsg); ok && !event.at.IsZero() {
-				model.stageStartedAt = event.at
-			}
 		}
 	}()
 	var commands []tea.Cmd
@@ -317,14 +318,6 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return model, command
 		}
-	case storageProgressMsg:
-		model.applyStorageProgress(message)
-		return model, waitForTurnEvent(model.ctx, model.turnEvents)
-	case runtimeEventMsg:
-		activity := model.refreshAfterAgentTool(message.event)
-		model.applyRuntimeEvent(message.event)
-		model.refreshRootTranscript(false)
-		return model, tea.Batch(waitForTurnEvent(model.ctx, model.turnEvents), activity)
 	case approvalRequestMsg:
 		model.closeToolInspector()
 		model.closeTranscriptViewer()

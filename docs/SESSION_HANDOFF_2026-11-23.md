@@ -4,7 +4,7 @@
 >
 > 时间范围：2026-11-22 至本机日志标记的 2026-11-23。会话开始时环境日期为 11 月 22 日，后续测试、构建和诊断日志已进入 11 月 23 日。
 >
-> 本文是工作状态快照，不是全部完成声明：**ATE 权威存储与 GSEA 长期 stdio 连接已实现；模型流读取超时仍未确定最终根因；长连接改造引入 control/resume/catalog 访问回归，最近整库测试仍失败。**
+> 本文是截至 2026-11-23 的历史工作状态快照，不是当前实现或验证报告。快照当时记录：**ATE 权威存储与 GSEA 长期 stdio 连接已实现；模型流读取超时仍未确定最终根因；长连接改造引入 control/resume/catalog 访问回归，最近整库测试仍失败。** 后续代码和验证已经继续演进，当前状态以 [架构导读](../ARCHITECTURE.md)、[ATE 接入说明](ATE_INTEGRATION.md) 和 [功能范围与剩余工作](../IMPLEMENTATION_REMAINING.md) 为准。
 
 ## 1. 新会话首先掌握的结论
 
@@ -52,7 +52,7 @@ GSEA 不只是一次性回答工具。目标是让 Agent 完成长程工作，�
 
 - 默认入口是主 Agent Loop；Eino 承载 Turn 内循环，宿主拥有权限、调度和业务状态机。
 - Session、任务、消息、用量事实、业务回执、执行证据、知识与记忆由 ATE 权威保存。
-- checkpoint、工具快照清单及引用、LSP projection、artifact、工作区文件与租约、未完成 ATE 请求属于本地执行资源。
+- checkpoint、工具快照清单及引用、artifact、工作区文件与租约、未完成 ATE 请求属于本地执行资源。
 - Workspace 的共享协调数据库管理租约与进程存活，不是第二份 Task 仓库。
 - 原生 Session append 与 authority state batch 是独立提交，不是跨域大事务。
 - 文件、模型供应商、Shell 和 ATE 不共享端到端 exactly-once 保证。
@@ -116,9 +116,9 @@ GSEA 不只是一次性回答工具。目标是让 Agent 完成长程工作，�
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | [GSEA README](../README.md)                                                               | 构建、配置、CLI；活动 chat 时并发 control 查询当前有回归 |
 | [多 Agent 架构](../MULTI_AGENT_ARCHITECTURE.md)                                           | Supervisor、Task DAG、Workspace、路线图                  |
-| [剩余工作](../IMPLEMENTATION_REMAINING.md)                                                | 原 R1–R8 的历史范围、策略与恢复资源的验收边界 |
+| [剩余工作](../IMPLEMENTATION_REMAINING.md)                                                | 原 R1–R8 的历史范围、策略与恢复资源的验收边界            |
 | [审计修复](../AUDIT_REMEDIATION.md)                                                       | 权限、持久化与恢复边界                                   |
-| [跨任务记忆指南](../EVOLUTION.md)                                                         | 从会话证据建立候选，在后续任务核验、采用和维护来源 |
+| [跨任务记忆指南](../EVOLUTION.md)                                                         | 从会话证据建立候选，在后续任务核验、采用和维护来源       |
 | [ATE 中文 README](../../agent-temporal-engine/README.zh-CN.md)                            | 引擎概览                                                 |
 | [ATE API](../../agent-temporal-engine/docs/ATE_API_REFERENCE.md)                          | 公共契约                                                 |
 | [ATE 传输](../../agent-temporal-engine/docs/ATE_TRANSPORTS.md)                            | stdio/Unix 与生命周期                                    |
@@ -222,7 +222,7 @@ App Open
 - CLI 普通成功 Turn 默认不自动执行 `Experience.Complete`；嵌入宿主显式启用的自动经验服务是另一条配置路径。
 - 工具结果通常回到主模型再生成答复，不能把工具成功等同于最终回答完成。
 
-后续任务可以沿记忆的引用查证上次排障的依据，核对现场条件后决定是否采用。策略比较和 Turn 的工具快照各自服务于运行配置与恢复。较早的 WASM 插件方案已退役。[自进化定位](../EVOLUTION.md)
+后续任务可以沿记忆的引用查证上次排障的依据，核对现场条件后决定是否采用。策略比较和 Turn 的工具快照各自服务于运行配置与恢复。[自进化定位](../EVOLUTION.md)
 
 ## 6. 已完成工作与进度边界
 

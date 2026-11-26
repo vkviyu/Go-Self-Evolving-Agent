@@ -16,7 +16,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/codingtools"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
@@ -49,7 +48,6 @@ type App struct {
 	workspace        *codingtools.Workspace
 	coordinator      *workspacecoord.Coordinator
 	artifacts        *artifact.Store
-	diagnostics      *lsp.Manager
 	temporalProcess  *ateprocess.Manager
 	temporalBridge   *atebridge.Bridge
 	experience       *experience.Service
@@ -77,7 +75,6 @@ type runtimeStorage struct {
 	checkpoints session.CheckpointStore
 	snapshots   runtimeSnapshotStore
 	strategies  strategy.Catalog
-	diagnostics lsp.ProjectionStore
 }
 
 type runtimeSnapshotStore interface {
@@ -91,4 +88,7 @@ type runtimeSnapshotStore interface {
 type OpenOptions struct {
 	ShellSandbox sandbox.Mode
 	ToolBindings []tool.Binding
+	// SessionCatalog supplies an already-open read-only ATE lease from resume.
+	// App adopts it after the runtime database is ready and owns it thereafter.
+	SessionCatalog *SessionCatalog
 }

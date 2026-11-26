@@ -96,7 +96,7 @@ func (model *Model) toolInspectionParts(blocks []transcriptBlock) []transcriptPa
 	if view.detail {
 		index := view.indices[view.selected]
 		block := &blocks[index]
-		rendered := scopeFileLinksByLine(ansi.Hardwrap(model.renderBlockWithDetails(block, true, true), max(1, model.viewport.Width), true))
+		rendered := model.renderBlockWithDetails(block, true, true)
 		return []transcriptPart{{rendered: rendered, block: block, index: index, toolEnd: index + 1}}
 	}
 	parts := make([]transcriptPart, 0, len(view.indices))

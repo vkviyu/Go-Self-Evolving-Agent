@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
 
@@ -49,7 +48,6 @@ type (
 		// Agent configures the root Agent; Agents bounds delegated child Agents.
 		Agent  AgentConfig
 		Agents AgentsConfig
-		LSP    lsp.Config
 		Usage  UsageConfig
 		ATE    ATEConfig
 	}
@@ -60,6 +58,7 @@ type (
 		Enabled           bool
 		Binary, Directory string
 		Timeout           time.Duration
+		StartupTimeout    time.Duration // Zero selects the native manager's cold-start allowance.
 	}
 
 	// UsageConfig prices model usage and bounds the usage of each session

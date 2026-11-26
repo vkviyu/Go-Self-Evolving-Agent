@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/vkviyu/go-self-evolving-agent/internal/app"
+	"github.com/vkviyu/go-self-evolving-agent/internal/ateprocess"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/modelgateway"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
@@ -68,8 +70,41 @@ func TestResumeDiscoversAndAdoptsNativeHistory(t *testing.T) {
 	if got := run("", dependencies{}, "resume", "--list", "--all"); !strings.Contains(got, item.ID) || !strings.Contains(got, "first question") || strings.Contains(got, "agent-thread_") || strings.Contains(got, "doctor-") {
 		t.Fatalf("native history discovery = %q", got)
 	}
-	if got := run("follow up\n/exit\n", deps, "resume", item.ID, "--model", "test-model"); got != "reply: follow up\n" || fake.lastInputCount != 4 {
+	var resumeProgressMu sync.Mutex
+	resumeBatches := make(map[uint64]struct {
+		ownership bool
+		start     bool
+	})
+	resumeCtx := ateprocess.WithObserver(ctx, func(_ context.Context, event ateprocess.Progress) {
+		resumeProgressMu.Lock()
+		progress := resumeBatches[event.BatchID]
+		switch event.Stage {
+		case ateprocess.StageOwnership:
+			progress.ownership = true
+		case ateprocess.StageStart:
+			progress.start = true
+		}
+		resumeBatches[event.BatchID] = progress
+		resumeProgressMu.Unlock()
+	})
+	stdout.Reset()
+	stderr.Reset()
+	if exit := runWithDependencies(resumeCtx, []string{"resume", item.ID, "--model", "test-model"}, strings.NewReader("follow up\n/exit\n"), &stdout, &stderr, deps); exit != 0 {
+		t.Fatalf("resume exited %d: %s", exit, stderr.String())
+	}
+	if got := stdout.String(); got != "reply: follow up\n" || fake.lastInputCount != 4 {
 		t.Fatalf("native history was not loaded: output=%q model input=%d", got, fake.lastInputCount)
+	}
+	resumeProgressMu.Lock()
+	ownedStarts := 0
+	for _, progress := range resumeBatches {
+		if progress.ownership && progress.start {
+			ownedStarts++
+		}
+	}
+	resumeProgressMu.Unlock()
+	if ownedStarts != 1 {
+		t.Fatalf("explicit resume opened %d owned ATE connections, want 1", ownedStarts)
 	}
 	registered, _, err := app.ReadChatCatalog(ctx, cfg, session.ID(item.ID), false)
 	if err != nil || len(registered) != 1 || registered[0].Workspace != canonicalDirectory(workspace) || registered[0].DataDirectory != canonicalDirectory(home) {

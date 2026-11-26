@@ -9,14 +9,16 @@ import (
 func TestProjectConfigurationRequiresExplicitTrust(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv(HomeEnvironment, home)
+	t.Setenv(ProfileEnvironment, "")
 	t.Setenv("GSEA_TRUST_PROJECT_CONFIG", "")
-	writeConfig(t, filepath.Join(project, projectConfigDirectory, configFileName), "[lsp]\ncommand = \"untrusted-command\"\n")
+	t.Setenv("GSEA_AGENTS_POST_MERGE_CHECK", "")
+	writeConfig(t, filepath.Join(project, projectConfigDirectory, configFileName), "[agents]\npost_merge_check = \"true\"\n")
 	if _, err := Load(LoadOptions{WorkingDirectory: project}); !errors.Is(err, ErrProjectConfigUntrusted) {
 		t.Fatalf("untrusted project accepted: %v", err)
 	}
 	loaded, err := Load(LoadOptions{WorkingDirectory: project, TrustProjectConfig: true})
-	if err != nil || loaded.LSP.Command != "untrusted-command" {
-		t.Fatalf("explicit grant ignored: %+v %v", loaded.LSP, err)
+	if err != nil || loaded.Agents.PostMergeCheck != "true" {
+		t.Fatalf("explicit grant ignored: post_merge_check=%q err=%v", loaded.Agents.PostMergeCheck, err)
 	}
 }
 

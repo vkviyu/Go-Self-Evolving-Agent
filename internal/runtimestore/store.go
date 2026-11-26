@@ -1,6 +1,6 @@
 // Package runtimestore owns the embedded database for host runtime resources:
-// checkpoints, LSP projections, workspace-facing runtime snapshots and pending
-// ATE request envelopes. ATE owns business history, tasks, messages and usage.
+// checkpoints, workspace-facing runtime snapshots and pending ATE request
+// envelopes. ATE owns business history, tasks, messages and usage.
 package runtimestore
 
 import (

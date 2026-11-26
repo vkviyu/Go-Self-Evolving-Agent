@@ -12,7 +12,7 @@ func TestATEConfigurationDefaultsAndPrecedence(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv(HomeEnvironment, home)
 	t.Setenv(ProfileEnvironment, "")
-	for _, name := range []string{"GSEA_ATE_ENABLED", "GSEA_ATE_BINARY", "GSEA_ATE_DIRECTORY", "GSEA_ATE_TIMEOUT"} {
+	for _, name := range []string{"GSEA_ATE_ENABLED", "GSEA_ATE_BINARY", "GSEA_ATE_DIRECTORY", "GSEA_ATE_TIMEOUT", "GSEA_ATE_STARTUP_TIMEOUT"} {
 		t.Setenv(name, "")
 	}
 	loaded, err := Load(LoadOptions{WorkingDirectory: project, Strict: true})
@@ -27,12 +27,18 @@ func TestATEConfigurationDefaultsAndPrecedence(t *testing.T) {
 	if err != nil || loaded.ATE != (ATEConfig{Binary: binary, Directory: directory, Timeout: 2 * time.Second}) {
 		t.Fatalf("file=%+v err=%v", loaded.ATE, err)
 	}
+	writeConfig(t, filepath.Join(home, configFileName), "[ate]\nstartup_timeout='15m'\n")
+	loaded, err = Load(LoadOptions{WorkingDirectory: project, Strict: true})
+	if err != nil || loaded.ATE.StartupTimeout != 15*time.Minute {
+		t.Fatalf("startup timeout file=%+v err=%v", loaded.ATE, err)
+	}
+	t.Setenv("GSEA_ATE_STARTUP_TIMEOUT", "45s")
 	t.Setenv("GSEA_ATE_ENABLED", "true")
 	t.Setenv("GSEA_ATE_BINARY", "ate-env")
 	t.Setenv("GSEA_ATE_DIRECTORY", filepath.Join(home, "env-store"))
 	t.Setenv("GSEA_ATE_TIMEOUT", "4s")
 	loaded, err = Load(LoadOptions{WorkingDirectory: project, Strict: true})
-	if err != nil || !loaded.ATE.Enabled || loaded.ATE.Binary != "ate-env" || loaded.ATE.Timeout != 4*time.Second || loaded.ATE.Directory != filepath.Join(home, "env-store") {
+	if err != nil || !loaded.ATE.Enabled || loaded.ATE.Binary != "ate-env" || loaded.ATE.Timeout != 4*time.Second || loaded.ATE.StartupTimeout != 45*time.Second || loaded.ATE.Directory != filepath.Join(home, "env-store") {
 		t.Fatalf("environment=%+v err=%v", loaded.ATE, err)
 	}
 	for _, path := range []string{want.Directory, directory, loaded.ATE.Directory} {
@@ -63,7 +69,7 @@ func TestATEProgrammaticConfigAndSharedHome(t *testing.T) {
 
 func TestATERejectsInvalidConfiguration(t *testing.T) {
 	for _, a := range []ATEConfig{
-		{Timeout: -time.Second}, {Timeout: 11 * time.Minute},
+		{Timeout: -time.Second}, {Timeout: 11 * time.Minute}, {StartupTimeout: -time.Second},
 		{Binary: strings.Repeat("a", 4097)}, {Binary: "ate\x00bad"},
 		{Directory: "/"}, {Directory: " \t"}, {Directory: "bad\npath"},
 		{Directory: strings.Repeat("a", 4097)},
@@ -74,10 +80,10 @@ func TestATERejectsInvalidConfiguration(t *testing.T) {
 	}
 	t.Setenv(HomeEnvironment, t.TempDir())
 	t.Setenv(ProfileEnvironment, "")
-	for _, name := range []string{"GSEA_ATE_ENABLED", "GSEA_ATE_BINARY", "GSEA_ATE_DIRECTORY", "GSEA_ATE_TIMEOUT"} {
+	for _, name := range []string{"GSEA_ATE_ENABLED", "GSEA_ATE_BINARY", "GSEA_ATE_DIRECTORY", "GSEA_ATE_TIMEOUT", "GSEA_ATE_STARTUP_TIMEOUT"} {
 		t.Setenv(name, "")
 	}
-	for name, value := range map[string]string{"GSEA_ATE_ENABLED": "maybe", "GSEA_ATE_TIMEOUT": "0s"} {
+	for name, value := range map[string]string{"GSEA_ATE_ENABLED": "maybe", "GSEA_ATE_TIMEOUT": "0s", "GSEA_ATE_STARTUP_TIMEOUT": "0s"} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(name, value)
 			if _, err := Load(LoadOptions{WorkingDirectory: t.TempDir()}); err == nil {

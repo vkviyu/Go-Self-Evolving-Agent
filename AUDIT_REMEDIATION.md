@@ -1,27 +1,26 @@
 # A–E 审计边界与整改状态
 
-更新：2026-11-20。保留原问题编号，记录当前控制与遗留边界；不把静态推断当作已复现故障，也不沿用过去的测试通过结论。整体源码清理正在进行。
+更新：2026-11-25。保留原问题编号，记录当前控制与遗留边界；不把静态推断当作已复现故障，也不沿用过去的测试通过结论。
+
+已移除 WASM 插件和 LSP 支持。
 
 业务权威为 ATE native Session 与 authority records。`internal/runtimestore` 只保存运行资源和 pending 请求，不含业务历史或 outbox。旧 SQL 业务表、迁移和日志不再作为整改方案或兼容性要求；Agent Loop 仍由 Eino 承担。
 
 ## A. 安全边界
 
-| 编号                    | 当前控制                                                                                                       | 限制与入口                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| A.1 配置信任            | 项目配置默认拒绝；宿主通过 TrustProjectConfig 或 `GSEA_TRUST_PROJECT_CONFIG=true` 显式授信；常规文件及大小限制 | `internal/config`；尚无持久项目授权 UI                                                    |
-| A.2 合并授权            | MergeExecutor 统一执行 Approver/AutoMerge 门禁，control 调用不等于审批；Discard 可取消等待                     | `internal/workspacecoord`；per-Team 后台 merge 生命周期待补齐                             |
-| A.3 工具参数            | 绑定时编译 Schema，策略/审批/执行前校验，拒绝外部 Schema 加载和超限参数                                        | `internal/tool/schema.go`；invalid_arguments 可恢复                                       |
-| A.4 文件写入            | `os.Root`、原子替换、拒绝叶子符号链接；执行器校验 mode                                                         | `internal/codingtools`；结构化内容上限 4 MiB                                              |
-| A.5 补丁采集            | evaluation 独立 bare capture；生产采集使用宿主管理的 metadata/index/objects 和受限环境                         | `internal/evaluation`、`internal/workspacecoord/git_capture.go`；不代表 checkout 全部安全 |
-| A.6 LSP                 | 只读 workspace、无网络、白名单环境与 OS 沙箱；stdin 超时、协议头/消息体限额                                    | `internal/lsp`                                                                            |
-| A.7 沙箱环境            | 不透传任意宿主变量，支持只读工作区                                                                             | `internal/sandbox`；macOS 元数据范围、Linux 实机隔离仍需专项核验                          |
-| A.8 工具链（历史项）    | 原编号跟踪旧工具生成方案的编译环境                                                                             | 归档于早期设计                                                                            |
-| A.9 终端展示            | 有界跨流块控制序列清洗；原始 JSON 协议不变；链接限于 workspace 根                                              | `internal/render`、TUI/CLI                                                                |
-| A.10 工具拒绝           | 纯 policy/approval 拒绝可继续处理，持久化错误终止 Turn；不随机补调用 ID                                        | `internal/einoadapter`                                                                    |
-| A.11 资源前缀           | 完全相等、目录分隔符或显式冒号前缀匹配，防相近字符串越权                                                       | `internal/policy`                                                                         |
-| A.12 Artifact           | 规范小写 SHA 引用、根句柄 I/O、同步/校验、分段读取核验完整内容                                                 | `internal/artifact`；不接受任意本地路径 alias                                             |
-| A.13 扩展隔离（历史项） | 原编号跟踪旧 WASM 方案的运行隔离                                                                               | 现行 Shell 隔离见 A.7                                                                     |
-| A.14 委派权限           | Limits 与父级取交集，Profile/view 限制写权限，支持 snapshot                                                    | `internal/agentprofile`；shared 父级向隔离 view 委派本身不等于扩权                        |
+| 编号          | 当前控制                                                                                                       | 限制与入口                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| A.1 配置信任  | 项目配置默认拒绝；宿主通过 TrustProjectConfig 或 `GSEA_TRUST_PROJECT_CONFIG=true` 显式授信；常规文件及大小限制 | `internal/config`；尚无持久项目授权 UI                                                    |
+| A.2 合并授权  | MergeExecutor 统一执行 Approver/AutoMerge 门禁，control 调用不等于审批；Discard 可取消等待                     | `internal/workspacecoord`；per-Team 后台 merge 生命周期待补齐                             |
+| A.3 工具参数  | 绑定时编译 Schema，策略/审批/执行前校验，拒绝外部 Schema 加载和超限参数                                        | `internal/tool/schema.go`；invalid_arguments 可恢复                                       |
+| A.4 文件写入  | `os.Root`、原子替换、拒绝叶子符号链接；执行器校验 mode                                                         | `internal/codingtools`；结构化内容上限 4 MiB                                              |
+| A.5 补丁采集  | evaluation 独立 bare capture；生产采集使用宿主管理的 metadata/index/objects 和受限环境                         | `internal/evaluation`、`internal/workspacecoord/git_capture.go`；不代表 checkout 全部安全 |
+| A.7 沙箱环境  | 不透传任意宿主变量，支持只读工作区                                                                             | `internal/sandbox`；macOS 元数据范围、Linux 实机隔离仍需专项核验                          |
+| A.9 终端展示  | 有界跨流块控制序列清洗；原始 JSON 协议不变；链接限于 workspace 根                                              | `internal/render`、TUI/CLI                                                                |
+| A.10 工具拒绝 | 纯 policy/approval 拒绝可继续处理，持久化错误终止 Turn；不随机补调用 ID                                        | `internal/einoadapter`                                                                    |
+| A.11 资源前缀 | 完全相等、目录分隔符或显式冒号前缀匹配，防相近字符串越权                                                       | `internal/policy`                                                                         |
+| A.12 Artifact | 规范小写 SHA 引用、根句柄 I/O、同步/校验、分段读取核验完整内容                                                 | `internal/artifact`；不接受任意本地路径 alias                                             |
+| A.14 委派权限 | Limits 与父级取交集，Profile/view 限制写权限，支持 snapshot                                                    | `internal/agentprofile`；shared 父级向隔离 view 委派本身不等于扩权                        |
 
 ## B. 崩溃一致性与正确性
 
@@ -57,12 +56,12 @@
 
 ## C. 资源与性能
 
-| 编号 | 当前控制与剩余边界                                                                                       |
-| ---- | -------------------------------------------------------------------------------------------------------- |
-| C.1  | read/edit、artifact 分段、bridge manifest、LSP 协议、render 待决前缀有界；截断 read 不提供完整文件 SHA。 |
-| C.2  | selection 逐列探测已改为 span 布局；本次未测性能，不沿用旧毫秒数，也不声称病态 Unicode 严格线性。        |
-| C.3  | SnapshotByID 避免锁内计算全部 ID；历史 tool/profile revision 保留，不能只裁剪内存 map。                  |
-| C.4  | 归档按保留计划和关闭回执释放快照引用。扫描仍可能 O(n)，完整引用索引和增量计划待实施。                    |
+| 编号 | 当前控制与剩余边界                                                                                |
+| ---- | ------------------------------------------------------------------------------------------------- |
+| C.1  | read/edit、artifact 分段、bridge manifest、render 待决前缀有界；截断 read 不提供完整文件 SHA。    |
+| C.2  | selection 逐列探测已改为 span 布局；本次未测性能，不沿用旧毫秒数，也不声称病态 Unicode 严格线性。 |
+| C.3  | SnapshotByID 避免锁内计算全部 ID；历史 tool/profile revision 保留，不能只裁剪内存 map。           |
+| C.4  | 归档按保留计划和关闭回执释放快照引用。扫描仍可能 O(n)，完整引用索引和增量计划待实施。             |
 
 ## D. 错误语义与一致性
 
@@ -86,7 +85,7 @@
 | 依赖/supersede | 依赖检查/解锁及明确候选作用域；失败依赖不能自动忽略                                           |
 | Lease          | 规范路径、单操作互斥、实例及后代存活核对；无 TTL/续租                                         |
 | Team           | cancel/准入门禁已有；会话级 draining/completed/failed 自动收敛、后台 merge 独立生命周期待实施 |
-| Close          | DB、ATE 进程、Supervisor、LSP、Coordinator 分别由其 owner 负责关闭                            |
+| Close          | DB、ATE 进程、Supervisor、Coordinator 分别由其 owner 负责关闭                                 |
 | eval           | 评测元数据/协议入口有调用，不能据此声称本次运行 benchmark 或验证模型效果                      |
 
 ## 仍需实施与验证
@@ -96,6 +95,6 @@
 - unknown 合并检查的人工恢复/新验证流程、第二轮审查 Agent 未实现。检查失败保留文件、Task failed、依赖不解锁。
 - durable 审批、历史引用增量维护、硬 RSS、artifact 自动保留/回收未完成。
 
-2026-11-24 已完成 build、vet、依赖与补丁格式检查，并运行全量测试及 tool/runtimestore/app 定向 race。全量测试仅 CLI 的 `TestControlScopeProductionJSONL` 因 ATE 运行库所有权冲突失败，其余包通过；定向 race 通过。具体范围见[本轮验证记录](IMPLEMENTATION_REMAINING.md#验证状态与待核实项)。旧日期的通过结论不能替代当前结果；Linux 实机隔离与真实模型效果无本次验证证据。
+2026-11-25 已完成 `go build -mod=readonly ./...`、`go vet -mod=readonly ./...` 和 `git diff --check`。resume 的 `SessionCatalog` 单 ownership 回归、App/ATE lifecycle 定向测试和相关包验证通过；同一 lease 的 reconnect 不再被测试误判为第二个持久 owner。`go test -mod=readonly ./...` 的唯一失败仍是 CLI 的 `TestControlScopeProductionJSONL`：聊天进程持有 runtime database 时，独立 control 进程尝试取得同一运行库所有权并超时；这不是本轮 resume adoption 引入的失败。具体范围见[本轮验证记录](IMPLEMENTATION_REMAINING.md#验证状态与待核实项)。旧日期的通过结论不能替代当前结果；Linux 实机隔离与真实模型效果无本次验证证据。
 
 后续验证重点包括 native 仓储、exact request、Session/Team 锁范围、Execution admission 中断、Turn/Fallback 独立失败、合并 finalization 和离线归档。入口包括 `internal/orchestration/atestore`、`internal/session/atestore`、`internal/app`、`internal/aterequest`、`internal/agentruntime`、`internal/workspacecoord` 及本地运行资源测试。

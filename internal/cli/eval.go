@@ -287,7 +287,7 @@ func evalAgentFunc(deps dependencies, baseArguments []string, runID string) eval
 		if configErr == nil {
 			resolved.DataDirectory = options.dataDirectory
 			resolved.WorkspaceDirectory = options.workspaceDirectory
-			err = runConfiguredChat(ctx, resolved, options, bytes.NewReader(nil), &transcript, &diagnostics, deps, &task.ProblemStatement)
+			err = runConfiguredChat(ctx, resolved, options, bytes.NewReader(nil), &transcript, &diagnostics, deps, &task.ProblemStatement, nil)
 		}
 		transcriptPath := filepath.Join(runDirectory, "transcript.txt")
 		stderrPath := filepath.Join(runDirectory, "agent.stderr.txt")

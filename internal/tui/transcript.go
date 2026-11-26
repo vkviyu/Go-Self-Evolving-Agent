@@ -54,6 +54,7 @@ type transcriptBlock struct {
 	argumentsExpanded bool
 	resultExpanded    bool
 	pending           bool
+	stream            *textStream
 	approvalState     approvalState
 
 	cachedContent           string
@@ -67,6 +68,7 @@ type transcriptBlock struct {
 	cachedArgumentsExpanded bool
 	cachedResultExpanded    bool
 	cachedWidth             int
+	cachedPending           bool
 	cachedApproval          approvalState
 	cachedApprovalChoice    int
 	cachedOutput            string
@@ -139,12 +141,12 @@ func (model *Model) refreshTranscript(forceBottom bool) {
 	position := model.readingPosition()
 	transcriptParts := model.transcriptParts()
 	content, layout, queries := layoutTranscriptParts(transcriptParts)
-	if model.transcriptContent != content {
+	if model.transcriptContent != content || model.viewport.TotalLineCount() == 0 {
 		model.selection = transcriptSelection{}
+		model.transcriptContent = content
+		model.viewport.SetContent(content)
 	}
-	model.transcriptContent = content
 	model.transcriptLayout, model.queryAnchors = layout, queries
-	model.viewport.SetContent(content)
 	if follow {
 		model.viewport.GotoBottom()
 	} else {
@@ -180,10 +182,6 @@ func (model *Model) transcriptParts() []transcriptPart {
 			}
 		}
 		if rendered := model.renderBlock(block); rendered != "" {
-			// Glamour wraps words, so long unspaced CJK paragraphs can remain
-			// wider than its wrap setting. Viewport clips such lines horizontally;
-			// normalize cell width here before counting lines or storing anchors.
-			rendered = scopeFileLinksByLine(ansi.Hardwrap(rendered, max(1, model.viewport.Width), true))
 			part := transcriptPart{rendered: rendered, block: block, index: index}
 			if isCompactToolBlock(block) && (block.toolArguments != "" || block.toolResult != "") {
 				part.toolEnd = index + 1
@@ -344,9 +342,13 @@ func (model *Model) renderBlock(block *transcriptBlock) string {
 }
 
 func (model *Model) renderBlockWithDetails(block *transcriptBlock, arguments, result bool) string {
-	width := max(12, model.viewport.Width-3)
-	if block.cachedContent == block.content && block.cachedToolName == block.toolName && block.cachedToolArguments == block.toolArguments && block.cachedToolResult == block.toolResult && block.cachedApprovalReason == block.approvalReason && block.cachedArgumentsExpanded == arguments && block.cachedResultExpanded == result && block.cachedWidth == width && block.cachedApproval == block.approvalState && (block.approvalState != approvalPending || block.cachedApprovalChoice == model.approvalChoice) {
+	viewportWidth := max(1, model.viewport.Width)
+	width := max(12, viewportWidth-3)
+	if block.cachedContent == block.content && block.cachedToolName == block.toolName && block.cachedToolArguments == block.toolArguments && block.cachedToolResult == block.toolResult && block.cachedApprovalReason == block.approvalReason && block.cachedArgumentsExpanded == arguments && block.cachedResultExpanded == result && block.cachedWidth == viewportWidth && block.cachedPending == block.pending && block.cachedApproval == block.approvalState && (block.approvalState != approvalPending || block.cachedApprovalChoice == model.approvalChoice) {
 		return block.cachedOutput
+	}
+	if block.kind == blockAssistant && block.stream != nil {
+		return block.stream.renderAssistant(model, viewportWidth)
 	}
 	// Sanitize a private presentation view, never the durable transcript. Host
 	// styling and file links are applied after removing untrusted commands.
@@ -414,6 +416,9 @@ func (model *Model) renderBlockWithDetails(block *transcriptBlock, arguments, re
 	if marker != "" {
 		output = lipgloss.JoinHorizontal(lipgloss.Top, markerStyle.Render(marker)+" ", body)
 	}
+	// Cache the final terminal rows, including CJK wrapping and row-scoped
+	// hyperlinks. Later deltas in another block cannot change these rows.
+	output = scopeFileLinksByLine(ansi.Hardwrap(output, viewportWidth, true))
 	block = original
 	block.cachedContent = block.content
 	block.cachedToolName = block.toolName
@@ -422,7 +427,8 @@ func (model *Model) renderBlockWithDetails(block *transcriptBlock, arguments, re
 	block.cachedApprovalReason = block.approvalReason
 	block.cachedArgumentsExpanded = arguments
 	block.cachedResultExpanded = result
-	block.cachedWidth = width
+	block.cachedWidth = viewportWidth
+	block.cachedPending = block.pending
 	block.cachedApproval = block.approvalState
 	block.cachedApprovalChoice = model.approvalChoice
 	block.cachedOutput = output

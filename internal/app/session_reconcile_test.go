@@ -103,9 +103,8 @@ func TestSessionReconcileRecoversOnlyAuthoritativeScope(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// Invalid executable settings must be irrelevant to this storage boundary.
+	// Invalid model settings must be irrelevant to this storage boundary.
 	cfg.Model.Provider = "not-a-provider"
-	cfg.LSP.Enabled, cfg.LSP.Command = true, filepath.Join(t.TempDir(), "must-not-start")
 	for attempt := 0; attempt < 2; attempt++ {
 		result, err := ReconcileSession(ctx, cfg, root.SessionID)
 		if err != nil || result.SessionID != root.SessionID || result.Outcome != "reconciled" {

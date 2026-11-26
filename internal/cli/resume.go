@@ -30,11 +30,19 @@ func runResume(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return err
 	}
 	if !options.sessionExplicit {
-		items, err := discoverChatSessions(ctx, resolved, options)
+		terminal := isTerminal(stdin) && isTerminal(stdout)
+		if terminal && !options.resumeList {
+			fmt.Fprintln(stderr, "Opening local session history…")
+		}
+		catalog, err := app.OpenSessionCatalog(ctx, resolved)
 		if err != nil {
 			return err
 		}
-		terminal := isTerminal(stdin) && isTerminal(stdout)
+		defer func() { _ = catalog.Close() }()
+		items, err := discoverChatSessions(ctx, catalog, resolved, options)
+		if err != nil {
+			return err
+		}
 		if options.resumeList || (!terminal && !options.resumeLast) {
 			return printChatSessions(stdout, items)
 		}
@@ -52,16 +60,25 @@ func runResume(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		options.sessionExplicit = true
 		options.dataDirectory = selected.DataDirectory
 		options.dataExplicit = true
+		return runConfiguredChat(ctx, resolved, options, stdin, stdout, stderr, deps, nil, catalog)
 	}
-	return runConfiguredChat(ctx, resolved, options, stdin, stdout, stderr, deps, nil)
+	catalog, err := app.OpenSessionCatalog(ctx, resolved)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = catalog.Close() }()
+	return runConfiguredChat(ctx, resolved, options, stdin, stdout, stderr, deps, nil, catalog)
 }
 
-func discoverChatSessions(ctx context.Context, resolved config.Config, options chatOptions) ([]sessionregistry.Session, error) {
+func discoverChatSessions(ctx context.Context, catalog *app.SessionCatalog, resolved config.Config, options chatOptions) ([]sessionregistry.Session, error) {
 	workspace, err := workspaceForChat(options.workspaceDirectory)
 	if err != nil {
 		return nil, err
 	}
-	entries, histories, err := app.ReadChatCatalog(ctx, resolved, "", true)
+	if catalog == nil {
+		return nil, nil
+	}
+	entries, histories, err := catalog.ReadChatCatalog(ctx, "", true)
 	if err != nil {
 		return nil, err
 	}

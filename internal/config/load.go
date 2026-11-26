@@ -15,7 +15,6 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tokenusage"
 )
 
@@ -44,16 +43,16 @@ type (
 		Model              fileModelConfig  `toml:"model"`
 		Agent              fileAgentConfig  `toml:"agent"`
 		Agents             fileAgentsConfig `toml:"agents"`
-		LSP                fileLSPConfig    `toml:"lsp"`
 		Usage              fileUsageConfig  `toml:"usage"`
 		ATE                fileATEConfig    `toml:"ate"`
 	}
 
 	fileATEConfig struct {
-		Enabled   *bool   `toml:"enabled"`
-		Binary    *string `toml:"binary"`
-		Directory *string `toml:"directory"`
-		Timeout   *string `toml:"timeout"`
+		Enabled        *bool   `toml:"enabled"`
+		Binary         *string `toml:"binary"`
+		Directory      *string `toml:"directory"`
+		Timeout        *string `toml:"timeout"`
+		StartupTimeout *string `toml:"startup_timeout"`
 	}
 
 	fileModelConfig struct {
@@ -91,15 +90,6 @@ type (
 		// PostMergeCheck is a shell command run in main after each merge.
 		PostMergeCheck        *string `toml:"post_merge_check"`
 		PostMergeCheckTimeout *string `toml:"post_merge_check_timeout"`
-	}
-
-	fileLSPConfig struct {
-		Enabled               *bool     `toml:"enabled"`
-		Command               *string   `toml:"command"`
-		Args                  *[]string `toml:"args"`
-		DiagnosticTimeout     *string   `toml:"diagnostic_timeout"`
-		MaxDiagnosticsPerFile *int      `toml:"max_diagnostics_per_file"`
-		MaxDiagnosticsTotal   *int      `toml:"max_diagnostics_total"`
 	}
 
 	// fileUsageConfig is the [usage] table: [usage.prices."provider/model"]
@@ -333,14 +323,6 @@ func builtInConfig(home string) Config {
 			DefaultWorkspace: AgentsWorkspaceAuto, SnapshotCopyLimit: DefaultSnapshotCopyLimit,
 			AutoContinue: true, PostMergeCheckTimeout: 10 * time.Minute,
 		},
-		LSP: lsp.Config{
-			Enabled:               true,
-			Command:               "gopls",
-			Args:                  []string{"serve"},
-			DiagnosticTimeout:     3 * time.Second,
-			MaxDiagnosticsPerFile: 5,
-			MaxDiagnosticsTotal:   20,
-		},
 	}
 }
 
@@ -396,6 +378,13 @@ func applyFileConfig(target *Config, source fileConfig) error {
 	setIfPresent(&target.ATE.Enabled, source.ATE.Enabled)
 	setIfPresent(&target.ATE.Binary, source.ATE.Binary)
 	setIfPresent(&target.ATE.Directory, source.ATE.Directory)
+	if source.ATE.StartupTimeout != nil {
+		duration, err := parseATEStartupTimeout(*source.ATE.StartupTimeout)
+		if err != nil {
+			return err
+		}
+		target.ATE.StartupTimeout = duration
+	}
 	if source.ATE.Timeout != nil {
 		duration, err := parseATETimeout(*source.ATE.Timeout)
 		if err != nil {
@@ -505,28 +494,6 @@ func applyFileConfig(target *Config, source fileConfig) error {
 		}
 		target.Agents.PostMergeCheckTimeout = timeout
 	}
-	if source.LSP.Enabled != nil {
-		target.LSP.Enabled = *source.LSP.Enabled
-	}
-	if source.LSP.Command != nil {
-		target.LSP.Command = strings.TrimSpace(*source.LSP.Command)
-	}
-	if source.LSP.Args != nil {
-		target.LSP.Args = append([]string(nil), (*source.LSP.Args)...)
-	}
-	if source.LSP.DiagnosticTimeout != nil {
-		duration, err := time.ParseDuration(strings.TrimSpace(*source.LSP.DiagnosticTimeout))
-		if err != nil || duration <= 0 {
-			return errors.New("lsp.diagnostic_timeout must be a positive duration")
-		}
-		target.LSP.DiagnosticTimeout = duration
-	}
-	if source.LSP.MaxDiagnosticsPerFile != nil {
-		target.LSP.MaxDiagnosticsPerFile = *source.LSP.MaxDiagnosticsPerFile
-	}
-	if source.LSP.MaxDiagnosticsTotal != nil {
-		target.LSP.MaxDiagnosticsTotal = *source.LSP.MaxDiagnosticsTotal
-	}
 	applyUsageConfig(&target.Usage, source.Usage)
 	return nil
 }
@@ -612,35 +579,6 @@ func applyEnvironment(target *Config) error {
 	setString("GSEA_API_KEY_ENV", &target.Model.APIKeyEnvironment)
 	setString("GSEA_REASONING_EFFORT", &target.Model.ReasoningEffort)
 	setString("GSEA_AGENT_INSTRUCTION", &target.Agent.Instruction)
-	setString("GSEA_LSP_COMMAND", &target.LSP.Command)
-	if value := strings.TrimSpace(os.Getenv("GSEA_LSP_ENABLED")); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return errors.New("GSEA_LSP_ENABLED must be a boolean")
-		}
-		target.LSP.Enabled = parsed
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_LSP_DIAGNOSTIC_TIMEOUT")); value != "" {
-		duration, err := time.ParseDuration(value)
-		if err != nil || duration <= 0 {
-			return errors.New("GSEA_LSP_DIAGNOSTIC_TIMEOUT must be a positive duration")
-		}
-		target.LSP.DiagnosticTimeout = duration
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_LSP_MAX_DIAGNOSTICS_PER_FILE")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed <= 0 {
-			return errors.New("GSEA_LSP_MAX_DIAGNOSTICS_PER_FILE must be a positive integer")
-		}
-		target.LSP.MaxDiagnosticsPerFile = parsed
-	}
-	if value := strings.TrimSpace(os.Getenv("GSEA_LSP_MAX_DIAGNOSTICS_TOTAL")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed <= 0 {
-			return errors.New("GSEA_LSP_MAX_DIAGNOSTICS_TOTAL must be a positive integer")
-		}
-		target.LSP.MaxDiagnosticsTotal = parsed
-	}
 	if value := strings.TrimSpace(os.Getenv("GSEA_TIMEOUT")); value != "" {
 		duration, err := time.ParseDuration(value)
 		if err != nil || duration <= 0 {
@@ -807,7 +745,7 @@ func validateProfileName(profile string) error {
 	return nil
 }
 
-// validate checks merged timeout, iteration, token, child Agent, LSP and usage settings.
+// validate checks merged timeout, iteration, token, child Agent and usage settings.
 // Zero token limits select automatic resolution; an explicit context window must
 // exceed the compaction trigger. It does not create resources, inspect directories
 // or verify model names and provider availability.
@@ -848,9 +786,6 @@ func validate(config Config) error {
 	}
 	if config.Agents.PostMergeCheckTimeout <= 0 {
 		return errors.New("agents.post_merge_check_timeout must be positive")
-	}
-	if err := config.LSP.Validate(); err != nil {
-		return err
 	}
 	for key, price := range config.Usage.Prices {
 		if key == "" || price.InputMicrosPerMillion < 0 || price.CachedInputMicrosPerMillion < 0 || price.OutputMicrosPerMillion < 0 || price.ReasoningMicrosPerMillion < 0 {

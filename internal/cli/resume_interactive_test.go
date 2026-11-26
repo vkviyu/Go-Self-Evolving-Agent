@@ -45,11 +45,11 @@ func TestResumeInteractiveSessionIsolation(t *testing.T) {
 		selected   = "Where is amber stored?"
 		answer     = "Amber is in drawer seven."
 		unfinished = "Inspect the unfinished ledger."
-		partial    = "Unconfirmed ledger fragment."
+		partial    = "The recorded balance is 420. Its last entry"
 		other      = "Where is cobalt stored?"
 		otherReply = "Cobalt is on shelf four."
 		follow     = "继续"
-		reply      = "Continuing the ledger review from the recorded balance."
+		reply      = "accounts for the increase."
 		after      = "Label that drawer."
 		afterReply = "Label it amber."
 		ledger     = "Verified ledger balance is 420."
@@ -63,11 +63,13 @@ func TestResumeInteractiveSessionIsolation(t *testing.T) {
 		reply    string
 		readTool bool
 		evidence bool
+		timeout  bool
 	}{
 		{dialog: []string{selected}, reply: answer},
 		{dialog: []string{selected, answer, unfinished}, readTool: true},
 		{dialog: []string{selected, answer, unfinished}, reply: partial},
 		{dialog: []string{other}, reply: otherReply},
+		{dialog: []string{selected, answer, follow}, evidence: true, timeout: true},
 		{dialog: []string{selected, answer, follow}, reply: reply, evidence: true},
 		{dialog: []string{selected, answer, follow, reply, after}, reply: afterReply},
 	}
@@ -129,12 +131,12 @@ func TestResumeInteractiveSessionIsolation(t *testing.T) {
 			t.Errorf("request #%d dialog = %q, want %q", n, dialog, step.dialog)
 		}
 		if step.evidence {
-			for _, required := range []string{unfinished, ledger, "workspace_read", "model_request_failed"} {
+			for _, required := range []string{unfinished, ledger, "workspace_read", "model_request_failed", "unfinished_reply_tail", partial} {
 				if !strings.Contains(evidence, required) {
 					t.Errorf("request #%d missing recovery evidence %q: %q", n, required, evidence)
 				}
 			}
-			for _, excluded := range []string{partial, other, otherReply, "CHANGED ON DISK"} {
+			for _, excluded := range []string{other, otherReply, "CHANGED ON DISK"} {
 				if strings.Contains(evidence, excluded) {
 					t.Errorf("request #%d leaked %q into interruption evidence", n, excluded)
 				}
@@ -146,6 +148,14 @@ func TestResumeInteractiveSessionIsolation(t *testing.T) {
 			t.Logf("provider request #%d dialog = %q", n, dialog)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
+		if step.timeout {
+			if err := http.NewResponseController(w).Flush(); err != nil {
+				t.Error(err)
+				return
+			}
+			<-r.Context().Done()
+			return
+		}
 		if step.readTool {
 			fmt.Fprint(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"ledger-item","call_id":"ledger-read","name":"workspace_read","arguments":"{\"path\":\"ledger.txt\"}"}}`+"\n\n")
 			fmt.Fprint(w, `data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"list-item","call_id":"list-files","name":"workspace_list","arguments":"{\"path\":\".\"}"}}`+"\n\n")
@@ -153,7 +163,11 @@ func TestResumeInteractiveSessionIsolation(t *testing.T) {
 			return
 		}
 		fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\n", step.reply)
-		if step.reply != partial { // EOF before completion leaves a real interrupted turn.
+		if step.reply == answer {
+			// A calibrated gateway can report thousands more tokens than the
+			// local request estimate. That offset is for whole requests.
+			fmt.Fprint(w, `data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":18000,"output_tokens":4,"total_tokens":18004}}}`+"\n\n")
+		} else if step.reply != partial { // EOF before completion leaves a real interrupted turn.
 			fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 		}
 	}))
@@ -162,8 +176,9 @@ func TestResumeInteractiveSessionIsolation(t *testing.T) {
 		"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "TMPDIR=" + t.TempDir(),
 		"GSEA_HOME=" + cfg.HomeDirectory, "GSEA_COORDINATION_DIR=" + t.TempDir(),
 		"GSEA_ATE_BINARY=" + cfg.ATE.Binary, "GSEA_ATE_DIRECTORY=" + cfg.ATE.Directory,
-		"GSEA_LSP_ENABLED=false", "GSEA_MODEL_PROVIDER=openai", "GSEA_MODEL_WIRE_API=responses",
+		"GSEA_MODEL_PROVIDER=openai", "GSEA_MODEL_WIRE_API=responses",
 		"GSEA_MODEL=fixture-model", "GSEA_MODEL_BASE_URL=" + server.URL,
+		"GSEA_STREAM_IDLE_TIMEOUT=1s",
 		"GSEA_API_KEY_ENV=GSEA_RESUME_TEST_KEY", "GSEA_RESUME_TEST_KEY=fixture",
 		"TERM=xterm-256color", "NO_COLOR=1", "COLORFGBG=15;0",
 	}

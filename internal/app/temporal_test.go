@@ -54,7 +54,6 @@ func temporalConfig(t *testing.T, base config.Config, binary, shared string) con
 	base.WorkspaceDirectory = t.TempDir()
 	base.CoordinationDirectory = t.TempDir()
 	base.ATE = config.ATEConfig{Enabled: true, Binary: binary, Directory: shared, Timeout: 30 * time.Second}
-	base.LSP.Enabled = false
 	return base
 }
 

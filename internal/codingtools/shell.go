@@ -69,15 +69,15 @@ func (workspace *Workspace) shellUnlocked(ctx context.Context, raw json.RawMessa
 		return nil, fmt.Errorf("capture workspace before shell execution: %w", err)
 	}
 	finalize := func(result map[string]any) (json.RawMessage, error) {
-		after := snapshotAfterMutation(operationRoot)
-		capture := captureWorkspaceChanges(context.WithoutCancel(ctx), workspace.artifacts, operationRoot, before, after)
-		result["changes"] = capture.reported
-		appendDiffs(context.WithoutCancel(ctx), workspace.artifacts, result, capture.diffs, capture.diffsTruncated)
-		if capture.set.Truncated {
+		reportContext := context.WithoutCancel(ctx)
+		after := snapshotAfterMutation(reportContext, operationRoot)
+		capture := captureWorkspaceChanges(reportContext, workspace.artifacts, before, after)
+		result["changes"] = capture.changes
+		appendDiffs(reportContext, workspace.artifacts, result, capture.diffs, capture.diffsTruncated)
+		if capture.truncated {
 			result["changes_truncated"] = true
-			result["changes_message"] = capture.set.Message
+			result["changes_message"] = capture.message
 		}
-		workspace.appendChangeSetDiagnostics(ctx, capture.set, result)
 		return json.Marshal(result)
 	}
 	var stdout, stderr limitedBuffer
@@ -107,13 +107,6 @@ func (workspace *Workspace) shellUnlocked(ctx context.Context, raw json.RawMessa
 	}, &stdout, &stderr)
 	if err != nil && commandContext.Err() != nil {
 		if ctx.Err() != nil {
-			// The command may have mutated files before the parent cancellation
-			// reached the process. Capture that side effect and feed passive LSP
-			// diagnostics even though the tool call itself remains canceled.
-			_, finalizeErr := finalize(map[string]any{"command": args.Command, "working_directory": relativePath(operationRoot, workingDirectory), "stdout": stdout.String(), "stderr": stderr.String(), "exit_code": -1, "timed_out": false, "output_truncated": stdout.truncated || stderr.truncated})
-			if finalizeErr != nil {
-				return nil, errors.Join(ctx.Err(), finalizeErr)
-			}
 			return nil, ctx.Err()
 		}
 		return finalize(map[string]any{"command": args.Command, "working_directory": relativePath(operationRoot, workingDirectory), "stdout": stdout.String(), "stderr": stderr.String(), "exit_code": -1, "timed_out": errors.Is(commandContext.Err(), context.DeadlineExceeded), "output_truncated": stdout.truncated || stderr.truncated})

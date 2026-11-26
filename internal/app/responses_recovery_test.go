@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vkviyu/agent-temporal-engine/client"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/conversation"
@@ -130,6 +131,12 @@ func testInterruptedResponsesRecovery(t *testing.T, timeout bool) {
 }
 
 func TestTruncatedResponsesAfterConfirmedToolResumesWithoutRepeatingTool(t *testing.T) {
+	t.Run("explicit_resume_after_restart", func(t *testing.T) { testConfirmedToolRecovery(t, false) })
+	t.Run("ordinary_followup_on_broken_live_connection", func(t *testing.T) { testConfirmedToolRecovery(t, true) })
+}
+
+func testConfirmedToolRecovery(t *testing.T, ordinaryFollowup bool) {
+	t.Helper()
 	ctx := t.Context()
 	appConfig := config.Config{
 		DataDirectory:      t.TempDir(),
@@ -178,15 +185,19 @@ func TestTruncatedResponsesAfterConfirmedToolResumesWithoutRepeatingTool(t *test
 				return
 			}
 		}
-		requests <- payload
-		switch calls.Add(1) {
+		n := calls.Add(1)
+		if n <= 3 {
+			requests <- payload
+		}
+		switch n {
 		case 1:
 			fmt.Fprint(w, `data: {"type":"response.output_item.done","item":{"type":"function_call","id":"item-1","call_id":"call-1","name":"workspace_read","arguments":"{\"path\":\"fixture.txt\"}"}}`+"\n\n")
 			fmt.Fprint(w, `data: {"type":"response.completed","response":{"status":"completed"}}`+"\n\n")
 		case 2:
 			// The tool result has already been durably recorded. Lose only the
 			// following model response, so recovery must replay this request.
-			fmt.Fprint(w, `data: {"type":"response.output_text.delta","delta":"partial"}`+"\n\n")
+			fmt.Fprint(w, `data: {"type":"response.output_text.delta","delta":"The first observation is "}`+"\n\n")
+			fmt.Fprint(w, `data: {"type":"response.output_text.delta","delta":"that the reader"}`+"\n\n")
 		case 3:
 			fmt.Fprint(w, `data: {"type":"response.output_text.delta","delta":"recovered answer"}`+"\n\n")
 			fmt.Fprint(w, `data: {"type":"response.completed","response":{"status":"completed"}}`+"\n\n")
@@ -242,6 +253,44 @@ func TestTruncatedResponsesAfterConfirmedToolResumesWithoutRepeatingTool(t *test
 		_ = application.Close()
 		t.Fatalf("tool-followup interruption was not paused: result=%+v err=%v", result, err)
 	}
+	if ordinaryFollowup {
+		t.Cleanup(func() { _ = application.Close() })
+		// Same terminal and Conversation. A failed storage poll has already
+		// retired the shared SDK transport. Only the subsequent operation may
+		// get a new connection. The old tool output must come from its receipt.
+		err := application.authority.lease.WithClient(ctx, func(c *client.Client) error { return c.Close() })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(appConfig.WorkspaceDirectory+"/fixture.txt", []byte("new disk contents"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		result, err := chatSession.RunTurn(ctx, "继续", nil)
+		if err != nil || result.Final == nil || result.Final.Content != "recovered answer" || calls.Load() != 3 {
+			t.Fatalf("ordinary followup: result=%+v calls=%d err=%v", result, calls.Load(), err)
+		}
+		<-requests
+		<-requests
+		prompt := <-requests
+		for _, want := range []string{"Read fixture.txt and summarize it.", "durable fixture", "model_request_failed", "unfinished_reply_tail", "The first observation is that the reader", "继续"} {
+			if !bytes.Contains(prompt, []byte(want)) {
+				t.Fatalf("missing %q in followup", want)
+			}
+		}
+		if bytes.Contains(prompt, []byte("new disk contents")) {
+			t.Fatal("followup reread the modified file")
+		}
+		var receipts int
+		if err := session.VisitEvents(ctx, application.events, id, func(event session.Event) error {
+			if event.Type == session.EventToolSucceeded {
+				receipts++
+			}
+			return nil
+		}); err != nil || receipts != 1 {
+			t.Fatalf("tool receipts=%d err=%v", receipts, err)
+		}
+		return
+	}
 	if err := application.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +328,7 @@ func TestTruncatedResponsesAfterConfirmedToolResumesWithoutRepeatingTool(t *test
 	history := chatSession.History()
 	encodedHistory, _ := json.Marshal(history)
 	if len(history) != 4 || history[0].Content != "Read fixture.txt and summarize it." ||
-		history[len(history)-1].Content != "recovered answer" || bytes.Contains(encodedHistory, []byte("partial")) ||
+		history[len(history)-1].Content != "recovered answer" || bytes.Contains(encodedHistory, []byte("The first observation")) ||
 		bytes.Count(encodedHistory, []byte("Read fixture.txt and summarize it.")) != 1 {
 		_ = reopened.Close()
 		t.Fatalf("recovery duplicated partial output or input: %+v", history)

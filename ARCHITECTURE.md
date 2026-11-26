@@ -64,12 +64,12 @@ flowchart TD
 
 ATE 的 `agent/v1` profile 是宿主无关的状态机协议。它的 Task 表达目标及 goal/cancel epoch，Execution 表达 actor 的一次执行身份与 incarnation，Step 表达执行中的序号、输入锚点和状态。这里的 **profile 指持久化协议**，与 GSEA 的 Agent 配置 profile 不同。
 
-| 名称                        | 当前 GSEA 使用方式                                                                                                          | 不能据此推导                                                   |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| 名称                        | 当前 GSEA 使用方式                                                                                                                               | 不能据此推导                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
 | ATE Task / Execution / Step | 显式采用在仅用于记录的 Task/Execution 下保存 Knowledge Observation。可选的 `Prepare` 路径通过 `EnsureExecution` 为 Turn 建立 Task/Execution/Step | ATE 正在替宿主调度 Task DAG，或每次模型调用都对应一个 ATE Step |
-| GSEA 编排 Task              | 由 native 编排仓库把 Task、依赖、claim、事件等写入 ATE state records                                                        | 该记录就是 ATE `agentprofile.Task`，或二者状态枚举可以直接互换 |
-| GSEA ExecutionContract      | 由 Task/Execution/Step 绑定 Turn，验收与交付由 Supervisor、verification 和 workspace coordinator 协作完成                   | ATE Task 的 `Goal` 字段等同于 GSEA 的完整执行契约              |
-| Agent Run / Flow Run        | 分别由 Supervisor 和 Flow runtime 管理                                                                                      | 它们天然等于 ATE Execution，或 Go goroutine 的寿命             |
+| GSEA 编排 Task              | 由 native 编排仓库把 Task、依赖、claim、事件等写入 ATE state records                                                                             | 该记录就是 ATE `agentprofile.Task`，或二者状态枚举可以直接互换 |
+| GSEA ExecutionContract      | 由 Task/Execution/Step 绑定 Turn，验收与交付由 Supervisor、verification 和 workspace coordinator 协作完成                                        | ATE Task 的 `Goal` 字段等同于 GSEA 的完整执行契约              |
+| Agent Run / Flow Run        | 分别由 Supervisor 和 Flow runtime 管理                                                                                                           | 它们天然等于 ATE Execution，或 Go goroutine 的寿命             |
 
 当前桥接的创建动作本身不调度模型或工具。宿主仍决定是否执行、何时验收、如何重试和何时停止。
 
@@ -77,7 +77,7 @@ ATE 的 `agent/v1` profile 是宿主无关的状态机协议。它的 Task 表�
 
 | 所有者                               | 负责什么                                                           | 边界                                                                                                                      |
 | ------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `app`                                | 配置解析后的依赖装配、authority 绑定、执行租约、服务生命周期与关闭 | 在这里接线数据库、记忆工具、工具管线与执行服务 |
+| `app`                                | 配置解析后的依赖装配、authority 绑定、执行租约、服务生命周期与关闭 | 在这里接线数据库、记忆工具、工具管线与执行服务                                                                            |
 | `conversation`                       | 输入串行化、上下文准备、Turn 结果展示、恢复阶段选择                | Conversation 同时只运行一个回合；Task 完成不能仅由助手最终文字判定                                                        |
 | `agentruntime` / `modelgateway`      | 固定配置构造 Eino Turn、记录模型请求与响应、用量、上下文管理和回放 | Eino ADK 构造集中在 runtime；模型供应商适配集中在 gateway                                                                 |
 | `agentmanager` / `agentflow`         | Agent 调度、等待、邮箱、Task 派发与结算；组合流程的控制算子        | 持久状态经仓库读写，调度选择由宿主作出；Flow 的工具和编排副作用经过 Pipeline                                              |
@@ -85,7 +85,7 @@ ATE 的 `agent/v1` profile 是宿主无关的状态机协议。它的 Task 表�
 | native 仓库                          | Session 事件适配、编排状态变更、业务回执、索引与一致性校验         | `session/atestore` 使用 ATE 原生 Session；`orchestration/atestore` 与 `evolutionstore` 经 `ateauthority` 写 state records |
 | `ateprocess` / `aterequest`          | ATE 进程与连接租借、准确请求身份、结果核对                         | 生产宿主使用 ATE client/API，不把 ATE engine 嵌入业务执行层                                                               |
 | `workspacecoord` / `workspacedomain` | 候选与合并协议；实际文件访问的租约和进程存活协调                   | 工作区字节和外部命令不处于 ATE 事务内                                                                                     |
-| `experience`                         | 读取 ATE 语义空间和记忆，关联原始证据、记录采用、维护来源 | App 把记忆操作注册为工具。嵌入宿主也可通过 `experienceport` 接入自动经验服务 |
+| `experience`                         | 读取 ATE 语义空间和记忆，关联原始证据、记录采用、维护来源          | App 把记忆操作注册为工具。嵌入宿主也可通过 `experienceport` 接入自动经验服务                                              |
 
 领域类型和接口向内稳定，适配器实现接口，App 在外部组合它们。具体依赖约束可读 [architecture_test.go](internal/architecture/architecture_test.go)；该文件说明约束，不构成本文执行过测试的证明。
 
@@ -97,13 +97,13 @@ ATE 的 `agent/v1` profile 是宿主无关的状态机协议。它的 Task 表�
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Session / SessionEvent                                                                  | ATE 原生记录；保存对话、模型与工具执行边界，支持原生分页、关联读取和历史截点               |
 | Team、Agent、Thread 关联、编排 Task、Flow、mailbox、预算/用量、工作区协调业务状态和回执 | ATE state records；由宿主仓库定义业务约束，并把相关状态与编排事件放入相应 batch            |
-| Memory、来源、Knowledge 采用记录、策略规格及报告 | ATE 保存经验主张、来源锚点、复用状态和采用凭据。独立的策略记录供宿主选择 LoopSpec |
-| Eino checkpoint、工具快照 manifest/引用、LSP projection | 本地 runtime 数据库，用于恢复实际执行环境或提供运行反馈 |
+| Memory、来源、Knowledge 采用记录、策略规格及报告                                        | ATE 保存经验主张、来源锚点、复用状态和采用凭据。独立的策略记录供宿主选择 LoopSpec          |
+| Eino checkpoint、工具快照 manifest/引用                                                 | 本地 runtime 数据库，用于恢复实际执行环境                                                  |
 | 未决 ATE 请求及已接收拒绝的处理信息                                                     | 本地 `ATERequests()`；保存原始请求字节、身份和尝试状态，供核对使用，不镜像已提交业务历史   |
-| artifact、snapshot/worktree 文件、Shell/LSP 进程 | 由宿主管理的本地资源 |
+| artifact、snapshot/worktree 文件、Shell 进程                                            | 由宿主管理的本地资源                                                                       |
 | 工作区租约与进程存活信息                                                                | `workspacedomain` 的共享协调数据库与锁；协调同一工作区的运行实例，不充当 Session/Task 仓库 |
 
-`OpenRuntime` 只打开受支持的 ATE-linked 运行资源格式，会拒绝旧业务数据库、未知或混合格式；它不隐式执行历史业务迁移。受支持的 runtime v1 库原地保留 schema 和退役资源行，只核验格式，不读取退役资源内容或恢复其运行能力；新库不创建这些表。共享 ATE 的可见性也不等于执行权：宿主按 ATE StoreID 与 Session ID 取得执行租约，Supervisor 的恢复、claim 回收和预算预留处理限制在所拥有的 Team。
+`OpenRuntime` 校验运行库的版本标记和实际结构，拒绝旧业务数据库、未知或混合格式。新库使用 schema v3；受支持的 ATE-linked v1/v2 运行库可原地打开，不改写其结构和历史数据。共享 ATE 的可见性也不等于执行权：宿主按 ATE StoreID 与 Session ID 取得执行租约，Supervisor 的恢复、claim 回收和预算预留处理限制在所拥有的 Team。
 
 ## 三种事件与三层完成边界
 
@@ -155,6 +155,10 @@ ATE 的 `agent/v1` profile 是宿主无关的状态机协议。它的 Task 表�
 
 **恢复与关闭。** 只读发现不创建 Runner、不调用模型；“有 checkpoint”只是一项发现结果，真正 resume 还要验证快照、模型/profile、准入和墓碑。普通启动先核对已知 ACK；Session 请求计划须在取得对应执行租约后按原依赖顺序恢复。App 关闭先停止并等待自己拥有的工作，再释放资源；worker 不响应取消而超时，会保留资源与所有权直到进程退出。
 
+**resume 的 ATE 生命周期。** `gsea resume` 先打开一个 existing-only 的 `SessionCatalog` lease，用它完成会话发现、历史读取和选中会话的校验。打开 App 时，catalog 将同一个 ATE manager/client lease adoption 给 App；成功接管后由 App 统一关闭 ATE。`--list` 不创建 App，只关闭 catalog。lease 内部的 reconnect 会重新建立 stdio 连接并重新握手，但不产生第二次 ownership；只有新的 manager 才代表新的持久 owner。
+
+**有界存储批次。** `App.WithStorageBatch` 只把同步的本地存储步骤放入一个已认证的 ATE client callback。它最多执行一次，不提供跨仓库事务，也不会自动重放 callback；callback 返回前不能等待模型、网络、用户输入或长期 worker，不能保存批次 context，也不能调用 `App.Close`。嵌套批次共享同一 lease，client callback 仍保持互斥；结果未知会使 lease 失效，后续 reconciliation 必须在 callback 返回、owner 释放后以独立上下文执行。
+
 ## 当前限制与名称待定项
 
 | 边界           | 当前限制及其影响                                                                                                                                                              |
@@ -162,14 +166,14 @@ ATE 的 `agent/v1` profile 是宿主无关的状态机协议。它的 Task 表�
 | 未知请求结果   | ATE 尚无耐久拒绝回执协议；已尝试请求在查询时不存在，不能区分“未到达”与“拒绝响应丢失”。保留原 envelope 并报告 unknown，不自动换 ID 或重新提交                                  |
 | 外部副作用     | 文件、Shell、供应商模型请求与 ATE 不共享事务；不能宣称端到端 exactly-once。恢复需要确定回执或显式未知状态                                                                     |
 | 有界提交与读取 | Session append、payload、state batch 和分页都有容量边界；超过原子批次限制会报错，不通过拆批伪造原子性                                                                         |
-| 恢复环境       | 缺少 checkpoint、工具快照身份不兼容或宿主二进制变化均可能阻止续跑。已有业务历史仍可按权限查询 |
+| 恢复环境       | 缺少 checkpoint、工具快照身份不兼容或宿主二进制变化均可能阻止续跑。已有业务历史仍可按权限查询                                                                                 |
 | 用量与费用     | 预留和恢复估算用于保守准入与记账，不等于供应商账单；token 估算及缺失价格信息不提供严格费用上限                                                                                |
 | 调度与隔离     | Task DAG 已有依赖、claim、分派、验收和重指派路径；关键路径优先级未实现。共享可写子 Agent 串行；跨实例文件协调依赖 workspace domain，rendezvous 不可用时需关注其 degraded 状态 |
 | 模型配置       | runtime 有显式模型解析接口；当前 CLI 内置 profile 使用 chat 模型，不等于已提供用户侧多模型目录                                                                                |
 
 本文使用已核对的当前名称：
 
-- `internal/runtimestore` 通过 `OpenRuntime` 提供 checkpoint、LSP 诊断、工具快照清单与引用、未完成的 ATE 请求。`Compact` 仅回收空闲页。
+- `internal/runtimestore` 通过 `OpenRuntime` 提供 checkpoint、工具快照清单与引用、未完成的 ATE 请求。`Compact` 仅回收空闲页。
 - `internal/ateports`：宿主对 ATE 的端口，只定义精确历史读取和语义决策状态，不承担投递、镜像或第二份业务历史。
 - `internal/atebridge`：承接 ATE 执行语义与经验请求，经 `ateports` 读写，不保存历史副本。
 

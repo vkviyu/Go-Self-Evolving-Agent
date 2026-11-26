@@ -19,7 +19,10 @@ enabled = true
 binary = "ate"
 directory = "/private/path/gsea-temporal"
 timeout = "30s"
+startup_timeout = "10m"
 ```
+
+ATE 会先校验并回放已有历史，再回应握手。`startup_timeout` 单独限制这个阶段，也适用于断线后重建连接，可用 `GSEA_ATE_STARTUP_TIMEOUT` 覆盖。连接就绪后，普通读写使用 `timeout`。调用方取消或设置更早的期限仍然优先。
 
 也可以使用 `GSEA_ATE_ENABLED`、`GSEA_ATE_BINARY`、`GSEA_ATE_DIRECTORY` 和 `GSEA_ATE_TIMEOUT` 覆盖配置。应用必须启用 ATE；设置 `enabled = false` 会拒绝打开应用。代码嵌入场景的 `config.Config` 零值仍是关闭状态，宿主需要显式设置 `ATE.Enabled`、二进制路径和存储目录。
 
@@ -42,6 +45,8 @@ Session Event Store 使用 ATE 原生追加接口；编排仓库在 ATE 上逐�
 TUI 的请求阶段显示当前操作及其持续时间；存储操作同时显示 ATE 子阶段，例如 `Persisting request · 8s · ATE waiting for lock 6s`。子阶段区分本进程排队、跨进程存储锁、目录检查、子进程启动、存储打开与握手、原生操作和关闭。stdio 是持续双向的帧连接，不是一次性输入输出；GSEA 启动后由 App 持有一个经过身份校验的 ATE 子进程、transport 和 client，普通 repository callback 串行复用它，直到 App 关闭。握手等待包含 ATE 打开和恢复存储的时间，不能仅凭 `handshake` 判断为网络延迟。
 
 交互界面可以先于运行时就绪显示。此时提交的输入显示 `Waiting for runtime startup`，并展示模型初始化、根 Agent 所有权、运行时工厂、Supervisor 恢复、会话与邮箱、维护等启动阶段。只有必要恢复完成后才执行排队输入；启动失败直接显示错误。启动完成时同时装配历史、用量、恢复和子 Agent 查看能力。
+
+`gsea resume` 使用一条独立的 existing-only catalog 路径。`OpenSessionCatalog` 只打开已有 ATE store，不创建聊天 App；会话目录、历史读取和选中会话的校验都复用这个 catalog lease。选中后，`App.OpenWithOptions` 将同一个 manager/client lease adoption 给 App，catalog 的关闭责任随资源转移，最终由 App 统一关闭 ATE。`resume --list` 在打印列表后直接关闭 catalog；空 ATE 目录返回空列表，不把已关闭的 catalog 当作可读对象。lease 内部因为连接断开触发的 reconnect 会重新执行 start 和 handshake，但不会再次取得 ownership，也不表示打开了第二个持久 ATE owner。
 
 本地启动存储步骤通过 `App.WithStorageBatch` 复用 App 已持有的原生连接，减少反复打开和恢复整个 ATE 存储的开销。整个批次受 ATE 时限约束；它不是跨仓库原子事务，失败不能整体重试。批次上下文只用于同步存储步骤，不能跨模型调用、用户等待或长期后台任务持有。作用域结束后拒绝旧上下文复用；提交结果未知会使当前连接失效，普通业务 callback 不会自动重放。显式恢复会先关闭旧 lease、释放 owner，再建立新 stdio 连接，并只用原始 RequestKey、请求字节和 Store ID 核验原请求。App 关闭时先等待使用者退出，再关闭 client、ATE 子进程和 owner。
 
@@ -70,6 +75,6 @@ TUI 的请求阶段显示当前操作及其持续时间；存储操作同时显�
 
 2026-11-22 的真实供应商定向验收使用正常模型配置、两条合成请求和隔离的临时存储：打招呼产生 1 次主模型请求、0 次工具调用；询问可复用记忆数量产生 2 次主模型请求、1 次成功的 `memory_query/count`。两者都没有辅助 Experience 请求，实测 turn 分别约 6 秒和 18 秒。测试入口为 `GSEA_TEST_REAL_MEMORY=1 go test ./internal/app -run '^TestMemoryRealProviderDecision$' -count=1 -v`；它验证这两个场景的实际工具选择，不代表所有表达或记忆维护场景的模型效果。
 
-2026-11-20 已完成权威存储切换并通过 ATE/GSEA 整库测试、静态检查和定向竞态检查。新路径验证包括：全新本地运行库读取原 ATE 历史、提交后正文清理、上传与追加按所属会话恢复、会话执行锁、Team 恢复范围、原生分页、任务改派历史栅栏、Flow 已完成工具结果复用，以及跨项目经验采用和重新打开后的读取。受控断流恢复检查通过；本轮未重新运行真实模型供应商端到端测试。完整验证范围和未知请求限制见 [迁移记录](./ATE_AUTHORITY_CUTOVER.md)。
+2026-11-20 的迁移验收已覆盖 ATE/GSEA 整库测试、静态检查和定向竞态检查。新路径验证包括：全新本地运行库读取原 ATE 历史、提交后正文清理、上传与追加按所属会话恢复、会话执行锁、Team 恢复范围、原生分页、任务改派历史栅栏、Flow 已完成工具结果复用，以及跨项目经验采用和重新打开后的读取。受控断流恢复检查通过；本轮未重新运行真实模型供应商端到端测试。该段是迁移时的历史记录，当前验证状态见 [功能范围与剩余工作](../IMPLEMENTATION_REMAINING.md)。完整迁移范围和未知请求限制见 [迁移记录](./ATE_AUTHORITY_CUTOVER.md)。
 
 显式配置自动经验服务时，维护失败不会改变已经完成的 turn 结果，而会留下 pending maintenance。默认工具路径的维护失败则作为工具结果交给主 Agent；来源撤回、隐私拒绝、版本冲突和未知写入结果仍由 ATE 当前策略与幂等回执约束。

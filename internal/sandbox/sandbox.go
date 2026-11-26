@@ -29,8 +29,6 @@ type Request struct {
 	// never by model tool arguments.
 	ReadOnlyPaths []string
 	Environment   []string
-	// Stdin supports trusted stdio protocols (for example a language server).
-	Stdin io.Reader
 	// InheritedFiles become descriptors 3 and up of the command. The caller
 	// keeps ownership and closes them after Run returns.
 	InheritedFiles []*os.File
@@ -140,7 +138,6 @@ func (runner *seatbeltRunner) Run(ctx context.Context, request Request, stdout, 
 	command.ExtraFiles = request.InheritedFiles
 	command.Stdout = stdout
 	command.Stderr = stderr
-	command.Stdin = request.Stdin
 	return runProcessGroup(command)
 }
 
@@ -161,7 +158,6 @@ func (runner *bubblewrapRunner) Run(ctx context.Context, request Request, stdout
 	command.ExtraFiles = request.InheritedFiles
 	command.Stdout = stdout
 	command.Stderr = stderr
-	command.Stdin = request.Stdin
 	return runProcessGroup(command)
 }
 

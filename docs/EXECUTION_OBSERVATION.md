@@ -24,6 +24,8 @@ chat → conversation → turn → model request → gateway → tool pipeline
 
 每行的 `seq` 表示本次调用内的写出顺序，`at` 是发布事件的 UTC 时间。并行分支应结合 `team_id`、`agent_id`、`parent_agent_id`、`task_id`、`run_id`、`session_id` 和 `turn_id` 判读。一次调用内用 `request_id` 细分模型请求；跨进程恢复时，同时看轨迹文件、`turn_id` 和 `request_id`。已确认的模型决策及工具结果重放会产生重放标记。字段随所在边界填入。诊断只记录标识、受限标签、状态和计数，省略提示词、回答、推理内容、工具参数及结果、URL、凭据和原始响应字节。
 
+ATE 的一个请求在收发途中被取消时，SDK 会关闭该 stdio 连接。后续独立调用可以在同一会话内重新连接。轨迹中的 `connection.stage` 会依次记录 `reconnect`、`start` 和 `handshake`。GSEA 在此期间持有原数据目录的所有权，使用新连接前校验存储身份。已经发出的写入若缺少确认，仍按原请求 ID 核对回执。
+
 ## 从会话找到事件
 
 将下面的 `session` 换为实际会话 ID。命令同时查找当前段和上一段，能定位多次恢复运行产生的文件。使用 `--data-dir` 时相应调整 `dir`。

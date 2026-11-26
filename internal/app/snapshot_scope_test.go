@@ -27,7 +27,6 @@ func TestNativeSnapshotScopeBindsRuntimeEnvironment(t *testing.T) {
 		func(cfg *config.Config, _ *string, _ *sandbox.Mode) { cfg.DataDirectory = otherDirectory },
 		func(_ *config.Config, _ *string, mode *sandbox.Mode) { *mode = sandbox.Mode("container") },
 		func(cfg *config.Config, _ *string, _ *sandbox.Mode) { cfg.Model.BaseURL = "https://changed.invalid" },
-		func(cfg *config.Config, _ *string, _ *sandbox.Mode) { cfg.LSP.Enabled = true },
 	} {
 		changed, root, mode := cfg, "/workspace", sandbox.Mode("")
 		change(&changed, &root, &mode)

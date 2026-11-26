@@ -80,7 +80,7 @@ var domainDependencies = map[string][]string{
 	"internal/session/memorystore":    {"internal/session"},
 	"internal/session/atestore":       {"internal/aterequest", "internal/session", "internal/ateports"},
 	"internal/orchestration/atestore": {"internal/ateauthority", "internal/agentflow", "internal/agentprofile", "internal/orchestration", "internal/retention", "internal/session", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
-	"internal/runtimestore":           {"internal/agentflow", "internal/aterequest", "internal/lsp", "internal/orchestration", "internal/retention", "internal/session", "internal/strategy", "internal/ateports", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
+	"internal/runtimestore":           {"internal/agentflow", "internal/aterequest", "internal/orchestration", "internal/retention", "internal/session", "internal/strategy", "internal/ateports", "internal/tokenusage", "internal/tool", "internal/workspacecoord"},
 }
 
 // Check imported selectors, not source spelling, so aliases and taking a

@@ -79,6 +79,30 @@ func findChatSession(ctx context.Context, resolved config.Config, options chatOp
 	return chatSession{Session: historySession(chatDataDirectory(resolved, options), histories[0])}, nil
 }
 
+func findChatSessionFromCatalog(ctx context.Context, catalog *app.SessionCatalog, resolved config.Config, options chatOptions) (chatSession, error) {
+	entries, histories, err := catalog.ReadChatCatalog(ctx, options.sessionID, options.requireExistingSession)
+	if err != nil {
+		return chatSession{}, err
+	}
+	if len(entries) != 0 {
+		item := entries[0]
+		if strings.TrimSpace(item.DataDirectory) == "" {
+			return chatSession{}, fmt.Errorf("session %q has no registered data directory", item.ID)
+		}
+		if options.dataExplicit && canonicalDirectory(item.DataDirectory) != canonicalDirectory(options.dataDirectory) {
+			return chatSession{}, fmt.Errorf("session %q uses data directory %s", item.ID, item.DataDirectory)
+		}
+		if options.requireExistingSession && len(histories) == 0 {
+			return chatSession{}, fmt.Errorf("session %q has no saved conversation", item.ID)
+		}
+		return chatSession{Session: item, registered: true}, nil
+	}
+	if len(histories) == 0 {
+		return chatSession{}, nil
+	}
+	return chatSession{Session: historySession(chatDataDirectory(resolved, options), histories[0])}, nil
+}
+
 func historySession(dir string, history session.ChatHistory) sessionregistry.Session {
 	return sessionregistry.Session{
 		ID: string(history.ID), Name: history.Prompt, Workspace: history.Workspace,

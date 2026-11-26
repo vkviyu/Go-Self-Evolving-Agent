@@ -1,7 +1,7 @@
 # 多 Agent 并行执行实现方案
 
-> 文档状态：Implementation Plan v2.1（设计已确定，P0、P1 于 2026-10-23 完成，P2、P3 于 2026-10-25 完成；P4 可选，未开始）  
-> 更新日期：2026-10-29（按当前代码核对；与设计不一致之处在各节以“实现偏离”或“未实现”标注，汇总见第 15 节末尾）  
+> 文档状态：Implementation Plan v2.1 历史计划（设计已确定，P0、P1 于 2026-10-23 完成，P2、P3 于 2026-10-25 完成；P4 可选，未开始）
+> 更新日期：2026-10-29（这是当时的实现计划快照，不是当前功能清单或验收报告；旧包名、迁移版本、路径和测试结论只适用于对应记录日期）
 > 关联文档：[MULTI_AGENT_ARCHITECTURE.md](MULTI_AGENT_ARCHITECTURE.md)  
 > 范围：子 Agent 并行调度、工作区协调、不依赖 Git 的隔离、合并提交、交付门禁、审批与交互
 
@@ -24,7 +24,7 @@ v1 经过设计审计，发现多个协议没有闭合：按 v1 实现，会出�
 | Git 路径违反“主工作区无冲突标记”  | `ApplyPatch` 直接作用于主工作区并保留冲突标记（`internal/workspacecoord/git.go:134`）                                                                                              | 所有视图模式共用一个合并引擎，Git worktree 只是快照的创建方式（第 8 节）  |
 | 邮箱缺少耐久消费协议              | `prepareModelInput` 同时服务于 `compaction`、`goal_assessment` 等辅助请求                                                                                                          | 消费账本，注入限定主 Turn 请求（第 11.3 节）                              |
 
-表中引用的是 v2 审计时（实施前）的代码位置。P0–P3 实施后，其中一部分已移动或失效，例如 `internal/session/sqlitestore/leases.go` 已删除，租约迁到了 `internal/workspacedomain/leases.go`。
+表中引用的是 v2 审计时（实施前）的代码位置。P0–P3 实施后，其中一部分已移动或失效，例如 `internal/session/sqlitestore/leases.go` 已删除，租约迁到了 `internal/workspacedomain/leases.go`。当前生产路径以源码和 [Multi-Agent 当前架构](MULTI_AGENT_ARCHITECTURE.md) 为准；本计划中的旧 SQL 路径、迁移版本和历史测试结果不能作为当前入口或验收证据。
 
 仍然成立的事实有：
 
@@ -211,7 +211,6 @@ v2.1 确定了 v2 中留待验证的设计：汇合锁的位置与加锁协议�
 
 - `operationRoot` 接受由可信代码登记的视图 `work/` 目录；为每个视图创建以 `work/` 为根的沙箱 runner，并按视图缓存。实现：`operationRoot` 只检查路径位于登记的 views 目录下，`work/` 这一级由 `ViewSpec.Validate` 保证。
 - `ViewSpec.Validate` 增加 `snapshot` 分支：视图位于工作区之外，`BaseRevision` 填清单摘要。实现：要求 base 与 work 相同，且 `BaseRevision` 以 `sha256:` 开头。
-- 第一版在视图中关闭被动 LSP 诊断，按需诊断（`workspace_diagnostics`）不受影响。
 
 ## 8. 合并与 ApplyPlan
 
@@ -403,7 +402,7 @@ shared_writes = false         # Enable the owned-path optimization (P4, not impl
 
 ### P0–P3 遗留项（2026-10-26 核对）
 
-P0–P3 的验收条件均已满足，`go test ./... -count=1` 于 2026-10-26 全部通过。下列设计条目尚未落地，详见对应章节：
+P0–P3 的验收条件均已满足，`go test ./... -count=1` 于 2026-10-26 全部通过。该结论属于当日计划记录，不能替代当前验证；下列设计条目尚未落地，详见对应章节：
 
 - Git worktree 未并入统一合并引擎：仍用 `git apply --3way` 改动主工作区，worktree 仍位于工作区内，没有内容基线（第 7.3、8 节）。
 - 合并提交只持有整个工作区的屏障，没有逐路径批量租约。锁内 preimage 校验失败时直接判冲突，不重新生成计划。审批绑定只在单次执行内有效（第 8.2、8.3 节）。
@@ -443,12 +442,10 @@ P0–P3 的验收条件均已满足，`go test ./... -count=1` 于 2026-10-26 �
 - `snapshot_copy_limit = "1GiB"`
 - 操作租约的等待上限为 10 秒（`operationLeaseWait`，`internal/codingtools/workspace.go`）
 
-
 ## 2026-10-29 动态任务、恢复结算与 Execution admission 增量
 
 动态计划阶段现已落地：`task_update` 提供执行前版本化编辑，`task_refine` 以 v40 `task_refinement_members` 持久化原子细化成员，`task_reassign` 对可信 iteration-limit 失败执行有副作用证明的有限重试。普通 `ParentTaskID` 仍是分组关系，自动派发绑定 Task version，细化子任务从 draft 开始，必须显式转为 ready。
 
 恢复阶段新增 completion receipt 的摘要、JSON 契约和 RunID 校验；worker 返回后先冻结结果，Task/交付/通知/资源结算失败只进入 pending 结算队列，不重新运行 worker。父细化成员未完成时释放已结束 worker 的 lease、保留 delivery view，子任务完成后恢复扫描补结算。已确认模型拒绝、已知工具错误、wait checkpoint 后的后续响应都按 journal/checkpoint marker 重放；未知副作用继续 fail closed。
-
 
 Execution admission 现由 durable token 保护：`reserved → turn_started → execution_started → consumed` 使用 CAS 和输入/契约/配置摘要校验；缺失 Turn 或 Execution/Step 绑定的 token 进入 `unavailable`，恢复不会降级为普通聊天。

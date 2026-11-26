@@ -3,13 +3,9 @@ package codingtools
 import (
 	"bytes"
 	"context"
-	"io"
-	"os"
 	"unicode/utf8"
 
 	"github.com/aymanbagabas/go-udiff"
-
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 )
 
 const (
@@ -26,28 +22,28 @@ type DiffArtifactStore interface {
 }
 
 type diffResult struct {
-	Path        string         `json:"path"`
-	Kind        lsp.ChangeKind `json:"kind"`
-	Status      string         `json:"status"`
-	Bytes       int            `json:"bytes,omitempty"`
-	Content     string         `json:"content,omitempty"`
-	ArtifactRef string         `json:"artifact_ref,omitempty"`
-	Preview     string         `json:"preview,omitempty"`
-	Truncated   bool           `json:"truncated,omitempty"`
-	Message     string         `json:"message,omitempty"`
+	Path        string     `json:"path"`
+	Kind        changeKind `json:"kind"`
+	Status      string     `json:"status"`
+	Bytes       int        `json:"bytes,omitempty"`
+	Content     string     `json:"content,omitempty"`
+	ArtifactRef string     `json:"artifact_ref,omitempty"`
+	Preview     string     `json:"preview,omitempty"`
+	Truncated   bool       `json:"truncated,omitempty"`
+	Message     string     `json:"message,omitempty"`
 }
 
-func buildDiff(ctx context.Context, store DiffArtifactStore, relative string, kind lsp.ChangeKind, before, after []byte) diffResult {
+func buildDiff(ctx context.Context, store DiffArtifactStore, relative string, kind changeKind, before, after []byte) diffResult {
 	result := diffResult{Path: relative, Kind: kind, Status: "ready"}
-	if kind == lsp.ChangeModified && bytes.Equal(before, after) {
+	if kind == changeModified && bytes.Equal(before, after) {
 		result.Status = "unchanged"
 		return result
 	}
-	if kind == lsp.ChangeCreated && len(after) == 0 {
+	if kind == changeCreated && len(after) == 0 {
 		result.Message = "empty file created"
 		return result
 	}
-	if kind == lsp.ChangeDeleted && len(before) == 0 {
+	if kind == changeDeleted && len(before) == 0 {
 		result.Message = "empty file deleted"
 		return result
 	}
@@ -63,10 +59,10 @@ func buildDiff(ctx context.Context, store DiffArtifactStore, relative string, ki
 		return result
 	}
 	oldLabel, newLabel := "a/"+relative, "b/"+relative
-	if kind == lsp.ChangeCreated {
+	if kind == changeCreated {
 		oldLabel = "/dev/null"
 	}
-	if kind == lsp.ChangeDeleted {
+	if kind == changeDeleted {
 		newLabel = "/dev/null"
 	}
 	content := udiff.Unified(oldLabel, newLabel, string(before), string(after))
@@ -108,15 +104,6 @@ func isBinary(data []byte) bool {
 	return bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)
 }
 
-func readDiffFile(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	return io.ReadAll(io.LimitReader(file, maxDiffInputBytes+1))
-}
-
 func diffPreview(content string) string {
 	limit := maxInlineDiffBytes / 2
 	if len(content) <= limit {
@@ -129,7 +116,9 @@ func diffPreview(content string) string {
 	return preview + "\n... diff preview truncated ..."
 }
 
-func appendDiff(ctx context.Context, store DiffArtifactStore, result map[string]any, relative string, kind lsp.ChangeKind, before, after []byte) {
+// appendFileChange adds the change summary and single-file diff to a write result.
+func appendFileChange(ctx context.Context, store DiffArtifactStore, result map[string]any, relative string, kind changeKind, before, after []byte) {
+	result["changes"] = []changeSummary{{Path: relative, Kind: kind}}
 	result["diff"] = buildDiff(ctx, store, relative, kind, before, after)
 }
 

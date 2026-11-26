@@ -4,7 +4,7 @@
 
 某次排查流超时，日志显示宿主收到了响应头，随后一直在等待响应体字节。另一个项目遇到类似现象时，主 Agent 可以向 ATE 查询上次留下的经验，核验出处与适用条件，再决定是否采用。第二个项目的超时原因要从自己的执行记录中确认。
 
-GSEA 以这种有来源、可修正的跨任务记忆定义 Evolving。本文保留 2026 年 8 月设计基线与 10 月复核时的 Eino、审批、工作区及恢复设计背景。早期的扩展工具实验已经退役。现行宿主通过 stdio 接入 ATE。[跨任务记忆指南](EVOLUTION.md) · [架构导读](ARCHITECTURE.md) · [Multi-Agent 架构](MULTI_AGENT_ARCHITECTURE.md)
+GSEA 以这种有来源、可修正的跨任务记忆定义 Evolving。本文保留 2026 年 8 月设计基线与 10 月复核时的 Eino、审批、工作区及恢复设计背景。现行宿主通过 stdio 接入 ATE。[跨任务记忆指南](EVOLUTION.md) · [架构导读](ARCHITECTURE.md) · [Multi-Agent 架构](MULTI_AGENT_ARCHITECTURE.md)
 
 ---
 
@@ -50,7 +50,7 @@ GSEA 以这种有来源、可修正的跨任务记忆定义 Evolving。本文保
 
 - 版本化 LoopSpec（`internal/strategy`）、影子比较、CAS 发布与失败隔离回退；
 - Multi-Agent：durable Supervisor（`internal/agentmanager`）、Task DAG、mailbox、快照隔离写入与 merge queue（`internal/workspacecoord`、`internal/workspacedomain`）；
-- ExecutionContract/Task verification、宿主命名 Flow（`internal/agentflow`）、LSP 诊断（`internal/lsp`）、Team 预算与用量预留（`internal/tokenusage`）；
+- ExecutionContract/Task verification、宿主命名 Flow（`internal/agentflow`）、Team 预算与用量预留（`internal/tokenusage`）；
 - benchmark 任务/结果协议与 `local-agent eval`（`internal/evaluation`，见 [evals/README.md](./evals/README.md)）。
 
 当时仍在讨论 MCP、Skills/AGENTS.md、Plan Task 和 provider failover。后续存储切换与适用范围见 [ATE 权威迁移记录](docs/ATE_AUTHORITY_CUTOVER.md)。
@@ -61,10 +61,10 @@ GSEA 以这种有来源、可修正的跨任务记忆定义 Evolving。本文保
 
 ### 2.1 固定版本
 
-| 组件        | 基线版本                  | 使用原则                                                                        |
-| ----------- | ------------------------- | ------------------------------------------------------------------------------- |
-| Go          | **go1.27.0**              | 构建宿主程序 |
-| Eino        | **v0.9.22**               | 使用当前稳定版本，不采用 v0.10 alpha（基线原定 v0.9.14，`go.mod` 现为 v0.9.22） |
+| 组件 | 基线版本     | 使用原则                                                                        |
+| ---- | ------------ | ------------------------------------------------------------------------------- |
+| Go   | **go1.27.0** | 构建宿主程序                                                                    |
+| Eino | **v0.9.22**  | 使用当前稳定版本，不采用 v0.10 alpha（基线原定 v0.9.14，`go.mod` 现为 v0.9.22） |
 
 `go.mod` 固定语言/最低工具链版本；开发机与发布流水线另外固定实际 Go 工具链为 go1.27.0：
 
@@ -126,8 +126,8 @@ CLI / TUI → Conversation → Eino Agent Runtime → Model Gateway
 ATE client / stdio → ATE：会话、编排、用量、记忆、来源与采用记录
 
 App：装配与生命周期
-本地 runtime SQLite：checkpoint、工具快照及引用、LSP 缓存、未决请求
-工作区协调库与本地资源：文件、租约、锁、Shell/LSP 进程
+本地 runtime SQLite：checkpoint、工具快照及引用、未决请求
+工作区协调库与本地资源：文件、租约、锁、Shell 进程
 ```
 
 当前实现与上图的对应：
@@ -138,7 +138,7 @@ App：装配与生命周期
 - Policy & Approval = `internal/policy` + `internal/approval`；预算 = `internal/tokenusage`。
 - 记忆工具由 `internal/app/memory_tools.go` 注册，`internal/experience` 经 ATE 端口查询、创建候选、采用和维护来源。普通工具不提供验证或晋升操作。
 - MCP 工具未实现；FS/Shell 以原生 workspace 工具（`internal/codingtools`）形式提供给模型。
-- 图外新增：`internal/agentmanager`/`internal/orchestration`（Multi-Agent）、`internal/agentflow`、`internal/strategy`、`internal/evolutiontools`、`internal/lsp`、`internal/evaluation`、`internal/toolbridge`、`internal/modelgateway`、`internal/modelcontext`。
+- 图外新增：`internal/agentmanager`/`internal/orchestration`（Multi-Agent）、`internal/agentflow`、`internal/strategy`、`internal/evolutiontools`、`internal/evaluation`、`internal/toolbridge`、`internal/modelgateway`、`internal/modelcontext`。
 - 具体依赖与构造点约束见 [architecture_test.go](internal/architecture/architecture_test.go)；旧包名和旧 SQL owner 不能作为现行接入方式。
 
 ### 4.1 可信计算基（TCB）
@@ -361,10 +361,12 @@ ATE 存储请求有自己的准确 RequestKey/digest 与核验流程；其提交
 
 ### 6.5 存储实现
 
-当前业务事实由 ATE 保存：会话使用原生 Session 接口，编排、用量与策略由宿主仓库写 state records，Memory/Knowledge 保存记忆与采用记录。本地 `runtime-v3.db` 只保存 checkpoint、工具快照及引用、LSP 缓存、authority 绑定和未决请求；工作区租约在独立协调库中。
+当前业务事实由 ATE 保存：会话使用原生 Session 接口，编排、用量与策略由宿主仓库写 state records，Memory/Knowledge 保存记忆与采用记录。本地 `runtime-v3.db` 只保存 checkpoint、工具快照及引用、authority 绑定和未决请求；工作区租约在独立协调库中。
 
-旧业务数据库不自动导入或迁移。已有受支持的 ATE-linked runtime v1 库可原地打开并保留旧 schema 与历史资源行，但不读取退役资源内容、不恢复其运行能力；新库不创建退役资源表。未知或混合格式拒绝打开。具体检查见 [runtime_database.go](internal/runtimestore/runtime_database.go)。
+旧业务数据库不自动导入或迁移。已有受支持的 ATE-linked runtime v1 库可原地打开并保留旧 schema 与历史资源行。未知或混合格式拒绝打开。具体检查见 [runtime_database.go](internal/runtimestore/runtime_database.go)。
 
+- `gsea resume` 的会话目录、历史读取和选中会话校验共享一个 existing-only `SessionCatalog` ATE lease；`App.Open` 成功后接管同一 lease，统一负责最终关闭。`--list` 不创建聊天 App，lease 内 reconnect 也不代表第二个持久 owner。
+- `App.WithStorageBatch` 只用于有界的同步存储 callback，最多执行一次，不提供跨仓库事务或自动重放。callback 不能等待模型、网络、用户输入或长期 worker，也不能保留批次 context；结果未知时先让 lease 失效，再在 owner 释放后独立核验。
 - Session append 使用期望序号与原请求身份；业务 state batch 使用 authority CAS。两个提交边界不能混称一个事务。
 - artifact 先写临时文件、同步并原子重命名，再允许事件引用其 Hash。
 - ATE 写入结果未知时保留准确 envelope，按原身份对账；查询不存在不授权重发。
@@ -470,14 +472,6 @@ type SnapshotManifest struct { Version int; Host string; Tools []SnapshotEntry }
 
 ---
 
-## 8–12. 早期扩展工具实验（已退役）
-
-原第 8–12 节讨论的 WASM 工具、ABI、运行时、编译 Worker、发布及回收链路均已退出 GSEA 产品范围。相关安装、构建、SDK、配置和 GC 操作不再是现行使用方式，也不是待补齐的能力。普通工具仍由宿主注册，Turn/Flow 仍固定工具快照用于恢复；不能因此推断宿主可以加载动态代码。
-
-Evolving 现在指 ATE 管理的跨任务记忆。主 Agent 按需查询来源并显式采用；创建候选不等于完成验证或晋升。具体操作见[跨任务记忆指南](EVOLUTION.md)。后续节号保留，便于对照早期设计。
-
----
-
 ## 13. Policy 与 Human-in-the-loop
 
 ### 13.1 决策输入
@@ -560,13 +554,13 @@ AllowWithConstraints
 
 ### 14.3 不生成新的执行循环
 
-早期动态 Driver 设想已撤销，不再列为未来阶段。Eino 继续负责单个 Turn 的模型—工具循环；Supervisor、Flow 与执行契约负责宿主编排。
+Eino 负责单个 Turn 的模型—工具循环；Supervisor、Flow 与执行契约负责宿主编排。
 
 ---
 
 ## 15. 自进化分层
 
-现行 Evolving 指有来源、可纠正的 ATE 跨任务记忆，不再沿用“生成工具代码即自进化”的分层。
+现行 Evolving 指有来源、可纠正的 ATE 跨任务记忆。
 
 ### 15.1 记忆查询与维护
 
@@ -629,15 +623,15 @@ ${GSEA_HOME}/
 
 ## 18. 故障处理矩阵
 
-| 故障 | 当前边界 |
-| --- | --- |
-| 模型网络失败、认证失败或断流 | 保存失败与诊断，按故障类型失败或暂停；没有通用 provider failover。是否能续跑要检查原 Turn 的恢复条件。 |
-| 工具领域错误或审批拒绝 | 已持久的可恢复错误交回同一 Eino Loop；持久化失败不能伪装成普通工具失败。 |
-| 工具副作用结果未知 | 暂停/终止当前路径，保留原身份核对；不能自动重做副作用。 |
-| ATE 请求结果未知 | 保存原 envelope 并查询回执；查无回执仍未知，不换 ID 重发。 |
-| LoopSpec 候选 Turn 失败 | 独立尝试策略回退，只影响后续 Turn；不回滚文件或重跑当前 Turn。 |
-| checkpoint、快照或日志不完整/不兼容 | 拒绝不安全恢复，不用当前配置冒充旧版本，也不承诺自动重建。 |
-| 记忆来源失效 | 不再作为可复用经验；维护需审批并保留撤回/纠正记录。 |
+| 故障                                | 当前边界                                                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 模型网络失败、认证失败或断流        | 保存失败与诊断，按故障类型失败或暂停；没有通用 provider failover。是否能续跑要检查原 Turn 的恢复条件。 |
+| 工具领域错误或审批拒绝              | 已持久的可恢复错误交回同一 Eino Loop；持久化失败不能伪装成普通工具失败。                               |
+| 工具副作用结果未知                  | 暂停/终止当前路径，保留原身份核对；不能自动重做副作用。                                                |
+| ATE 请求结果未知                    | 保存原 envelope 并查询回执；查无回执仍未知，不换 ID 重发。                                             |
+| LoopSpec 候选 Turn 失败             | 独立尝试策略回退，只影响后续 Turn；不回滚文件或重跑当前 Turn。                                         |
+| checkpoint、快照或日志不完整/不兼容 | 拒绝不安全恢复，不用当前配置冒充旧版本，也不承诺自动重建。                                             |
+| 记忆来源失效                        | 不再作为可复用经验；维护需审批并保留撤回/纠正记录。                                                    |
 
 特定的请求核验、格式修复与日志回放不等于对所有错误统一自动重试。恢复细节以[执行观察](docs/EXECUTION_OBSERVATION.md)、[架构导读](ARCHITECTURE.md)和对应测试为准。
 
@@ -720,10 +714,6 @@ ${GSEA_HOME}/
 
 现行存储已切换到 ATE。恢复要求 checkpoint、原身份与工具环境兼容；结果未知时停止自动重做，不能承诺任意边界都可恢复。持久审批与通用外部副作用 reconciliation 尚未落地。
 
-### Phase 3、4、6：已退役的扩展路线
-
-早期动态工具运行、Agent 生成工具与动态 Driver 路线均已退出范围。普通工具快照、恢复引用和 Shell 隔离仍有独立用途，不随该路线退役而移除。
-
 ### Phase 5：有界策略比较
 
 - LoopSpec Schema、版本库和评测集。
@@ -733,7 +723,7 @@ ${GSEA_HOME}/
 
 当前以受限形式实现，见 14.1、14.2。smoke suite 的比较不是通用能力或安全认证；策略回退不撤销外部副作用。
 
-路线图之外已有 Multi-Agent、执行契约与验收、Flow、LSP 诊断、评测和 ATE 记忆工具。普通 CLI 的记忆入口是主 Agent 按需调用，不是每轮自动提炼/验证/晋升闭环。
+路线图之外已有 Multi-Agent、执行契约与验收、Flow、评测和 ATE 记忆工具。普通 CLI 的记忆入口是主 Agent 按需调用，不是每轮自动提炼/验证/晋升闭环。
 
 ---
 

@@ -284,7 +284,7 @@ func closeRetainedTestResources(t *testing.T, a *App) {
 	if err := a.temporalProcess.Close(); err != nil {
 		t.Error(err)
 	}
-	closeOpenResources(a.database, a.approval, a.diagnostics)
+	closeOpenResources(a.database, a.approval)
 	for _, owner := range a.sessionOwners {
 		if err := owner.Close(); err != nil {
 			t.Error(err)

@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
 	"github.com/vkviyu/go-self-evolving-agent/internal/testfixture"
@@ -206,44 +205,29 @@ func TestWorkspaceWriteAndEditRejectStaleFingerprint(t *testing.T) {
 	}
 }
 
-func TestWorkspaceWriteReturnsPassiveLanguageDiagnostics(t *testing.T) {
+func TestWorkspaceWriteReportsCreatedFile(t *testing.T) {
 	root := t.TempDir()
 	workspace, err := New(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reporter := &fakeDiagnostics{report: lsp.Report{
-		Status: lsp.StatusReady, Server: "fake", Path: "main.go", Diagnostics: []lsp.Diagnostic{{
-			Path: "main.go", Start: lsp.Position{Line: 1, Column: 1}, End: lsp.Position{Line: 1, Column: 2}, Severity: "error", Message: "broken",
-		}},
-	}}
-	workspace.AttachLanguageDiagnostics(reporter)
 	result, err := workspace.write(context.Background(), json.RawMessage(`{"path":"main.go","content":"package main"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded struct {
-		Path        string     `json:"path"`
-		Diagnostics lsp.Report `json:"diagnostics"`
+		Path    string          `json:"path"`
+		Changes []changeSummary `json:"changes"`
+		Diff    diffResult      `json:"diff"`
 	}
 	if err := json.Unmarshal(result, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Path != "main.go" || decoded.Diagnostics.Status != lsp.StatusReady || len(decoded.Diagnostics.Diagnostics) != 1 {
+	if decoded.Path != "main.go" || len(decoded.Changes) != 1 ||
+		decoded.Changes[0] != (changeSummary{Path: "main.go", Kind: changeCreated}) ||
+		decoded.Diff.Kind != changeCreated || decoded.Diff.Status != "ready" ||
+		!strings.Contains(decoded.Diff.Content, "+++ b/main.go") {
 		t.Fatalf("result = %s", result)
-	}
-	if reporter.root != workspace.Root() || reporter.path != filepath.Join(workspace.Root(), "main.go") || string(reporter.content) != "package main" {
-		t.Fatalf("diagnostic call = root %q path %q content %q", reporter.root, reporter.path, reporter.content)
-	}
-
-	foundBinding := false
-	for _, binding := range workspace.Bindings() {
-		if binding.Descriptor.Name == "workspace_diagnostics" {
-			foundBinding = true
-		}
-	}
-	if !foundBinding {
-		t.Fatal("workspace_diagnostics binding was not installed")
 	}
 }
 
@@ -506,7 +490,7 @@ func TestWorkspaceShellOmittedTimeoutUsesCallerContext(t *testing.T) {
 	}
 }
 
-func TestWorkspaceShellCapturesChangesAfterParentCancellation(t *testing.T) {
+func TestWorkspaceShellCancellationDoesNotUndoWrites(t *testing.T) {
 	root := t.TempDir()
 	workspace, err := New(root)
 	if err != nil {
@@ -515,8 +499,6 @@ func TestWorkspaceShellCapturesChangesAfterParentCancellation(t *testing.T) {
 	runner := &mutationThenBlockRunner{started: make(chan struct{})}
 	workspace.shellRunner = runner
 	workspace.shellSandboxErr = nil
-	diagnostics := &fakeChangeSetDiagnostics{report: lsp.Report{Status: lsp.StatusReady, Diagnostics: []lsp.Diagnostic{}}}
-	workspace.AttachLanguageDiagnostics(diagnostics)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		<-runner.started
@@ -526,12 +508,12 @@ func TestWorkspaceShellCapturesChangesAfterParentCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("shell cancellation error = %v, want context canceled", err)
 	}
-	if len(diagnostics.set.Changes) != 1 || diagnostics.set.Changes[0].Relative != "changed.go" {
-		t.Fatalf("captured changes = %#v, want changed.go", diagnostics.set.Changes)
+	if got, err := os.ReadFile(filepath.Join(root, "changed.go")); err != nil || string(got) != "package main\n" {
+		t.Fatalf("completed write after cancellation = %q, %v", got, err)
 	}
 }
 
-func TestWorkspaceShellReportsCreatedModifiedDeletedAndDiagnosesSources(t *testing.T) {
+func TestWorkspaceShellReportsCreatedModifiedDeleted(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "existing.go"), []byte("package old\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -545,14 +527,12 @@ func TestWorkspaceShellReportsCreatedModifiedDeletedAndDiagnosesSources(t *testi
 	}
 	workspace.shellRunner = directTestRunner{}
 	workspace.shellSandboxErr = nil
-	diagnostics := &fakeChangeSetDiagnostics{report: lsp.Report{Status: lsp.StatusReady, Diagnostics: []lsp.Diagnostic{}}}
-	workspace.AttachLanguageDiagnostics(diagnostics)
 	result, err := workspace.shell(context.Background(), json.RawMessage(`{"command":"printf 'package changed\\n' > existing.go; printf 'package created\\n' > created.go; rm deleted.go"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded struct {
-		Changes []lsp.ChangeSummary `json:"changes"`
+		Changes []changeSummary `json:"changes"`
 		Diffs   []struct {
 			Path    string `json:"path"`
 			Status  string `json:"status"`
@@ -562,7 +542,7 @@ func TestWorkspaceShellReportsCreatedModifiedDeletedAndDiagnosesSources(t *testi
 	if err := json.Unmarshal(result, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]lsp.ChangeKind{"created.go": lsp.ChangeCreated, "deleted.go": lsp.ChangeDeleted, "existing.go": lsp.ChangeModified}
+	want := map[string]changeKind{"created.go": changeCreated, "deleted.go": changeDeleted, "existing.go": changeModified}
 	if len(decoded.Changes) != len(want) {
 		t.Fatalf("changes = %#v", decoded.Changes)
 	}
@@ -578,9 +558,6 @@ func TestWorkspaceShellReportsCreatedModifiedDeletedAndDiagnosesSources(t *testi
 		if diff.Status != "ready" || diff.Content == "" {
 			t.Fatalf("diff = %#v", diff)
 		}
-	}
-	if len(diagnostics.set.Changes) != 3 {
-		t.Fatalf("diagnostic change set = %#v", diagnostics.set.Changes)
 	}
 }
 
@@ -609,32 +586,4 @@ func (runner *mutationThenBlockRunner) Run(ctx context.Context, request sandbox.
 	close(runner.started)
 	<-ctx.Done()
 	return ctx.Err()
-}
-
-type fakeDiagnostics struct {
-	report  lsp.Report
-	root    string
-	path    string
-	content []byte
-}
-
-type fakeChangeSetDiagnostics struct {
-	report lsp.Report
-	set    lsp.ChangeSet
-}
-
-func (f *fakeChangeSetDiagnostics) DiagnoseChange(context.Context, string, string, []byte) lsp.Report {
-	return f.report
-}
-
-func (f *fakeChangeSetDiagnostics) DiagnoseChanges(_ context.Context, set lsp.ChangeSet) lsp.Report {
-	f.set = set
-	return f.report
-}
-
-func (f *fakeDiagnostics) DiagnoseChange(_ context.Context, root, path string, content []byte) lsp.Report {
-	f.root = root
-	f.path = path
-	f.content = append([]byte(nil), content...)
-	return f.report
 }

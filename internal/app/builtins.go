@@ -49,7 +49,6 @@ func buildPolicy(additionalTools []tool.Binding) (policy.Engine, error) {
 		{ID: "allow-workspace-list", ToolPattern: "workspace_list", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "read-only workspace inspection"},
 		{ID: "allow-workspace-glob", ToolPattern: "workspace_glob", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "read-only workspace inspection"},
 		{ID: "allow-workspace-grep", ToolPattern: "workspace_grep", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "read-only workspace inspection"},
-		{ID: "allow-workspace-diagnostics", ToolPattern: "workspace_diagnostics", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "read-only language-server diagnostics"},
 		{ID: "allow-artifact-read", ToolPattern: "artifact_read", CapabilityPattern: "tool.invoke", Effect: policy.EffectAllow, Reason: "read-only bounded artifact retrieval"},
 		{ID: "approve-workspace-write", ToolPattern: codingtools.WriteToolName, CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "writing files changes the workspace"},
 		{ID: "approve-workspace-edit", ToolPattern: codingtools.EditToolName, CapabilityPattern: "tool.invoke", Effect: policy.EffectRequireApproval, Reason: "editing files changes the workspace"},

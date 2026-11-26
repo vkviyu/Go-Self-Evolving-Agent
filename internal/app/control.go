@@ -42,6 +42,7 @@ func OpenControl(ctx context.Context, cfg config.Config) (_ *App, resultErr erro
 	}
 	process, err := ateprocess.New(ateprocess.Options{
 		Binary: resolved.ATE.Binary, Directory: resolved.ATE.Directory, Timeout: resolved.ATE.Timeout,
+		StartupTimeout: resolved.ATE.StartupTimeout,
 	})
 	if err != nil {
 		return nil, err

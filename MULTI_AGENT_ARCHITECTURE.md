@@ -1,6 +1,6 @@
 # Multi-Agent 当前架构与路线图
 
-更新：2026-11-20。本文按当前 App 装配和源码描述实现；源码清理仍在进行，功能存在不代表本轮全量验收通过。旧 SQL 业务适配器、业务迁移和遗留日志不属于当前架构，也不提供旧库兼容承诺。
+更新：2026-11-25。本文按当前 App 装配和源码描述实现；功能存在不代表本轮全量验收通过。旧 SQL 业务适配器、业务迁移和遗留日志不属于当前架构，也不提供旧库兼容承诺。
 
 ## 1. 架构与持久化边界
 
@@ -24,7 +24,7 @@ CLI / TUI / control
 | Team、Agent、Thread、Task、Mailbox、WaitSet、Goal、Flow、用量、合并与关闭回执 | ATE 逐实体 records；`internal/orchestration/atestore`                      |
 | 带来源的跨任务记忆及采用记录                                                  | ATE Memory、Knowledge，经 `internal/experience` 访问                       |
 | LoopSpec、策略候选与影子报告                                                  | ATE records，经 `internal/evolutionstore` 访问                             |
-| Eino opaque checkpoint、工具快照清单与本地引用、LSP 缓存                      | runtime SQLite，由 `internal/runtimestore` 管理                            |
+| Eino opaque checkpoint、工具快照清单与本地引用                                | runtime SQLite，由 `internal/runtimestore` 管理                            |
 | 未决 ATE 请求                                                                 | runtime SQLite 的 exact request 信封；`internal/aterequest` 负责提交与对账 |
 | 跨实例工作区 lease、实例/子进程存活                                           | `internal/workspacedomain` 的协调库与 flock                                |
 | diff、文件内容等大对象                                                        | `internal/artifact` 的文件系统内容寻址存储                                 |
@@ -34,6 +34,8 @@ CLI / TUI / control
 单次编排仓储变更在同一 authority batch 中提交实体、领域事件、计数器与 global/stream/team 序号索引。实体直接维护，不提供从事件重建所有状态的 replay/repair 服务。查询走 native 索引/分页；Supervisor 的内存 signal 只负责唤醒，TUI/control 用 cursor 查询事件或重载快照。
 
 **native Session append 与 authority batch 是两个提交边界。** 不能因为它们都使用 ATE 就声称跨域原子事务；跨边界工作依靠稳定身份、阶段回执及恢复核对。没有共享的 Session/业务事务或本地业务广播队列。
+
+`gsea resume` 的目录读取和会话打开使用同一个 existing-only `SessionCatalog` ATE lease。会话发现、历史校验和 `App.Open` 的 authority adoption 在同一 lease 上完成；`--list` 不创建 App，连接 reconnect 也不产生第二个持久 owner。`App.WithStorageBatch` 只承载有界同步存储 callback，不提供跨仓库原子性或自动重放，结果未知时必须在批次外核验。
 
 ## 2. 核心对象与包职责
 
@@ -212,7 +214,7 @@ Mailbox body 和 Task description 的领域上限为 1 MiB；native 单记录/�
 - Team cancel 尚未提供等待审批的后台 merge 的独立 per-Team 取消/等待生命周期。
 - 未实现 durable 审批、steer、Agent 独立预算、关键路径调度、worktree 池及所有权 epoch/revoking。
 - 未实现分布式 worker、跨机器副作用 exactly-once、任意历史 checkpoint 回滚、自动撤销文件/网络副作用。
-- Linux 实机隔离、Shell 子进程资源限制和宿主总 RSS 上限不能由 macOS 测试推定；退役扩展编译器不再属于待完善能力。
+- Linux 实机隔离、Shell 子进程资源限制和宿主总 RSS 上限不能由 macOS 测试推定。
 
 ## 8. 分阶段路线图
 
@@ -231,7 +233,7 @@ Phase 5 整体尚未实现。评测目标是受预算、权限和冲突约束的
 
 ## 9. 后续验收与待核实
 
-2026-11-24 已运行全量测试：除 CLI 的 `TestControlScopeProductionJSONL` 因 ATE 运行库所有权冲突失败外，其余包通过。build、vet 和 tool/runtimestore/app 定向 race 通过，具体范围见[本轮验证记录](IMPLEMENTATION_REMAINING.md#验证状态与待核实项)。后续变更应继续覆盖以下边界：
+2026-11-25 已运行全量测试：除 CLI 的 `TestControlScopeProductionJSONL` 因 ATE 运行库所有权冲突失败外，其余包通过。build、vet、git diff check、resume 单 ownership 回归和相关 App/ATE lifecycle 定向验证通过，具体范围见[本轮验证记录](IMPLEMENTATION_REMAINING.md#验证状态与待核实项)。后续变更应继续覆盖以下边界：
 
 1. native batch/CAS、事件分页、同 key 异内容冲突、attempted unknown 不重发、store identity 更换拒绝。
 2. 不同 runtime 共享 ATE 时的 Session 锁、所属 Team claim/reservation/completion 恢复及离线维护作用域。

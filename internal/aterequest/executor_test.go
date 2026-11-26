@@ -30,7 +30,7 @@ func TestLeaseRejectsLateAndRepeatedCallbacks(t *testing.T) {
 		return context.DeadlineExceeded
 	})
 	fn := func(context.Context, *client.Client) error { calls++; return nil }
-	if err := WithClient(t.Context(), process, fn); !errors.Is(err, context.DeadlineExceeded) {
+	if err := WithClient(t.Context(), process, fn); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrLeaseClosed) {
 		t.Fatal(err)
 	}
 	if err := late(nil); !errors.Is(err, ErrLeaseClosed) || calls != 0 {

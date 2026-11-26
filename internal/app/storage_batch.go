@@ -33,8 +33,8 @@ type storageBatchScope struct {
 }
 
 // WithStorageBatch runs bounded local storage setup using one authenticated ATE
-// process. Pass the supplied context to all repository calls. The whole scope,
-// including startup and ownership contention, is bounded by the ATE timeout.
+// process. Pass the supplied context to all repository calls. The batch work
+// has an operation deadline once the connection is ready.
 //
 // run is called at most once; this is not an atomic transaction and errors do
 // not roll back earlier commits. Never retry the whole callback automatically.
@@ -80,7 +80,7 @@ func (a *App) WithStorageBatch(ctx context.Context, run func(context.Context) er
 	a.stateMu.Unlock()
 	defer a.evolutionWork.Done()
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(shutdown, cancel)
 	defer stop()
@@ -88,6 +88,8 @@ func (a *App) WithStorageBatch(ctx context.Context, run func(context.Context) er
 		cancel()
 	}
 	if parent, ok := ctx.Value(storageBatchKey{}).(*storageBatchScope); ok {
+		ctx, cancelNested := context.WithTimeout(ctx, timeout)
+		defer cancelNested()
 		if err := parent.check(ctx, authority.bound); err != nil {
 			return err
 		}
@@ -103,28 +105,32 @@ func (a *App) WithStorageBatch(ctx context.Context, run func(context.Context) er
 	}
 
 	if lease := authority.bound.currentLease(); lease != nil {
-		err := lease.WithClientContext(ctx, func(operation context.Context, c *client.Client) error {
+		return lease.WithClientContext(ctx, func(operation context.Context, c *client.Client) error {
+			operation, cancelOperation := context.WithTimeout(operation, timeout)
+			defer cancelOperation()
 			if err := authority.bound.validateClient(operation, c); err != nil {
 				return err
 			}
 			leaseCtx, leaseCancel := context.WithCancelCause(operation)
 			defer leaseCancel(aterequest.ErrLeaseClosed)
 			lease := &storageBatchLease{process: authority.bound, client: c, ctx: leaseCtx, cancel: leaseCancel}
-			return runStorageBatch(leaseCtx, lease, nil, run)
+			err := runStorageBatch(leaseCtx, lease, nil, run)
+			if errors.Is(err, aterequest.ErrUnknown) {
+				_ = c.Close()
+				return errors.Join(err, aterequest.ErrLeaseClosed)
+			}
+			return err
 		})
-		if errors.Is(err, aterequest.ErrUnknown) {
-			lease.Invalidate()
-			return errors.Join(err, aterequest.ErrLeaseClosed)
-		}
-		return err
 	}
 	// Keep the short-lived fallback for tests and callers that provide a
 	// process without an opened persistent lease.
 	return aterequest.WithClient(ctx, authority.bound.manager, func(operation context.Context, c *client.Client) error {
+		operation, cancelOperation := context.WithTimeout(operation, timeout)
+		defer cancelOperation()
 		if err := authority.bound.validateClient(operation, c); err != nil {
 			return err
 		}
-		leaseCtx, leaseCancel := context.WithCancelCause(ctx)
+		leaseCtx, leaseCancel := context.WithCancelCause(operation)
 		defer leaseCancel(aterequest.ErrLeaseClosed)
 		lease := &storageBatchLease{process: authority.bound, client: c, ctx: leaseCtx, cancel: leaseCancel}
 		return runStorageBatch(leaseCtx, lease, nil, run)

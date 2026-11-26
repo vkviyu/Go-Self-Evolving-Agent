@@ -65,7 +65,7 @@ func runChatWithPrompt(
 		return err
 	}
 
-	return runConfiguredChat(ctx, resolved, options, stdin, stdout, stderr, deps, initialPrompt)
+	return runConfiguredChat(ctx, resolved, options, stdin, stdout, stderr, deps, initialPrompt, nil)
 }
 
 func loadChatConfig(arguments []string) (config.Config, error) {
@@ -84,12 +84,17 @@ func runConfiguredChat(
 	stdout, stderr io.Writer,
 	deps dependencies,
 	initialPrompt *string,
+	resumeCatalog *app.SessionCatalog,
 ) (result error) {
 	var err error
 	var selected chatSession
 	var sessionTitle string
 	if options.sessionExplicit && !options.evaluationMode {
-		selected, err = findChatSession(ctx, resolved, options)
+		if resumeCatalog != nil {
+			selected, err = findChatSessionFromCatalog(ctx, resumeCatalog, resolved, options)
+		} else {
+			selected, err = findChatSession(ctx, resolved, options)
+		}
 		if err != nil {
 			return err
 		}
@@ -210,7 +215,8 @@ func runConfiguredChat(
 		// Select the OS sandbox or an explicitly selected existing container boundary.
 		ShellSandbox: options.shellSandbox,
 		// Register any additional tools supplied by the evaluation bridge.
-		ToolBindings: bridgeBindings,
+		ToolBindings:   bridgeBindings,
+		SessionCatalog: resumeCatalog,
 	})
 	if err != nil {
 		return err

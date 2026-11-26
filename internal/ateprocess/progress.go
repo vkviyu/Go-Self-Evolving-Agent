@@ -13,6 +13,7 @@ const (
 	StageQueue      Stage = "queue"
 	StageOwnership  Stage = "ownership"
 	StageInitialize Stage = "initialize"
+	StageReconnect  Stage = "reconnect"
 	StageStart      Stage = "start"
 	StageHandshake  Stage = "handshake"
 	StageOperation  Stage = "operation"

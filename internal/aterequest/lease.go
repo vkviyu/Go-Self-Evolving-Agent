@@ -69,7 +69,10 @@ func WithClient(ctx context.Context, process interface {
 	join := started
 	mu.Unlock()
 	if !join {
-		return errors.Join(ErrLeaseClosed, processErr)
+		if processErr != nil {
+			return processErr
+		}
+		return ErrLeaseClosed
 	}
 	select {
 	case <-done:

@@ -62,16 +62,16 @@ func (p authorityProcess) WithClient(ctx context.Context, fn func(*client.Client
 		return scope.withClient(ctx, p, fn)
 	}
 	if lease := p.currentLease(); lease != nil {
-		err := lease.WithClientContext(ctx, func(operation context.Context, c *client.Client) error {
+		return lease.WithClientContext(ctx, func(operation context.Context, c *client.Client) error {
 			if err := p.validateClient(operation, c); err != nil {
 				return err
 			}
-			return fn(c)
+			err := fn(c)
+			if errors.Is(err, aterequest.ErrUnknown) {
+				_ = c.Close()
+			}
+			return err
 		})
-		if errors.Is(err, aterequest.ErrUnknown) {
-			lease.Invalidate()
-		}
-		return err
 	}
 	var mu sync.Mutex
 	var started, returned bool
@@ -119,7 +119,7 @@ func (p authorityProcess) WithFreshClient(ctx context.Context, fn func(*client.C
 	}
 	if _, ok := ctx.Value(storageBatchKey{}).(*storageBatchScope); ok {
 		// Reconciliation must wait until the enclosing batch callback unwinds.
-		// Closing the persistent lease here would wait for this callback forever.
+		// Rotating the connection here would wait for this callback's gate.
 		return aterequest.ErrLeaseClosed
 	}
 	return p.manager.WithFreshClient(ctx, func(c *client.Client) error {
@@ -130,21 +130,10 @@ func (p authorityProcess) WithFreshClient(ctx context.Context, fn func(*client.C
 	})
 }
 
-func (p authorityProcess) withClientContext(ctx context.Context, fn func(context.Context, *client.Client) error) error {
-	if lease := p.currentLease(); lease != nil {
-		err := lease.WithClientContext(ctx, fn)
-		if errors.Is(err, aterequest.ErrUnknown) {
-			lease.Invalidate()
-		}
-		if errors.Is(err, ateprocess.ErrLeaseClosed) {
-			return errors.Join(aterequest.ErrLeaseClosed, err)
-		}
+func (p authorityProcess) validateClient(ctx context.Context, c *client.Client) error {
+	if err := verifyAuthorityClient(c); err != nil {
 		return err
 	}
-	return aterequest.WithClient(ctx, p.manager, fn)
-}
-
-func (p authorityProcess) validateClient(ctx context.Context, c *client.Client) error {
 	snapshot, err := c.Snapshot(ctx)
 	if err != nil {
 		return err
@@ -176,6 +165,7 @@ func openAuthority(ctx context.Context, cfg config.Config, pending authorityPend
 	}
 	process, err := ateprocess.New(ateprocess.Options{
 		Binary: cfg.ATE.Binary, Directory: cfg.ATE.Directory, Timeout: cfg.ATE.Timeout,
+		StartupTimeout: cfg.ATE.StartupTimeout,
 	})
 	if err != nil {
 		return nil, err

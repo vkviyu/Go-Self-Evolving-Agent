@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
@@ -30,6 +31,7 @@ type TurnRecord struct {
 	RuntimeSnapshotID       string
 	StartedSequence         uint64
 	CompletedSequence       uint64
+	openedWithPriorWork     bool
 }
 
 // RequiresExecutionRecovery prevents an old admitted turn from being silently
@@ -101,6 +103,13 @@ func LoadTurnRecords(ctx context.Context, events session.EventStore, checkpoints
 			}
 			if metadata.Foreground {
 				record.ForegroundSequence = event.Sequence
+			}
+			if record.HasJournal && len(metadata.Journal.Input) >= 2 {
+				// runInnerTurn freezes the host's prior-work message immediately
+				// before the actual user input. A history-only opening has none.
+				prior := metadata.Journal.Input[len(metadata.Journal.Input)-2]
+				record.openedWithPriorWork = prior != nil && prior.Role == schema.User &&
+					strings.HasPrefix(prior.Content, interruptedContextHeader+"\n")
 			}
 			records = append(records, record)
 		} else if index, exists := indices[event.CorrelationID]; exists {

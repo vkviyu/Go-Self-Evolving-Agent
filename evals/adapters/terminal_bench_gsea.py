@@ -123,7 +123,6 @@ class GSEATerminalBenchAgent(BaseAgent):
             workdir="/app",
             environment={
                 self.api_key_env: api_key,
-                "GSEA_LSP_ENABLED": "false",
                 "GSEA_HOME": "/tmp/gsea-home",
             },
             demux=True,

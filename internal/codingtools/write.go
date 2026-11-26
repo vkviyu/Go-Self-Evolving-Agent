@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 )
 
 type writeArgs struct {
@@ -45,7 +43,7 @@ func (workspace *Workspace) write(ctx context.Context, raw json.RawMessage) (jso
 	if err != nil {
 		return nil, err
 	}
-	path, relative, err := workspace.resolveParentAt(root, args.Path)
+	_, relative, err := workspace.resolveParentAt(root, args.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -59,14 +57,14 @@ func (workspace *Workspace) write(ctx context.Context, raw json.RawMessage) (jso
 			return nil, fmt.Errorf("create parent directory: %w", err)
 		}
 		mode := os.FileMode(0o644)
-		kind := lsp.ChangeCreated
+		kind := changeCreated
 		var before []byte
 		if info, statErr := files.Lstat(relative); statErr == nil {
 			if !info.Mode().IsRegular() {
 				return nil, errors.New("write target must be a regular file, not a link or device")
 			}
 			mode = info.Mode().Perm()
-			kind = lsp.ChangeModified
+			kind = changeModified
 			var truncated bool
 			before, truncated, err = readRootBounded(ctx, files, relative, maxDiffInputBytes)
 			if err != nil {
@@ -80,7 +78,7 @@ func (workspace *Workspace) write(ctx context.Context, raw json.RawMessage) (jso
 		} else if args.Mode != 0 {
 			mode = os.FileMode(args.Mode)
 		}
-		if kind == lsp.ChangeCreated && strings.TrimSpace(args.ExpectedSHA256) != "" {
+		if kind == changeCreated && strings.TrimSpace(args.ExpectedSHA256) != "" {
 			return nil, fmt.Errorf("workspace file %q does not exist", relative)
 		}
 		if err := verifyExpectedBytes(relative, before, args.ExpectedSHA256); err != nil {
@@ -93,8 +91,7 @@ func (workspace *Workspace) write(ctx context.Context, raw json.RawMessage) (jso
 			return nil, fmt.Errorf("write %q: %w", relative, err)
 		}
 		result := map[string]any{"path": relative, "bytes_written": len(args.Content)}
-		appendDiff(ctx, workspace.artifacts, result, relative, kind, before, []byte(args.Content))
-		workspace.appendLanguageDiagnostics(ctx, root, path, relative, kind, []byte(args.Content), result)
+		appendFileChange(ctx, workspace.artifacts, result, relative, kind, before, []byte(args.Content))
 		return json.Marshal(result)
 	})
 }
@@ -192,8 +189,7 @@ func (workspace *Workspace) edit(ctx context.Context, raw json.RawMessage) (json
 			return nil, fmt.Errorf("edit %q: %w", relative, err)
 		}
 		result := map[string]any{"path": relative, "replacements": replacements, "bytes_written": len(content)}
-		appendDiff(ctx, workspace.artifacts, result, relative, lsp.ChangeModified, data, []byte(content))
-		workspace.appendLanguageDiagnostics(ctx, root, path, relative, lsp.ChangeModified, []byte(content), result)
+		appendFileChange(ctx, workspace.artifacts, result, relative, changeModified, data, []byte(content))
 		return json.Marshal(result)
 	})
 }

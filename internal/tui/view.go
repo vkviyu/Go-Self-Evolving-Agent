@@ -45,7 +45,6 @@ func (model *Model) resize(width, height int) {
 	model.viewport.Width = innerWidth
 	model.ready = true
 	model.resizeInput()
-	model.refreshTranscript(false)
 }
 
 func (model *Model) resizeInput() {

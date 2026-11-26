@@ -89,6 +89,9 @@ func runHelper() int {
 	if mode == "hello-hang" {
 		time.Sleep(time.Hour)
 	}
+	if mode == "slow-store-open" {
+		time.Sleep(350 * time.Millisecond)
+	}
 	frame, err := protocol.ReadFrame(os.Stdin)
 	if err != nil {
 		return 6
@@ -151,7 +154,7 @@ func helperManager(t *testing.T, mode string, timeout time.Duration) *Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(Options{Binary: binary, Directory: filepath.Join(t.TempDir(), "temporal"), Timeout: timeout})
+	m, err := New(Options{Binary: binary, Directory: filepath.Join(t.TempDir(), "temporal"), Timeout: timeout, StartupTimeout: timeout})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,14 +253,80 @@ func TestPersistentLeaseReusesClientAndProcess(t *testing.T) {
 	}
 }
 
-func TestFreshClientReleasesInvalidLeaseBeforeRecovery(t *testing.T) {
+// The helper finishes hello and then waits without answering another RPC.
+// Timing out an in-flight read closes the real SDK connection.
+func TestNextCallbackAfterReadTimeoutUsesFreshConnection(t *testing.T) {
+	m := helperManager(t, "normal", 3*time.Second)
+	lease, err := m.OpenClient(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first *client.Client
+	attempts := 0
+	err = lease.WithClient(t.Context(), func(c *client.Client) error {
+		first = c
+		attempts++
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+		_, err := c.Snapshot(ctx)
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || attempts != 1 || !first.Closed() {
+		t.Fatalf("timed out read: attempts=%d error=%v", attempts, err)
+	}
+
+	const callers = 6
+	clients := make(chan *client.Client, callers)
+	results := make(chan error, callers)
+	var reconnects atomic.Int32
+	ctx := WithObserver(t.Context(), func(_ context.Context, event Progress) {
+		if event.Stage != StageReconnect {
+			return
+		}
+		reconnects.Add(1)
+		if lock, err := runtimeowner.Acquire(m.options.Directory); !errors.Is(err, runtimeowner.ErrOwned) {
+			if lock != nil {
+				_ = lock.Close()
+			}
+			t.Errorf("store owner lost on reconnect: %v", err)
+		}
+	})
+	for range callers {
+		go func() {
+			results <- lease.WithClient(ctx, func(c *client.Client) error {
+				clients <- c
+				return nil
+			})
+		}()
+	}
+	for range callers {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(clients)
+	var replacement *client.Client
+	for c := range clients {
+		if c == first || c.Closed() || (replacement != nil && replacement != c) {
+			t.Fatal("queued calls did not share one new connection")
+		}
+		replacement = c
+	}
+	if attempts != 1 || reconnects.Load() != 1 {
+		t.Fatalf("initial callbacks=%d, reconnects=%d", attempts, reconnects.Load())
+	}
+}
+
+func TestFreshClientRotatesConnectionWithinPersistentLease(t *testing.T) {
 	m := helperManager(t, "normal", 3*time.Second)
 	lease, err := m.OpenClient(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := readLaunch(t, m.options.Directory+".launch")
-	lease.Invalidate()
+	if err := lease.WithClient(t.Context(), func(c *client.Client) error { return c.Close() }); err != nil {
+		t.Fatal(err)
+	}
 	var recovered *client.Client
 	if err := m.WithFreshClient(context.Background(), func(c *client.Client) error {
 		recovered = c
@@ -265,8 +334,8 @@ func TestFreshClientReleasesInvalidLeaseBeforeRecovery(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if recovered == nil {
-		t.Fatal("fresh callback did not receive a client")
+	if recovered == nil || m.CurrentLease() != lease {
+		t.Fatal("fresh callback did not retain the active lease")
 	}
 	second := readLaunch(t, m.options.Directory+".launch")
 	if second.PID == first.PID {
@@ -276,6 +345,33 @@ func TestFreshClientReleasesInvalidLeaseBeforeRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertReapedAndUnlocked(t, m, ".launch")
+}
+
+func TestPersistentUnknownCommandSurvivesReconnectWithoutReplay(t *testing.T) {
+	m := helperManager(t, "disconnect", 3*time.Second)
+	lease, err := m.OpenClient(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := model.RequestKey{Principal: "gsea", Space: "test", RequestID: "original-write"}
+	writes := 0
+	err = lease.WithClient(t.Context(), func(c *client.Client) error {
+		writes++
+		_, err := c.Mutate(t.Context(), api.MutateRequest{Key: key})
+		return err
+	})
+	var unknown *client.OutcomeUnknownError
+	if !errors.As(err, &unknown) || unknown.Key != key || writes != 1 {
+		t.Fatalf("write outcome=%v calls=%d", err, writes)
+	}
+	if err := m.WithClient(t.Context(), func(c *client.Client) error {
+		if c.Closed() {
+			return errors.New("new caller got a dead client")
+		}
+		return nil
+	}); err != nil || writes != 1 {
+		t.Fatalf("reconnect err=%v, writes=%d", err, writes)
+	}
 }
 
 func TestCapabilityAndSecretFailures(t *testing.T) {
@@ -325,6 +421,9 @@ func TestTimeoutAndForcedCleanup(t *testing.T) {
 			if err == nil || time.Since(start) > 3*time.Second {
 				t.Fatalf("failure not bounded: elapsed=%v err=%v", time.Since(start), err)
 			}
+			if mode == "hello-hang" && (!errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "startup")) {
+				t.Fatalf("startup timeout did not identify the stage: %v", err)
+			}
 			suffix := ".launch"
 			if strings.HasPrefix(mode, "init-") {
 				suffix = ".init"
@@ -334,6 +433,35 @@ func TestTimeoutAndForcedCleanup(t *testing.T) {
 				t.Fatal("ownership released before child exit")
 			}
 		})
+	}
+}
+
+func TestStoreReplayHasIndependentDeadline(t *testing.T) {
+	m := helperManager(t, "slow-store-open", 200*time.Millisecond)
+	m.options.StartupTimeout = 3 * time.Second
+	lease, err := m.OpenClient(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drop the persistent connection, then let the first actual RPC time out.
+	// Both the original open and the reconnect exceed the ordinary RPC budget.
+	if err := lease.WithClient(t.Context(), func(c *client.Client) error { return c.Close() }); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err = lease.WithClientContext(t.Context(), func(ctx context.Context, c *client.Client) error {
+		called = true
+		_, err := c.Snapshot(ctx)
+		return err
+	})
+	if !called || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RPC called=%v error=%v", called, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 75*time.Millisecond)
+	defer cancel()
+	err = m.WithFreshClient(ctx, func(*client.Client) error { t.Error("started after caller deadline"); return nil })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("caller deadline: %v", err)
 	}
 }
 

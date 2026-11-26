@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/aterequest"
@@ -19,10 +20,27 @@ import (
 //go:embed testdata/runtime_v1.sql
 var releasedRuntimeDDL string
 
-func createReleasedRuntime(t *testing.T) (*Database, string) {
+// releasedRuntimeSchema derives v2 from the frozen v1 fixture and checks the
+// result against its independently recorded release checksum.
+func releasedRuntimeSchema(version int) (string, string, string) {
+	if version == 1 {
+		return releasedRuntimeDDL, runtimeV1Checksum, runtimeV1Layout
+	}
+	var ddl strings.Builder
+	for part := range strings.SplitAfterSeq(releasedRuntimeDDL, ";\n") {
+		statement := strings.TrimSpace(part)
+		if !strings.HasPrefix(statement, "CREATE TABLE plugin_") && !strings.HasPrefix(statement, "CREATE UNIQUE INDEX plugin_") {
+			ddl.WriteString(part)
+		}
+	}
+	return ddl.String(), runtimeV2Checksum, runtimeV2Layout
+}
+
+func createReleasedRuntime(t *testing.T, version int) (*Database, string, string) {
 	t.Helper()
-	if checksum := sha256Hex([]byte(releasedRuntimeDDL)); checksum != runtimeV1Checksum {
-		t.Fatalf("released schema fixture drifted: %s", checksum)
+	ddl, checksum, layout := releasedRuntimeSchema(version)
+	if sha256Hex([]byte(ddl)) != checksum || runtimeLayoutFromDDL(ddl) != layout {
+		t.Fatalf("released schema fixture drifted: version %d", version)
 	}
 	path := filepath.Join(t.TempDir(), "runtime-v3.db")
 	raw, err := sql.Open("sqlite", path)
@@ -30,18 +48,27 @@ func createReleasedRuntime(t *testing.T) (*Database, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = raw.Close() })
-	if _, err := raw.Exec(releasedRuntimeDDL); err != nil {
+	if _, err := raw.Exec(ddl); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec(`INSERT INTO runtime_schema VALUES(1, ?)`, runtimeV1Checksum); err != nil {
+	if _, err := raw.Exec(`INSERT INTO runtime_schema VALUES(?, ?)`, version, checksum); err != nil {
 		t.Fatal(err)
 	}
-	return &Database{db: raw}, path
+	return &Database{db: raw}, path, checksum
 }
 
 func TestRuntimeDatabaseReopensReleasedFormatWithoutChangingEvidence(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			testReopensReleasedFormat(t, version)
+		})
+	}
+}
+
+func testReopensReleasedFormat(t *testing.T, schemaVersion int) {
+	t.Helper()
 	ctx := t.Context()
-	previous, path := createReleasedRuntime(t)
+	previous, path, schemaChecksum := createReleasedRuntime(t, schemaVersion)
 	checkpoint := []byte("original checkpoint")
 	if err := previous.Checkpoints().Set(ctx, "turn", checkpoint); err != nil {
 		t.Fatal(err)
@@ -65,10 +92,15 @@ func TestRuntimeDatabaseReopensReleasedFormatWithoutChangingEvidence(t *testing.
 	if err := previous.RuntimeSnapshots().WithReferenceGuard(allowSnapshotReference).Save(ctx, manifest, ref); err != nil {
 		t.Fatal(err)
 	}
-	// Opaque retired bytes must never be loaded as executable code or erased.
+	// Historical projections are opaque and must be left intact on open.
 	archived := []byte("retained evidence")
-	if _, err := previous.db.Exec(`INSERT INTO plugin_blobs VALUES('retained', ?)`, archived); err != nil {
+	if _, err := previous.db.Exec(`INSERT INTO lsp_diagnostic_projections VALUES('workspace', 'file.go', 'revision', ?, '2026-01-01')`, archived); err != nil {
 		t.Fatal(err)
+	}
+	if schemaVersion == 1 {
+		if _, err := previous.db.Exec(`INSERT INTO plugin_blobs VALUES('retained', ?)`, archived); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := previous.Close(); err != nil {
 		t.Fatal(err)
@@ -103,11 +135,16 @@ func TestRuntimeDatabaseReopensReleasedFormatWithoutChangingEvidence(t *testing.
 		}
 		var version int
 		var checksum string
-		if err := current.db.QueryRow(`SELECT version, checksum FROM runtime_schema`).Scan(&version, &checksum); err != nil || version != 1 || checksum != runtimeV1Checksum {
+		if err := current.db.QueryRow(`SELECT version, checksum FROM runtime_schema`).Scan(&version, &checksum); err != nil || version != schemaVersion || checksum != schemaChecksum {
 			t.Fatalf("old schema relabeled: %d %s %v", version, checksum, err)
 		}
-		if err := current.db.QueryRow(`SELECT source FROM plugin_blobs WHERE content_sha='retained'`).Scan(&got); err != nil || !bytes.Equal(got, archived) {
+		if err := current.db.QueryRow(`SELECT report FROM lsp_diagnostic_projections`).Scan(&got); err != nil || !bytes.Equal(got, archived) {
 			t.Fatalf("retired evidence changed: %q %v", got, err)
+		}
+		if schemaVersion == 1 {
+			if err := current.db.QueryRow(`SELECT source FROM plugin_blobs WHERE content_sha='retained'`).Scan(&got); err != nil || !bytes.Equal(got, archived) {
+				t.Fatalf("retired blob changed: %q %v", got, err)
+			}
 		}
 		if err := current.Close(); err != nil {
 			t.Fatal(err)
@@ -116,18 +153,23 @@ func TestRuntimeDatabaseReopensReleasedFormatWithoutChangingEvidence(t *testing.
 }
 
 func TestRuntimeDatabaseRefusesDamagedReleasedSchema(t *testing.T) {
-	for _, damage := range []string{
-		`DROP TABLE plugin_blobs`,
-		`ALTER TABLE plugin_revisions ADD COLUMN unexpected TEXT`,
-		`DROP TABLE ate_pending_requests`,
-		`UPDATE runtime_schema SET checksum='wrong'`,
+	for _, test := range []struct {
+		version int
+		damage  string
+	}{
+		{1, `DROP TABLE plugin_blobs`},
+		{1, `ALTER TABLE plugin_revisions ADD COLUMN unexpected TEXT`},
+		{1, `DROP TABLE ate_pending_requests`},
+		{2, `DROP INDEX idx_lsp_diagnostics_latest`},
+		{2, `ALTER TABLE lsp_diagnostic_projections ADD COLUMN unexpected TEXT`},
+		{2, `UPDATE runtime_schema SET checksum='wrong'`},
 	} {
-		t.Run(damage, func(t *testing.T) {
-			previous, path := createReleasedRuntime(t)
+		t.Run(fmt.Sprintf("v%d/%s", test.version, test.damage), func(t *testing.T) {
+			previous, path, _ := createReleasedRuntime(t, test.version)
 			if err := previous.Checkpoints().Set(t.Context(), "keep", []byte("original")); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := previous.db.Exec(damage); err != nil {
+			if _, err := previous.db.Exec(test.damage); err != nil {
 				t.Fatal(err)
 			}
 			if current, err := OpenRuntime(t.Context(), path); err == nil {
@@ -168,10 +210,11 @@ func TestRuntimeDatabaseHasNoBusinessHistory(t *testing.T) {
 		}
 	}
 	var version, retiredObjects int
-	if err := db.db.QueryRowContext(ctx, `SELECT version,(SELECT count(*) FROM sqlite_master WHERE name GLOB 'plugin_*') FROM runtime_schema`).Scan(&version, &retiredObjects); err != nil {
+	if err := db.db.QueryRowContext(ctx, `SELECT version,(SELECT count(*) FROM sqlite_master
+        WHERE name GLOB 'plugin_*' OR name IN ('lsp_diagnostic_projections', 'idx_lsp_diagnostics_latest')) FROM runtime_schema`).Scan(&version, &retiredObjects); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 || retiredObjects != 0 {
+	if version != 3 || retiredObjects != 0 {
 		t.Fatalf("fresh runtime: version=%d retired objects=%d", version, retiredObjects)
 	}
 	payload := []byte("opaque runtime checkpoint")
@@ -268,7 +311,7 @@ func TestRuntimeDatabaseRefusesDamagedSchema(t *testing.T) {
 		`DROP TABLE ate_pending_requests`,
 		`ALTER TABLE agent_checkpoints ADD COLUMN unexpected TEXT`,
 		`UPDATE runtime_schema SET checksum='wrong'`,
-		`INSERT INTO runtime_schema VALUES(3,'extra')`,
+		`INSERT INTO runtime_schema VALUES(4,'extra')`,
 		`DELETE FROM runtime_schema`,
 		`CREATE VIEW business_view AS SELECT * FROM agent_checkpoints`,
 	} {

@@ -6,14 +6,11 @@ import (
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimestore"
 )
 
-func closeOpenResources(database *runtimestore.Database, approvalBroker *approval.Broker, diagnostics *lsp.Manager) {
-	if diagnostics != nil {
-		_ = diagnostics.Close()
-	}
+// closeOpenResources releases the broker and database after a failed open.
+func closeOpenResources(database *runtimestore.Database, approvalBroker *approval.Broker) {
 	if approvalBroker != nil {
 		_ = approvalBroker.Close()
 	}
@@ -36,7 +33,6 @@ func (a *App) Close() error {
 			a.evolutionCancel()
 		}
 		supervisor := a.supervisor
-		diagnostics := a.diagnostics
 		approvalBroker := a.approval
 		database := a.database
 		a.stateMu.Unlock()
@@ -61,11 +57,6 @@ func (a *App) Close() error {
 			}
 			if err != nil {
 				closeErrs = append(closeErrs, fmt.Errorf("close Agent supervisor: %w", err))
-			}
-		}
-		if diagnostics != nil {
-			if err := diagnostics.Close(); err != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("close diagnostics: %w", err))
 			}
 		}
 		if approvalBroker != nil {

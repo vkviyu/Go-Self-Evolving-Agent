@@ -53,7 +53,7 @@ go run ./cmd/gsea resume <session-id>
 
 主链为 `cmd/gsea` → `internal/cli` → `internal/app` → `internal/conversation` → `internal/agentruntime/eino_turn.go` → Eino Adapter → `internal/tool`。工具管线固定 Turn 的 Registry Snapshot，校验 JSON Schema 和权限，处理审批并记录执行结果。按 session/turn/call 身份可以复用已确认结果。Flow 和子 Agent 共用这套边界。本地 shell 的隔离由 macOS Seatbelt 或 Linux bubblewrap 提供。[README](../README.md) · [架构](../ARCHITECTURE.md) · [代码阅读指南](../CODE_READING_GUIDE.md) · [中文设计](../自进化本地智能体（Self-Evolving%20Local%20Agent）.md)
 
-`internal/agentflow` 提供宿主注册的命名 Flow、流式组合、有限并行、`agent_session` 和人工关卡，使用步骤血缘、拓扑指纹和 checkpoint 恢复。Flow 产生的工具和子 Agent 动作仍受调用方 Pipeline 约束。`local-agent control` 提供 JSONL 的 Team/Task/Agent/Merge 管理与事件分页。工作区诊断由 `internal/lsp` 对接 `gopls`，结构化写入和有界 shell 变更集都可触发回注，诊断记录随文件内容版本存储。
+`internal/agentflow` 提供宿主注册的命名 Flow、流式组合、有限并行、`agent_session` 和人工关卡，使用步骤血缘、拓扑指纹和 checkpoint 恢复。Flow 产生的工具和子 Agent 动作仍受调用方 Pipeline 约束。`local-agent control` 提供 JSONL 的 Team/Task/Agent/Merge 管理与事件分页。
 
 ### 3.2 Execution contract、上下文和长时运行
 
@@ -70,11 +70,11 @@ go run ./cmd/gsea resume <session-id>
 
 TUI 可鼠标点 `main` 和子 Agent，`Ctrl+G` 或 `/agents` 展开面板，支持切换 transcript、检查 Task/Merge、手动中断。顶部标题由会话名或首个真实提问生成，`Alt+I` 展开 model/workspace/session，滚动时 `Alt+P` 或点击问题导航可回到问题。该会话曾报告长回答尾部疑似缺字、恢复时 ANSI/链接下划线、重复显示审批提示。终结结果与显示修正、ANSI 安全处理和单审批标签当时有相关覆盖。历史某次答案在哪一层截断仍需原 provider 或会话数据确认。[并行架构](../MULTI_AGENT_ARCHITECTURE.md) · [并行规划](../MULTI_AGENT_PARALLEL_PLAN.md) · [恢复与 TUI](../README.md)
 
-Claude Code 早先修复 B.15–B.17，之后 A–E 继续核对和加固。有效基线是 `AUDIT_REMEDIATION.md` 逐项状态。尚有合并与团队生命周期细节、历史引用增量扫描、artifact 保留策略和宿主资源限制等事项；退役扩展编译器不再是待补齐能力。共享主目录按 owned paths 并行写入（P4）、关键路径优先和 Phase 5 仍有缺口。Team cancel 保留 root，会有取消收尾；合并后检查可运行宿主配置命令，失败保留合并结果并阻塞下游，已有持久身份绑定，完整 reviewer 复审及未知结果的用户处置仍受限。 [A–E 修复与限制](/Users/zhaozhiqiang/work/Go-Self-Evolving-Agent/AUDIT_REMEDIATION.md)
+Claude Code 早先修复 B.15–B.17，之后 A–E 继续核对和加固。有效基线是 `AUDIT_REMEDIATION.md` 逐项状态。尚有合并与团队生命周期细节、历史引用增量扫描、artifact 保留策略和宿主资源限制等事项。共享主目录按 owned paths 并行写入（P4）、关键路径优先和 Phase 5 仍有缺口。Team cancel 保留 root，会有取消收尾；合并后检查可运行宿主配置命令，失败保留合并结果并阻塞下游，已有持久身份绑定，完整 reviewer 复审及未知结果的用户处置仍受限。 [A–E 修复与限制](/Users/zhaozhiqiang/work/Go-Self-Evolving-Agent/AUDIT_REMEDIATION.md)
 
 ### 3.4 工具发现与跨任务经验
 
-11 月 13 日讨论过用受限 WASM 扩展工具，这条产品路线已退役。仍在使用的 Turn/Flow 工具快照记录工具清单与实现身份，以便恢复时核对。当时的 R1–R8 和 F1–F5 分别记录功能探索与架构重构。[阶段范围](../IMPLEMENTATION_REMAINING.md) · [重构记录](../REFACTORING.md)
+仍在使用的 Turn/Flow 工具快照记录工具清单与实现身份，以便恢复时核对。当时的 R1–R8 和 F1–F5 分别记录功能探索与架构重构。[阶段范围](../IMPLEMENTATION_REMAINING.md) · [重构记录](../REFACTORING.md)
 
 后续任务遇到相似故障时，主 Agent 可用 `memory_query` 查阅 ATE 中当前可复用的排查经验，再按准确引用核对来源。`memory_manage` 经审批写候选、登记采用或纠正来源。普通 CLI 将是否查阅的选择留给主 Agent。[跨任务记忆指南](../EVOLUTION.md)
 
@@ -146,7 +146,7 @@ DSH 桥接当前把事件保存为通用状态，通过精确序号与有限邻�
 
 ## 7. 历史推进顺序
 
-1. GSEA 从 Eino 本地 Agent、Responses、工具与权限、WASM、自进化、基准可比性起步。调试期间经历过 GVM、CLI 参数、代理传输、Goal 准入和审批 UI 问题。早期 Claude Code 与 Codex CLI（`codex-pro`）直接在同一迭代工作区写代码，用户提供过 CLI resume 会话标题，后续应把当前文件当事实来源。
+1. GSEA 从 Eino 本地 Agent、Responses、工具与权限、自进化、基准可比性起步。调试期间经历过 GVM、CLI 参数、代理传输、Goal 准入和审批 UI 问题。早期 Claude Code 与 Codex CLI（`codex-pro`）直接在同一迭代工作区写代码，用户提供过 CLI resume 会话标题，后续应把当前文件当事实来源。
 2. GSEA 完成受控自进化与一轮大重构，随后继续处理并行 Agent 审计、TUI、上下文预算与长程恢复。动态计划和失败改派建立在稳定持久恢复之上，保守处理外部副作用。多 Agent 的真实执行可视化与大文档读取成为重点。
 3. ATE 作为新基础设施单独建模块，围绕四份文档持续完成第一版主路径、代码交叉审计和阶段性工程修改。随后将 DSH 作为可视化与真实宿主试验，补上跨会话检索、`@事件` 和节点证据查询。
 4. 用户再次以四项目标明确 ATE 的内部职责，最后一轮按对象语义、关键时间线、分支隔离和上下文恢复补强。当前交接是在这一轮代码验收通过后进行。

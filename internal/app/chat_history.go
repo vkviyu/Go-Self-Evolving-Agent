@@ -23,33 +23,12 @@ import (
 // ReadChatCatalog reads the catalog and native history through one ATE lease.
 // With a session ID, the caller may accept a registration without saved history.
 func ReadChatCatalog(ctx context.Context, cfg config.Config, id session.ID, requireHistory bool) (entries []sessionregistry.Session, histories []session.ChatHistory, err error) {
-	resources, err := openChatCatalogReader(ctx, cfg)
-	if err != nil || resources == nil {
+	catalog, err := OpenSessionCatalog(ctx, cfg)
+	if err != nil || catalog == nil {
 		return nil, nil, err
 	}
-	defer func() { err = errors.Join(err, resources.process.Close()) }()
-	registry, err := sessionregistry.NewAuthority(resources.records, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	if id == "" {
-		entries, err = registry.List(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
-		item, getErr := registry.Get(ctx, string(id))
-		if getErr == nil {
-			entries = []sessionregistry.Session{item}
-			if !requireHistory {
-				return entries, nil, nil
-			}
-		} else if !errors.Is(getErr, sessionregistry.ErrNotFound) {
-			return nil, nil, getErr
-		}
-	}
-	histories, err = discoverChats(ctx, resources, id)
-	return entries, histories, err
+	defer func() { err = errors.Join(err, catalog.Close()) }()
+	return catalog.ReadChatCatalog(ctx, id, requireHistory)
 }
 
 // DiscoverChats reads native ATE conversations, including unregistered history.

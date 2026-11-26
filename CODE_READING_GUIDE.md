@@ -139,7 +139,7 @@ ATE 业务关闭计划 / 准入墓碑
 
 ## 当前名称与阅读时的检查点
 
-`internal/runtimestore` 保存 checkpoint、LSP 诊断、工具快照及引用、未完成的 ATE 请求。`OpenRuntime` 校验库格式，业务历史直接读 ATE。
+`internal/runtimestore` 保存 checkpoint、工具快照及引用、未完成的 ATE 请求。`OpenRuntime` 校验库格式，业务历史直接读 ATE。
 
 `internal/ateports` 定义宿主对 ATE 的历史读取与决策状态端口，没有投递队列或镜像语义。`internal/atebridge` 通过它承接经验与执行生命周期；`agentruntime/turn_journal.go` 是现用的模型回放逻辑，不应按名称归为已删除的 delivery journal。
 

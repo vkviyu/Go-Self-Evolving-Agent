@@ -165,8 +165,8 @@ func (m *recordingModel) Stream(ctx context.Context, input []*schema.Message, op
 				return
 			}
 			chunks = append(chunks, stableChunk)
-			// Persist before publishing a delta. Partial output is transcript
-			// evidence only; it is never replayed as a completed model decision.
+			// Persist before publishing a delta so an interrupted reply can be
+			// displayed and its visible text can ground a subsequent follow-up.
 			if m.purpose == "" {
 				durable, cancel := durabilityContext(ctx)
 				_, appendErr := m.events.Append(durable, m.sessionID, session.AnySequence, session.PendingEvent{

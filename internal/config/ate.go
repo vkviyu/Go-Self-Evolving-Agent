@@ -18,6 +18,13 @@ func parseATETimeout(value string) (time.Duration, error) {
 }
 
 func applyATEEnvironment(target *ATEConfig) error {
+	if value := strings.TrimSpace(os.Getenv("GSEA_ATE_STARTUP_TIMEOUT")); value != "" {
+		duration, err := parseATEStartupTimeout(value)
+		if err != nil {
+			return errors.New("GSEA_ATE_STARTUP_TIMEOUT must be a positive duration")
+		}
+		target.StartupTimeout = duration
+	}
 	if value := strings.TrimSpace(os.Getenv("GSEA_ATE_ENABLED")); value != "" {
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
@@ -42,6 +49,14 @@ func applyATEEnvironment(target *ATEConfig) error {
 	return nil
 }
 
+func parseATEStartupTimeout(value string) (time.Duration, error) {
+	d, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil || d <= 0 {
+		return 0, errors.New("ate.startup_timeout must be a positive duration")
+	}
+	return d, nil
+}
+
 // ResolveATE resolves paths without creating the store: init-state needs an
 // empty directory, and only the subprocess manager may initialize it under lock.
 func (c Config) ResolveATE() (ATEConfig, error) {
@@ -54,6 +69,9 @@ func (c Config) ResolveATE() (ATEConfig, error) {
 	}
 	if a.Timeout < 0 || a.Timeout > 10*time.Minute {
 		return ATEConfig{}, errors.New("ate.timeout must be positive and at most 10m")
+	}
+	if a.StartupTimeout < 0 {
+		return ATEConfig{}, errors.New("ate.startup_timeout must be positive")
 	}
 	if a.Directory == "" {
 		base := c.HomeDirectory

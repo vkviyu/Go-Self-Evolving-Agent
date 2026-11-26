@@ -1,18 +1,17 @@
 # 功能范围与剩余工作
 
-更新：2026-11-24（代码清理与回归验证）。业务事实以 ATE 为权威，旧 SQLite 业务适配器与遗留日志已退出生产路径，不提供旧业务库自动迁移。Eino 继续负责 Agent Loop；`internal/runtimestore` 保存执行资源和 pending 请求。受支持的 ATE-linked runtime v1 库原地保留，但不恢复退役扩展能力；它与旧业务库是不同格式。
+更新：2026-11-25（代码清理与回归验证）。业务事实以 ATE 为权威，旧 SQLite 业务适配器与遗留日志已退出生产路径，不提供旧业务库自动迁移。Eino 继续负责 Agent Loop；`internal/runtimestore` 保存执行资源和 pending 请求。受支持的 ATE-linked runtime v1 库原地保留；它与旧业务库是不同格式。
 
 例如，另一个项目再次遇到流超时，可以搜索上次留下的排查经验，核对其来源和现场条件，再决定是否采用。GSEA 的 Evolving 以 ATE 管理的跨任务记忆为核心。当前模型工具和具体示例见[跨任务记忆指南](EVOLUTION.md)。
 
-## 原 R1–R8 与现行范围
+## 现行范围
 
-| 项目                | 已有能力与当前入口                                                                                                                            | 验收重点                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| R1 引用生命周期     | `internal/orchestration/atestore` 生成保留计划/权威关闭回执；`internal/app/maintenance.go` 再清理本地 runtime 引用                            | 直接 Turn、执行契约、子 Agent、Flow；活跃/未知依赖保留；关闭事实持久后清理失败可重试 |
-| R2–R4、R6（历史项） | 早期 WASM 工具生成、发布和回收方案已退出产品范围                                                                                              | Turn/Flow 使用的普通工具快照与恢复引用由 R1 跟踪                                     |
-| R5 边界回归         | native 仓储、runtime 资源、App/CLI 均有相关测试                                                                                               | 清理后重新执行集成/静态/相关竞态检查；不能沿用旧 SQL 测试结果                        |
-| R7 宿主策略         | `strategy_propose`、`strategy_inspect`、`strategy_shadow`、`strategy_publish` 管理有界 LoopSpec，`internal/evolutionstore` 保存策略报告与状态 | Turn 固定精确配置，Fallback 与 Session `turn.failed` 分别提交                        |
-| R8 完整链路核对     | App、CLI、策略与恢复有本地脚本模型测试                                                                                                        | 配套 ATE 的跨重启及失败注入，模型效果需单独验证                                      |
+| 项目            | 已有能力与当前入口                                                                                                                            | 验收重点                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| R1 引用生命周期 | `internal/orchestration/atestore` 生成保留计划/权威关闭回执；`internal/app/maintenance.go` 再清理本地 runtime 引用                            | 直接 Turn、执行契约、子 Agent、Flow；活跃/未知依赖保留；关闭事实持久后清理失败可重试 |
+| R5 边界回归     | native 仓储、runtime 资源、App/CLI 均有相关测试                                                                                               | 清理后重新执行集成/静态/相关竞态检查；不能沿用旧 SQL 测试结果                        |
+| R7 宿主策略     | `strategy_propose`、`strategy_inspect`、`strategy_shadow`、`strategy_publish` 管理有界 LoopSpec，`internal/evolutionstore` 保存策略报告与状态 | Turn 固定精确配置，Fallback 与 Session `turn.failed` 分别提交                        |
+| R8 完整链路核对 | App、CLI、策略与恢复有本地脚本模型测试                                                                                                        | 配套 ATE 的跨重启及失败注入，模型效果需单独验证                                      |
 
 记忆验收关注 `memory_query` 的查询范围、`memory_manage` 的审批、原始事件引用、采用回执和来源撤回。Session 归档另行取得 ATE 关闭回执并释放本地引用，`compact` 整理 runtime SQLite 空闲页。[记忆接入与验证记录](docs/ATE_INTEGRATION.md)
 
@@ -36,12 +35,12 @@
 
 ## 验证状态与待核实项
 
-2026-11-24 在 macOS arm64 / Go 1.27.0 上完成以下验证：
+2026-11-25 在 macOS arm64 / Go 1.27.0 上完成以下验证：
 
-- `go build -mod=readonly ./...`、`go vet ./...`、`go mod tidy -diff`、`git diff --check` 通过。
-- `go test -mod=readonly -count=1 -p 1 ./...` 已执行完毕。除 CLI 包外，其余包通过；CLI 的 `TestControlScopeProductionJSONL` 因聊天进程持有同一 ATE 运行库、独立 control 进程取得所有权超时而失败。该问题仍未解决，不能声明全量通过。
-- `internal/tool`、`internal/runtimestore`、`internal/app` 的定向 race 检查通过，覆盖快照恢复、运行库格式、Memory 工具、策略审批和关闭时的所有权保护；不代表全库 race。
+- `go build -mod=readonly ./...`、`go vet -mod=readonly ./...` 和 `git diff --check` 通过。
+- `go test -mod=readonly ./...` 已执行完毕。除 CLI 包中的 `TestControlScopeProductionJSONL` 外，其余包通过；该测试因聊天进程持有同一 ATE 运行库、独立 control 进程取得所有权超时而失败。该问题仍未解决，不能声明全量通过。
+- resume 的 `SessionCatalog` 单 ownership 回归、显式会话路径、App adoption 和 ATE process 生命周期定向测试通过；测试按 `ownership + start` 统计持久 owner，同一 lease 的 reconnect 不算第二次打开。
+- `internal/tool`、`internal/runtimestore`、`internal/app` 的定向验证通过，覆盖快照恢复、运行库格式、Memory 工具、策略审批和关闭时的所有权保护；不代表全库 race。
 - 交互式 resume 会话隔离、Memory 查询与写入审批、策略重开、旧 runtime v1 原位打开及损坏格式拒绝回归通过。旧库测试使用临时 fixture，核对 checkpoint、pending 请求、工具快照及历史字节保留。
-- 已重建 `bin/gsea`，帮助不再提供 `plugins` 命令，旧命令返回 unknown command，构建依赖不含 wazero。
 
-本轮未执行 Linux 实机隔离验收、真实付费模型效果或容量评测。此前日期的全库通过结论不能替代上述结果。真实会话和 ATE 数据未清理；运行库旧格式识别仅保留已有执行证据，不提供退役扩展的执行能力。
+本轮未执行 Linux 实机隔离验收、真实付费模型效果或容量评测。此前日期的全库通过结论不能替代上述结果。真实会话和 ATE 数据未清理；运行库旧格式识别保留已有执行证据。

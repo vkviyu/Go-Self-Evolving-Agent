@@ -356,7 +356,7 @@ command arguments.
 
 The retained `GSEAHarborAgent` implementation uploads the binary to `/opt/gsea/gsea`, runs
 `chat --evaluation-mode --shell-sandbox container --workspace /app
---data-dir /tmp/gsea-data` with `GSEA_LSP_ENABLED=false`,
+--data-dir /tmp/gsea-data`,
 retries the process only on transient model-stream failures
 (`max_process_attempts`, default 2), then downloads `sessions.db` and reads
 `usage_records` and `session_events` from it. A trial that exits 0 but cannot
@@ -497,9 +497,11 @@ For SWE-bench, the official harness report supersedes that field.
 Each `gsea.eval.result.v1` record includes task identity, model label, Agent
 status (`completed`, `failed` or `timed_out`), durable aggregate token/cost
 usage, check outcomes, embedded patch, patch SHA-256, timing and paths to
-verbose artifacts. Usage is read from the run's `sessions.db`; if that read
-fails, the tokens parsed from the headless transcript are kept and
-`agent.error` records the failure.
+verbose artifacts. The current `gsea eval` runner reads durable usage from the
+session's ATE records through `app.ReadSessionUsage`; if that read fails, the
+tokens parsed from the headless transcript are kept and `agent.error` records
+the failure. The `sessions.db` export described in the historical Harbor
+adapter section is retired and is not the current result source.
 
 Per task, `<root>/runs/<run-id>/<task-id>/` (components are sanitized and
 suffixed with a short hash) holds `transcript.txt`, `agent.stderr.txt`,

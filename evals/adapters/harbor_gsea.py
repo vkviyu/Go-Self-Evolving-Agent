@@ -162,7 +162,6 @@ class GSEAHarborAgent(BaseAgent):
                 cwd=self.workspace,
                 env={
                     self.api_key_env: api_key,
-                    "GSEA_LSP_ENABLED": "false",
                     "GSEA_HOME": "/tmp/gsea-home",
                 },
                 timeout_sec=self.process_timeout_seconds,

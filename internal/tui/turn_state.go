@@ -18,7 +18,9 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
 
-func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
+// applyRuntimeEvent reports whether the visible transcript needs new layout.
+// Status-only events still update the status bar through Model.View.
+func (model *Model) applyRuntimeEvent(event agentruntime.Event) bool {
 	switch event.Type {
 	case agentruntime.EventMemoryReferenceLookupStarted:
 		model.stage = "Reading referenced memory"
@@ -76,10 +78,12 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 		model.stage = "Retrying rejected tool call"
 		model.finishInterruptedModelOutput()
 		model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "Tool call format was rejected before execution. Retrying this model step."})
+		return true
 	case agentruntime.EventModelTimeoutRetry:
 		model.stage = "Retrying timed-out model request"
 		model.finishInterruptedModelOutput()
 		model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "Model request timed out. Retrying this model step."})
+		return true
 	case agentruntime.EventToolProposed:
 		model.stage = toolStage("Preparing tool call", event)
 	case agentruntime.EventToolPolicyChecking:
@@ -113,7 +117,8 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 			model.activeReasoning = len(model.blocks) - 1
 			model.observeBlock(event, "reasoning")
 		}
-		model.blocks[model.activeReasoning].content += event.Delta
+		model.blocks[model.activeReasoning].appendDelta(event.Delta)
+		return model.showReasoning
 	case agentruntime.EventAssistantTextDelta:
 		model.stage = "Responding"
 		if model.activeAssistant < 0 {
@@ -121,23 +126,31 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) {
 			model.activeAssistant = len(model.blocks) - 1
 			model.observeBlock(event, "text")
 		}
-		model.blocks[model.activeAssistant].content += event.Delta
+		model.blocks[model.activeAssistant].appendDelta(event.Delta)
+		return true
 	case agentruntime.EventAssistantMessage:
 		model.applyAssistantMessage(event.Message)
+		return true
 	case agentruntime.EventToolResult:
 		model.applyToolResult(event.Message)
+		return true
 	}
+	return false
 }
 
 func (model *Model) finishInterruptedModelOutput() {
-	for _, index := range []int{model.activeAssistant, model.activeReasoning} {
-		if index >= 0 && index < len(model.blocks) {
-			model.blocks[index].pending = false
-		}
-	}
+	model.finishActiveStreams()
 	model.activeAssistant = -1
 	model.activeReasoning = -1
 	model.lastAssistantMessage = -1
+}
+
+func (model *Model) finishActiveStreams() {
+	for _, index := range []int{model.activeAssistant, model.activeReasoning} {
+		if index >= 0 && index < len(model.blocks) {
+			model.blocks[index].finishStream()
+		}
+	}
 }
 
 func (model *Model) observeBlock(event agentruntime.Event, kind string) {
@@ -294,6 +307,7 @@ func (model *Model) applyAssistantMessage(message *schema.Message) {
 	// Deltas are a live preview. The complete message is authoritative and
 	// may contain a suffix the last visible streaming chunk did not carry.
 	model.reconcileAssistantContent(message.Content, -1)
+	model.finishActiveStreams()
 	model.lastAssistantMessage = model.activeAssistant
 	model.activeAssistant = -1
 	model.activeReasoning = -1
@@ -328,7 +342,6 @@ func (model *Model) reconcileAssistantContent(content string, completed int) {
 	}
 	if index >= 0 && index < len(model.blocks) && model.blocks[index].kind == blockAssistant {
 		model.blocks[index].content = content
-		model.blocks[index].pending = false
 		model.activeAssistant = index
 		return
 	}
@@ -365,7 +378,7 @@ func (model *Model) finishTurn(message turnDoneMsg) (tea.Model, tea.Cmd) {
 	model.turnContext = nil
 	model.turnEvents = nil
 	for index := range model.blocks {
-		model.blocks[index].pending = false
+		model.blocks[index].finishStream()
 	}
 	wake := model.backgroundRunning
 	if model.finishWake(message.err) {

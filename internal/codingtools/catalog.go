@@ -15,20 +15,15 @@ const (
 // Bindings returns the complete first-party coding tool catalog. Metadata is
 // kept here so adding a tool does not require editing filesystem primitives.
 func (workspace *Workspace) Bindings() []tool.Binding {
-	bindings := []tool.Binding{
+	return []tool.Binding{
 		workspace.readBinding(),
 		workspace.listBinding(),
 		workspace.globBinding(),
 		workspace.grepBinding(),
-	}
-	if workspace.diagnostics != nil {
-		bindings = append(bindings, workspace.diagnosticsBinding())
-	}
-	return append(bindings,
 		workspace.writeBinding(),
 		workspace.editBinding(),
 		workspace.shellBinding(),
-	)
+	}
 }
 
 func (workspace *Workspace) readBinding() tool.Binding {
@@ -50,20 +45,16 @@ func (workspace *Workspace) grepBinding() tool.Binding {
 	return binding("workspace_grep", "Search text files below the effective workspace root with one valid Go/Rust/RE2 regular expression. Escape literal parentheses or use separate simpler searches; do not concatenate incomplete function signatures. Use path and glob only to narrow the search, and keep paths workspace-relative.", `{"type":"object","additionalProperties":false,"required":["pattern"],"properties":{"pattern":{"type":"string","description":"One valid RE2 regular expression; for literal text, quote punctuation such as parentheses"},"path":{"type":"string","description":"Optional workspace-relative directory or file"},"glob":{"type":"string","description":"Optional relative filepath glob such as **/*.go"},"ignore_case":{"type":"boolean"},"max_results":{"type":"integer","minimum":1,"maximum":1000},"max_bytes":{"type":"integer","minimum":1,"maximum":4194304}}}`, tool.RiskRead, tool.InvokeFunc(workspace.grep))
 }
 
-func (workspace *Workspace) diagnosticsBinding() tool.Binding {
-	return bindingRevision("workspace_diagnostics", "builtin-v2", "Ask the configured language server to analyze a workspace file and return ranked, deduplicated semantic diagnostics.", `{"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string","description":"Workspace-relative Go source, go.mod, or go.work path"}}}`, tool.RiskRead, tool.InvokeFunc(workspace.languageServerDiagnostics))
-}
-
 func (workspace *Workspace) writeBinding() tool.Binding {
-	return bindingRevision(WriteToolName, "builtin-v5", "Create or atomically replace a regular file in the workspace and return a bounded unified diff. New and existing content must each be at most 4 MiB; symbolic-link targets are rejected. Paths are relative to the workspace root; never pass an absolute path.", `{"type":"object","additionalProperties":false,"required":["path","content"],"properties":{"path":{"type":"string","minLength":1,"description":"Workspace-relative file path, for example hello.txt; absolute paths are rejected"},"content":{"type":"string"},"mode":{"type":"integer","minimum":0,"maximum":511},"expected_sha256":{"type":"string","pattern":"^[A-Fa-f0-9]{64}$"}}}`, tool.RiskWrite, tool.InvokeFunc(workspace.write))
+	return bindingRevision(WriteToolName, "builtin-v6", "Create or atomically replace a regular file in the workspace and return a bounded unified diff. New and existing content must each be at most 4 MiB; symbolic-link targets are rejected. Paths are relative to the workspace root; never pass an absolute path.", `{"type":"object","additionalProperties":false,"required":["path","content"],"properties":{"path":{"type":"string","minLength":1,"description":"Workspace-relative file path, for example hello.txt; absolute paths are rejected"},"content":{"type":"string"},"mode":{"type":"integer","minimum":0,"maximum":511},"expected_sha256":{"type":"string","pattern":"^[A-Fa-f0-9]{64}$"}}}`, tool.RiskWrite, tool.InvokeFunc(workspace.write))
 }
 
 func (workspace *Workspace) editBinding() tool.Binding {
-	return bindingRevision(EditToolName, "builtin-v5", "Replace exact text in a workspace file atomically and return a bounded unified diff. Both original and resulting content must be at most 4 MiB. Paths are relative to the workspace root; never pass an absolute path.", `{"type":"object","additionalProperties":false,"required":["path","old_text","new_text"],"properties":{"path":{"type":"string","minLength":1,"description":"Workspace-relative file path; absolute paths are rejected"},"old_text":{"type":"string","minLength":1},"new_text":{"type":"string"},"replace_all":{"type":"boolean"},"expected_sha256":{"type":"string","pattern":"^[A-Fa-f0-9]{64}$"}}}`, tool.RiskWrite, tool.InvokeFunc(workspace.edit))
+	return bindingRevision(EditToolName, "builtin-v6", "Replace exact text in a workspace file atomically and return a bounded unified diff. Both original and resulting content must be at most 4 MiB. Paths are relative to the workspace root; never pass an absolute path.", `{"type":"object","additionalProperties":false,"required":["path","old_text","new_text"],"properties":{"path":{"type":"string","minLength":1,"description":"Workspace-relative file path; absolute paths are rejected"},"old_text":{"type":"string","minLength":1},"new_text":{"type":"string"},"replace_all":{"type":"boolean"},"expected_sha256":{"type":"string","pattern":"^[A-Fa-f0-9]{64}$"}}}`, tool.RiskWrite, tool.InvokeFunc(workspace.edit))
 }
 
 func (workspace *Workspace) shellBinding() tool.Binding {
-	return bindingRevision(ShellToolName, "builtin-v5", "Run a shell command in the workspace or a workspace subdirectory and report bounded changes plus unified diffs. Each invocation may require approval and capture workspace changes. For local text, use workspace_read to read and workspace_grep to search.", `{"type":"object","additionalProperties":false,"required":["command"],"properties":{"command":{"type":"string","minLength":1},"working_directory":{"type":"string","description":"Workspace-relative directory path; omit for the workspace root"},"timeout_ms":{"type":"integer","minimum":1,"maximum":300000,"description":"Optional timeout for this command in milliseconds. Omit to run until the command exits or the caller cancels"},"max_output_bytes":{"type":"integer","minimum":1,"maximum":2097152}}}`, tool.RiskExecute, tool.InvokeFunc(workspace.shell))
+	return bindingRevision(ShellToolName, "builtin-v6", "Run a shell command in the workspace or a workspace subdirectory and report bounded changes plus unified diffs. Each invocation may require approval and capture workspace changes. For local text, use workspace_read to read and workspace_grep to search.", `{"type":"object","additionalProperties":false,"required":["command"],"properties":{"command":{"type":"string","minLength":1},"working_directory":{"type":"string","description":"Workspace-relative directory path; omit for the workspace root"},"timeout_ms":{"type":"integer","minimum":1,"maximum":300000,"description":"Optional timeout for this command in milliseconds. Omit to run until the command exits or the caller cancels"},"max_output_bytes":{"type":"integer","minimum":1,"maximum":2097152}}}`, tool.RiskExecute, tool.InvokeFunc(workspace.shell))
 }
 
 func binding(name, description, schema string, risk tool.RiskClass, executor tool.Executor) tool.Binding {

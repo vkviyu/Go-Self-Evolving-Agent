@@ -107,7 +107,4 @@ func TestWorkspaceRoutesSnapshotViewOutsideTheRoot(t *testing.T) {
 	if recorder.request.WorkspaceRoot != canonicalWork || recorder.request.WorkingDirectory != canonicalWork {
 		t.Fatalf("shell boundary = %#v, want %s", recorder.request, canonicalWork)
 	}
-	if !workspace.insideSnapshotViews(canonicalWork) || workspace.passiveDiagnostics(canonicalWork) {
-		t.Fatal("snapshot work tree must skip passive diagnostics")
-	}
 }

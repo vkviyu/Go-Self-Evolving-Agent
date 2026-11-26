@@ -129,6 +129,52 @@ func waitForTurnEvent(ctx context.Context, events <-chan tea.Msg) tea.Cmd {
 	}
 }
 
+// There is one consumer per turn. If producers outran the terminal, paint
+// already-queued updates together without waiting for more or starving input.
+// A completion goes back to the main loop after all preceding deltas.
+func (model *Model) updateTurnFrame(message tea.Msg) tea.Cmd {
+	const maxFrameEvents = 32
+	var commands []tea.Cmd
+	var dirty bool
+	next := waitForTurnEvent(model.ctx, model.turnEvents)
+frame:
+	for n := 1; ; n++ {
+		switch m := message.(type) {
+		case runtimeEventMsg:
+			if cmd := model.refreshAfterAgentTool(m.event); cmd != nil {
+				commands = append(commands, cmd)
+			}
+			previous := model.stage
+			if model.applyRuntimeEvent(m.event) {
+				dirty = true
+			}
+			if model.stage != previous {
+				model.stageStartedAt = m.at
+				if m.at.IsZero() {
+					model.stageStartedAt = time.Now()
+				}
+			}
+		case storageProgressMsg:
+			model.applyStorageProgress(m)
+		default:
+			next = func() tea.Msg { return message }
+			break frame
+		}
+		if n == maxFrameEvents {
+			break
+		}
+		select {
+		case message = <-model.turnEvents:
+		default:
+			break frame
+		}
+	}
+	if dirty {
+		model.refreshRootTranscript(false)
+	}
+	return tea.Batch(append(commands, next)...)
+}
+
 func waitForApproval(ctx context.Context, broker *approval.Broker) tea.Cmd {
 	return func() tea.Msg {
 		if broker == nil {

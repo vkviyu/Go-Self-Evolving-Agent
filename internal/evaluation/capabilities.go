@@ -42,7 +42,7 @@ func InspectCapabilities(ctx context.Context) Capabilities {
 		Schema: CapabilitiesSchema, OS: runtime.GOOS, Architecture: runtime.GOARCH,
 		Commands: make(map[string]Capability), PythonModules: make(map[string]Capability),
 	}
-	for _, name := range []string{"git", "docker", "python3", "go", "node", "npm", "java", "mvn", "rustc", "cargo", "gopls"} {
+	for _, name := range []string{"git", "docker", "python3", "go", "node", "npm", "java", "mvn", "rustc", "cargo"} {
 		report.Commands[name] = inspectCommand(name)
 	}
 	report.Sandbox = inspectSandbox(ctx)

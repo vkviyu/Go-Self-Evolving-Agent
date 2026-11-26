@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 )
 
 type memoryDiffArtifacts struct {
@@ -21,7 +19,7 @@ func TestBuildDiffExternalizesLargeUnifiedDiff(t *testing.T) {
 	old := strings.Repeat("old line\n", 20_000)
 	new := strings.Repeat("new line\n", 20_000)
 	artifacts := &memoryDiffArtifacts{}
-	result := buildDiff(context.Background(), artifacts, "large.txt", lsp.ChangeModified, []byte(old), []byte(new))
+	result := buildDiff(context.Background(), artifacts, "large.txt", changeModified, []byte(old), []byte(new))
 	if result.Status != "partial" || !result.Truncated {
 		t.Fatalf("result = %#v, want partial truncated diff", result)
 	}
@@ -34,18 +32,18 @@ func TestBuildDiffExternalizesLargeUnifiedDiff(t *testing.T) {
 }
 
 func TestBuildDiffMarksBinaryContent(t *testing.T) {
-	result := buildDiff(context.Background(), nil, "data.bin", lsp.ChangeModified, []byte("before\x00"), []byte("after\x00"))
+	result := buildDiff(context.Background(), nil, "data.bin", changeModified, []byte("before\x00"), []byte("after\x00"))
 	if result.Status != "binary" || result.Content != "" {
 		t.Fatalf("binary result = %#v", result)
 	}
 }
 
 func TestBuildDiffPreservesEmptyCreateAndDelete(t *testing.T) {
-	created := buildDiff(context.Background(), nil, "empty.txt", lsp.ChangeCreated, nil, nil)
+	created := buildDiff(context.Background(), nil, "empty.txt", changeCreated, nil, nil)
 	if created.Status != "ready" || created.Message == "" {
 		t.Fatalf("empty create = %#v", created)
 	}
-	deleted := buildDiff(context.Background(), nil, "empty.txt", lsp.ChangeDeleted, nil, nil)
+	deleted := buildDiff(context.Background(), nil, "empty.txt", changeDeleted, nil, nil)
 	if deleted.Status != "ready" || deleted.Message == "" {
 		t.Fatalf("empty delete = %#v", deleted)
 	}

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
 	"github.com/vkviyu/go-self-evolving-agent/internal/tool"
 )
@@ -60,14 +59,13 @@ func nativeSnapshotScope(resolved config.Config, workspaceRoot string, mode sand
 		Version             int
 		Workspace, Database string
 		Sandbox             sandbox.Mode
-		LSP                 lsp.Config
 		Model               config.ModelConfig
-	}{1, workspaceRoot, database, mode, resolved.LSP, resolved.Model})
+	}{2, workspaceRoot, database, mode, resolved.Model})
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256(encoded)
-	return "host-scope-v1:" + hex.EncodeToString(digest[:]), nil
+	return "host-scope-v2:" + hex.EncodeToString(digest[:]), nil
 }
 
 func scopeNativeBindings(scope string, bindings []tool.Binding) []tool.Binding {

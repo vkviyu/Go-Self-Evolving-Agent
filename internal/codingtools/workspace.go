@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/sandbox"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
@@ -33,7 +32,6 @@ type (
 		leases          orchestration.LeaseRepository
 		liveness        DescendantLiveness
 		views           workspacecoord.Repository
-		diagnostics     lsp.ChangeDiagnoser
 		artifacts       DiffArtifactStore
 		sandboxMode     sandbox.Mode
 		// snapshotViews holds snapshot work trees outside the workspace root.
@@ -50,15 +48,6 @@ type (
 		DescendantLock() (*os.File, error)
 	}
 )
-
-// AttachLanguageDiagnostics enables passive semantic feedback after
-// structured file changes and publishes the active workspace_diagnostics
-// tool. The service is optional and never changes write success semantics.
-func (workspace *Workspace) AttachLanguageDiagnostics(diagnostics lsp.ChangeDiagnoser) {
-	if workspace != nil {
-		workspace.diagnostics = diagnostics
-	}
-}
 
 // AttachDiffArtifactStore enables durable retrieval for large unified diffs.
 // Diff persistence is best effort and never changes a successful mutation.
@@ -118,12 +107,6 @@ func (workspace *Workspace) AttachSnapshotViewsDirectory(directory string) error
 // insideSnapshotViews reports whether root is a snapshot work tree.
 func (workspace *Workspace) insideSnapshotViews(root string) bool {
 	return workspace.snapshotViews != "" && root != workspace.snapshotViews && ensureInsideRoot(workspace.snapshotViews, root) == nil
-}
-
-// passiveDiagnostics reports whether writes below root get automatic LSP
-// feedback. Snapshot work trees skip it; on-demand diagnostics still run.
-func (workspace *Workspace) passiveDiagnostics(root string) bool {
-	return workspace.diagnostics != nil && !workspace.insideSnapshotViews(root)
 }
 
 // runnerFor returns the shell runner whose sandbox covers root.

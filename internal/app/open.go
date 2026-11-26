@@ -14,7 +14,6 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/codingtools"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
 	"github.com/vkviyu/go-self-evolving-agent/internal/evolutionstore"
-	"github.com/vkviyu/go-self-evolving-agent/internal/lsp"
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	orchestrationate "github.com/vkviyu/go-self-evolving-agent/internal/orchestration/atestore"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
@@ -46,7 +45,12 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 		_ = owner.Close()
 		return nil, err
 	}
-	authority, err := openAuthority(ctx, resolved, database.ATERequests())
+	var authority *authorityResources
+	if options.SessionCatalog != nil {
+		authority, err = options.SessionCatalog.adopt(ctx, resolved, database.ATERequests())
+	} else {
+		authority, err = openAuthority(ctx, resolved, database.ATERequests())
+	}
 	if err != nil {
 		_ = database.Close()
 		_ = owner.Close()
@@ -70,10 +74,8 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 		checkpoints: database.Checkpoints(),
 		snapshots:   database.RuntimeSnapshots().WithReferenceGuard(repositories.CheckSnapshotReference),
 		strategies:  evolution,
-		diagnostics: database.LSPDiagnostics(),
 	}
 	closeOnError := true
-	var diagnosticManager *lsp.Manager
 	var domain *workspacedomain.Domain
 	temporalCleanup := func() { _ = authority.process.Close() }
 	evolutionContext, evolutionCancel := context.WithCancel(context.Background())
@@ -84,7 +86,7 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 			if temporalCleanup != nil {
 				temporalCleanup()
 			}
-			closeOpenResources(database, approvalBroker, diagnosticManager)
+			closeOpenResources(database, approvalBroker)
 			_ = domain.Close()
 			_ = owner.Close()
 		}
@@ -110,14 +112,6 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 	workspace.AttachLeaseRepository(domain.Leases())
 	workspace.AttachDescendantLiveness(domain)
 	workspace.AttachWorkspaceViewRepository(repositories)
-	if resolved.LSP.Enabled {
-		diagnosticManager, err = lsp.NewManager(resolved.LSP)
-		if err != nil {
-			return nil, fmt.Errorf("initialize language-server diagnostics: %w", err)
-		}
-		diagnosticManager.AttachProjectionStore(runtime.diagnostics)
-		workspace.AttachLanguageDiagnostics(diagnosticManager)
-	}
 	worktrees, err := workspacecoord.NewWorktreeManager(workspace.Root())
 	if err != nil {
 		return nil, fmt.Errorf("initialize workspace worktree manager: %w", err)
@@ -181,7 +175,6 @@ func OpenWithOptions(ctx context.Context, unresolved config.Config, options Open
 		workspace:        workspace,
 		coordinator:      coordinator,
 		artifacts:        artifacts,
-		diagnostics:      diagnosticManager,
 		strategies:       runtime.strategies,
 	}
 	if err := application.openTemporal(ctx); err != nil {

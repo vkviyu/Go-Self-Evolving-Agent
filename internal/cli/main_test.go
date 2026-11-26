@@ -39,7 +39,6 @@ func runIsolated(m *testing.M) int {
 		"GSEA_ATE_ENABLED":             "true",
 		"GSEA_ATE_BINARY":              binary,
 		"GSEA_ATE_DIRECTORY":           "",
-		"GSEA_LSP_ENABLED":             "false",
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			fmt.Fprintln(os.Stderr, err)

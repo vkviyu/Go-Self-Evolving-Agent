@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/vkviyu/agent-temporal-engine/client"
-	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
 	"github.com/vkviyu/go-self-evolving-agent/internal/runtimeowner"
 )
 
@@ -24,6 +24,7 @@ type (
 	Options struct {
 		Binary, Directory string
 		Timeout           time.Duration
+		StartupTimeout    time.Duration // Native store replay and authenticated hello.
 		// ExistingOnly skips store initialization and opens it with ate serve.
 		ExistingOnly bool
 		// NoWaitForOwner lets a catalog command report the active owner immediately.
@@ -42,23 +43,18 @@ type (
 		active  sync.WaitGroup
 	}
 
-	// ClientLease owns one authenticated native ATE process, client and store
-	// owner. Its callbacks are serialized and joined before another callback or
-	// Close proceeds.
+	// ClientLease holds the store owner for its lifetime. Its gate protects
+	// the replaceable process/client pair and serializes callbacks and shutdown.
 	ClientLease struct {
-		manager    *Manager
-		owner      *runtimeowner.Lock
-		process    *process
-		client     *client.Client
-		ctx        context.Context
-		cancel     context.CancelFunc
-		gate       chan struct{}
-		mu         sync.Mutex
-		closed     bool
-		activeDone chan struct{}
-		closeOnce  sync.Once
-		closeDone  chan struct{}
-		closeErr   error
+		manager   *Manager
+		owner     *runtimeowner.Lock
+		process   *process
+		client    *client.Client
+		ctx       context.Context
+		cancel    context.CancelFunc
+		gate      chan struct{}
+		closeOnce sync.Once
+		closeErr  error
 	}
 
 	// batchError hides untrusted protocol messages while retaining typed errors
@@ -95,6 +91,12 @@ func New(options Options) (*Manager, error) {
 	}
 	if options.Timeout < 0 || options.Timeout > 10*time.Minute {
 		return nil, errors.New("ATE timeout must be positive and at most 10m")
+	}
+	if options.StartupTimeout == 0 {
+		options.StartupTimeout = 10 * time.Minute
+	}
+	if options.StartupTimeout < 0 {
+		return nil, errors.New("ATE startup timeout must be positive")
 	}
 	for _, value := range []string{options.Binary, options.Directory} {
 		if strings.TrimSpace(value) == "" || len(value) > 4096 || strings.ContainsAny(value, "\x00\r\n") {
@@ -139,17 +141,15 @@ func (m *Manager) OpenClient(ctx context.Context) (*ClientLease, error) {
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(ctx, m.options.Timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(m.ctx, cancel)
 	defer stop()
 	progress := batchProgress(ctx)
 	defer progress(StageDone)
 	progress(StageQueue)
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-m.gate:
+	if err := waitGate(ctx, m.gate, m.options.Timeout); err != nil {
+		return nil, err
 	}
 	releaseGate := true
 	defer func() {
@@ -168,7 +168,7 @@ func (m *Manager) OpenClient(ctx context.Context) (*ClientLease, error) {
 	lease := &ClientLease{
 		manager: m, owner: owner, process: p, client: c,
 		ctx: leaseCtx, cancel: leaseCancel,
-		gate: make(chan struct{}, 1), closeDone: make(chan struct{}),
+		gate: make(chan struct{}, 1),
 	}
 	lease.gate <- struct{}{}
 	m.mu.Lock()
@@ -203,10 +203,8 @@ func (m *Manager) CurrentLease() *ClientLease {
 	return m.lease
 }
 
-// WithFreshClient closes the current persistent lease, if any, opens a new
-// authenticated connection, and runs exactly one callback on it. Callers use
-// this only for explicit reconciliation or recovery; ordinary WithClient must
-// never reopen a connection and replay a business callback implicitly.
+// WithFreshClient requests a new authenticated connection before an explicit
+// reconciliation callback. The persistent store owner stays held throughout.
 func (m *Manager) WithFreshClient(ctx context.Context, fn func(*client.Client) error) error {
 	if ctx == nil || fn == nil {
 		return errors.New("ATE fresh client requires a context and callback")
@@ -221,14 +219,7 @@ func (m *Manager) WithFreshClient(ctx context.Context, fn func(*client.Client) e
 	if lease == nil {
 		return m.WithClient(ctx, fn)
 	}
-	if err := lease.Close(); err != nil {
-		return err
-	}
-	fresh, err := m.OpenClient(ctx)
-	if err != nil {
-		return err
-	}
-	return fresh.WithClient(ctx, fn)
+	return lease.withClientContext(ctx, true, func(_ context.Context, c *client.Client) error { return fn(c) })
 }
 
 // WithClient keeps the historical short-lived behavior when no persistent
@@ -250,17 +241,15 @@ func (m *Manager) WithClient(ctx context.Context, fn func(*client.Client) error)
 	m.mu.Unlock()
 	defer m.active.Done()
 
-	ctx, cancel := context.WithTimeout(ctx, m.options.Timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(m.ctx, cancel)
 	defer stop()
 	progress := batchProgress(ctx)
 	defer progress(StageDone)
 	progress(StageQueue)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-m.gate:
+	if err := waitGate(ctx, m.gate, m.options.Timeout); err != nil {
+		return err
 	}
 	var callbackDone <-chan struct{}
 	defer func() {
@@ -297,6 +286,8 @@ func (m *Manager) WithClient(ctx context.Context, fn func(*client.Client) error)
 		return err
 	}
 	progress(StageOperation)
+	ctx, cancelOperation := context.WithTimeout(ctx, m.options.Timeout)
+	defer cancelOperation()
 	result := make(chan callbackResult, 1)
 	done := make(chan struct{})
 	callbackDone = done
@@ -323,250 +314,84 @@ func (m *Manager) WithClient(ctx context.Context, fn func(*client.Client) error)
 	}
 }
 
-// WithClientContext runs one bounded, serialized callback and supplies the
-// bounded operation context used by the lease. The callback is always joined
-// before the lease admits another operation.
-func (l *ClientLease) WithClientContext(ctx context.Context, fn func(context.Context, *client.Client) error) (err error) {
-	if l == nil || ctx == nil || fn == nil {
-		return errors.New("ATE lease requires a context and callback")
-	}
-	// Report waiting and execution independently of the UI progress callback.
-	var acquired func()
-	if observation.Enabled(ctx) {
-		var finish func(error)
-		acquired, finish = observeLease(ctx)
-		defer func() {
-			if v := recover(); v != nil {
-				finish(errors.New("ATE callback panicked"))
-				panic(v)
-			}
-			finish(err)
-		}()
-	}
-	opCtx, cancel := context.WithTimeout(ctx, l.manager.options.Timeout)
-	defer cancel()
-	stop := context.AfterFunc(l.ctx, cancel)
-	defer stop()
-	select {
-	case <-opCtx.Done():
-		return l.operationError(opCtx.Err())
-	case <-l.gate:
-	}
-	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		l.gate <- struct{}{}
-		return ErrLeaseClosed
-	}
-	if l.client.Closed() {
-		l.closed = true
-		l.cancel()
-		l.mu.Unlock()
-		_ = l.client.Close()
-		l.gate <- struct{}{}
-		return client.ErrClosed
-	}
-	done := make(chan struct{})
-	l.activeDone = done
-	c := l.client
-	l.mu.Unlock()
-	defer func() {
-		l.mu.Lock()
-		if l.activeDone == done {
-			l.activeDone = nil
-		}
-		l.mu.Unlock()
-		close(done)
-		l.gate <- struct{}{}
-	}()
-
-	if acquired != nil {
-		acquired()
-	}
-	result := make(chan callbackResult, 1)
-	go func() {
-		var r callbackResult
-		defer func() {
-			r.panicValue = recover()
-			result <- r
-		}()
-		r.err = fn(opCtx, c)
-	}()
-	select {
-	case r := <-result:
-		if r.panicValue != nil {
-			panic(r.panicValue)
-		}
-		if r.err != nil {
-			if leaseBreaking(r.err) || c.Closed() {
-				l.invalidate()
-			}
-			return r.err
-		}
-		if err := opCtx.Err(); err != nil {
-			return err
-		}
-		return nil
-	case <-opCtx.Done():
-		if c.Closed() {
-			l.invalidate()
-		}
-		r := <-result
-		if r.panicValue != nil {
-			panic(r.panicValue)
-		}
-		if r.err != nil {
-			return errors.Join(opCtx.Err(), r.err)
-		}
-		return opCtx.Err()
-	}
-}
-
-// WithClient runs a bounded callback on the persistent client.
-func (l *ClientLease) WithClient(ctx context.Context, fn func(*client.Client) error) error {
-	return l.WithClientContext(ctx, func(_ context.Context, c *client.Client) error {
-		return fn(c)
-	})
-}
-
-// Invalidate prevents further callbacks from using this connection. The
-// process and owner remain held until Close so an explicit fresh connection can
-// release them in a deterministic order.
-func (l *ClientLease) Invalidate() {
-	if l == nil {
-		return
-	}
-	l.invalidate()
-}
-
-func (l *ClientLease) operationError(err error) error {
-	l.mu.Lock()
-	closed := l.closed
-	l.mu.Unlock()
-	if closed {
-		return ErrLeaseClosed
-	}
-	return err
-}
-
-func leaseBreaking(err error) bool {
-	var unknown *client.OutcomeUnknownError
-	return errors.Is(err, client.ErrClosed) || errors.As(err, &unknown)
-}
-
-func (l *ClientLease) invalidate() {
-	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		return
-	}
-	l.closed = true
-	l.cancel()
-	c := l.client
-	l.mu.Unlock()
-	_ = c.Close()
-}
-
-// Close cancels the lease, closes the native client, joins any callback, then
-// joins the child process and releases store ownership. It is idempotent.
-func (l *ClientLease) Close() error {
-	if l == nil {
-		return nil
-	}
-	l.mu.Lock()
-	if !l.closed {
-		l.closed = true
-		l.cancel()
-	}
-	c := l.client
-	activeDone := l.activeDone
-	l.mu.Unlock()
-	_ = c.Close()
-	if activeDone != nil {
-		<-activeDone
-	}
-	l.closeOnce.Do(func() {
-		var errs []error
-		if err := l.process.finish(); err != nil {
-			errs = append(errs, &batchError{stage: "subprocess shutdown", cause: err})
-		}
-		l.process.stop()
-		if err := l.owner.Close(); err != nil {
-			errs = append(errs, &batchError{stage: "ownership release", cause: err})
-		}
-		l.manager.mu.Lock()
-		if l.manager.lease == l {
-			l.manager.lease = nil
-		}
-		l.manager.mu.Unlock()
-		select {
-		case l.manager.gate <- struct{}{}:
-		default:
-		}
-		l.manager.active.Done()
-		l.closeErr = errors.Join(errs...)
-		close(l.closeDone)
-	})
-	<-l.closeDone
-	return l.closeErr
-}
-
 func (m *Manager) openNative(ctx, processContext context.Context, progress func(Stage)) (owner *runtimeowner.Lock, p *process, c *client.Client, err error) {
 	binary, err := resolveBinary(m.options.Binary, os.Executable, exec.LookPath)
 	if err != nil {
 		return nil, nil, nil, &batchError{stage: "binary resolution", cause: err}
 	}
 	progress(StageOwnership)
-	owner, err = m.acquire(ctx)
+	ownerCtx, cancelOwner := context.WithTimeout(ctx, m.options.Timeout)
+	owner, err = m.acquire(ownerCtx)
+	cancelOwner()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	keep := false
 	defer func() {
-		if keep {
-			return
-		}
-		if c != nil {
-			_ = c.Close()
-		}
-		if p != nil {
-			_ = p.cmd.Process.Kill()
-			_ = p.finish()
-			<-p.done
-			p.stop()
-		}
-		if owner != nil {
-			if closeErr := owner.Close(); closeErr != nil && err == nil {
-				err = &batchError{stage: "ownership release", cause: closeErr}
-			}
+		if err != nil {
+			err = errors.Join(err, owner.Close())
 		}
 	}()
 	if !m.options.ExistingOnly {
 		progress(StageInitialize)
-		if err := m.initialize(ctx, binary); err != nil {
-			return owner, p, c, err
+		initCtx, cancelInit := context.WithTimeout(ctx, m.options.Timeout)
+		err := m.initialize(initCtx, binary)
+		cancelInit()
+		if err != nil {
+			return owner, nil, nil, err
 		}
 	}
+	p, c, err = m.connectNative(ctx, processContext, binary, progress)
+	return owner, p, c, err
+}
+
+// connectNative assumes the caller already owns the store. Reconnecting never
+// initializes a directory or releases ownership to another GSEA runtime.
+func (m *Manager) connectNative(ctx, processContext context.Context, binary string, progress func(Stage)) (*process, *client.Client, error) {
+	// ate serve replays the store before it reads the first protocol frame.
+	// An ordinary RPC deadline here makes a sufficiently large store unopenable.
+	ctx, cancel := context.WithTimeout(ctx, m.options.StartupTimeout)
+	defer cancel()
 	var secret [32]byte
 	if _, err := rand.Read(secret[:]); err != nil {
-		return owner, p, c, &batchError{stage: "credential generation", cause: err}
+		return nil, nil, &batchError{stage: "credential generation", cause: err}
 	}
 	token := hex.EncodeToString(secret[:])
 	progress(StageStart)
-	p, err = m.start(processContext, binary, token)
+	p, err := m.start(processContext, binary, token)
 	if err != nil {
-		return owner, p, c, err
+		return nil, nil, err
 	}
 	progress(StageHandshake)
-	c, err = client.New(ctx, p.stream, client.Options{Token: token})
+	c, err := client.New(ctx, p.stream, client.Options{Token: token})
 	if err != nil {
-		return owner, p, c, &batchError{stage: "hello", cause: err}
+		switch {
+		case ctx.Err() != nil:
+			err = fmt.Errorf("ATE startup (store replay and handshake): %w", ctx.Err())
+		case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+			err = &batchError{stage: "startup (connection closed before hello)", cause: err}
+		default:
+			err = &batchError{stage: "hello", cause: err}
+		}
+	} else if err = validateIdentity(c); err == nil {
+		return p, c, nil
+	} else {
+		_ = c.Close()
 	}
-	if err := validateIdentity(c); err != nil {
-		return owner, p, c, err
+	_ = p.cmd.Process.Kill()
+	_ = p.finish()
+	p.stop()
+	return nil, nil, err
+}
+
+func waitGate(ctx context.Context, gate <-chan struct{}, timeout time.Duration) error {
+	wait, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	select {
+	case <-wait.Done():
+		return wait.Err()
+	case <-gate:
+		return nil
 	}
-	keep = true
-	return owner, p, c, nil
 }
 
 func validateIdentity(c *client.Client) error {
