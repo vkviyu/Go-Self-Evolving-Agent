@@ -12,6 +12,7 @@ import (
 // ArtifactReader resolves the durable patch reference stored on a merge
 // request, typically from a content-addressed artifact store.
 type ArtifactReader interface {
+	// ReadArtifact loads the bytes of the referenced workspace artifact.
 	ReadArtifact(context.Context, string) ([]byte, error)
 }
 
@@ -25,6 +26,8 @@ func (reader ArtifactReaderFunc) ReadArtifact(ctx context.Context, reference str
 	return reader(ctx, reference)
 }
 
+// contextError reports cancellation or deadline expiry and accepts a nil context as
+// active.
 func contextError(ctx context.Context) error {
 	if ctx == nil {
 		return nil
@@ -373,6 +376,8 @@ func (executor *MergeExecutor) RequeueResolved(ctx context.Context, mergeID orch
 	})
 }
 
+// markConflict records the conflict against the running merge version before ensuring a
+// resolution task exists.
 func (executor *MergeExecutor) markConflict(ctx context.Context, running MergeRequest, reason string) (MergeRequest, error) {
 	conflicted, err := executor.Repository.TransitionMerge(ctx, MergeTransition{
 		MergeID: running.ID, Expected: running.Version, Target: MergeConflicted,

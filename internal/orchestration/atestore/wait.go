@@ -32,6 +32,9 @@ func hashWaitRequest(spec orchestration.WaitSpec) string {
 	data, _ := json.Marshal(request)
 	return sha256Hex(data)
 }
+
+// CreateWaitSet persists the suspension condition and target agents so a wait can survive
+// a restart.
 func (store *Store) CreateWaitSet(ctx context.Context, spec orchestration.WaitSpec) (result orchestration.WaitSet, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -106,6 +109,8 @@ func (store *Store) CreateWaitSet(ctx context.Context, spec orchestration.WaitSp
 	})
 	return
 }
+
+// GetWaitSet reads the current state and intent of the specified wait.
 func (store *Store) GetWaitSet(ctx context.Context, id orchestration.WaitSetID) (result orchestration.WaitSet, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -139,6 +144,8 @@ func waitSetsTx(tx *ateauthority.Tx, match func(orchestration.WaitSet) bool) ([]
 	})
 	return result, nil
 }
+
+// ListWaitSets returns the persisted wait sets matching the query.
 func (store *Store) ListWaitSets(ctx context.Context, query orchestration.WaitSetQuery) (result []orchestration.WaitSet, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -163,12 +170,18 @@ func (store *Store) ListWaitSets(ctx context.Context, query orchestration.WaitSe
 	})
 	return
 }
+
+// ResolveWaitSet records that the wait condition was satisfied.
 func (store *Store) ResolveWaitSet(ctx context.Context, id orchestration.WaitSetID, reason string) (orchestration.WaitSet, error) {
 	return store.transitionWaitSet(ctx, id, orchestration.WaitSetResolved, orchestration.EventWaitSetResolved, reason)
 }
+
+// ExpireWaitSet records that the wait's deadline has elapsed.
 func (store *Store) ExpireWaitSet(ctx context.Context, id orchestration.WaitSetID, reason string) (orchestration.WaitSet, error) {
 	return store.transitionWaitSet(ctx, id, orchestration.WaitSetExpired, orchestration.EventWaitSetExpired, reason)
 }
+
+// ConsumeWaitSet records consumption of a resolved or expired wait.
 func (store *Store) ConsumeWaitSet(ctx context.Context, id orchestration.WaitSetID, reason string) (orchestration.WaitSet, error) {
 	return store.transitionWaitSet(ctx, id, orchestration.WaitSetConsumed, orchestration.EventWaitSetConsumed, reason)
 }
@@ -232,6 +245,8 @@ func transitionWaitSetTx(tx *ateauthority.Tx, id orchestration.WaitSetID, target
 	_, err = appendEvents(tx, orchestration.Stream{Type: orchestration.StreamAgent, ID: string(agent.ID), TeamID: agent.TeamID}, orchestration.AnySequence, pending...)
 	return wait, err
 }
+
+// CancelWaitSetsForAgent records cancellation of the agent's outstanding waits.
 func (store *Store) CancelWaitSetsForAgent(ctx context.Context, id orchestration.AgentID, reason string) error {
 	if ctx == nil {
 		ctx = context.Background()

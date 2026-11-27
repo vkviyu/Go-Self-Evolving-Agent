@@ -35,7 +35,10 @@ type (
 	// TeamRepository reads and transitions Teams. Each transition records the
 	// matching team.* event in the same transaction.
 	TeamRepository interface {
+		// GetTeam returns the persisted team snapshot, including its lifecycle state and
+		// version.
 		GetTeam(ctx context.Context, teamID TeamID) (TeamSnapshot, error)
+		// TransitionTeam applies a team lifecycle change against the recorded version.
 		TransitionTeam(ctx context.Context, transition TeamTransition) (TeamSnapshot, error)
 	}
 )

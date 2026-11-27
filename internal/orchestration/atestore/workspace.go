@@ -23,6 +23,8 @@ type workspaceIdentity struct {
 	Hash string `json:"hash"`
 }
 
+// workspaceContext supplies a background context for workspace repository calls whose
+// caller omitted one.
 func workspaceContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
@@ -30,6 +32,8 @@ func workspaceContext(ctx context.Context) context.Context {
 	return ctx
 }
 
+// workspaceDigest hashes the JSON representation of the workspace operation for identity
+// checks.
 func workspaceDigest(value any) string {
 	encoded, _ := json.Marshal(value)
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))
@@ -76,11 +80,14 @@ func workspaceTaskTeam(tx *ateauthority.Tx, id orchestration.TaskID, team orches
 	return nil
 }
 
+// workspaceAppendEvents stages workspace events in the owning team's stream in the
+// caller's transaction.
 func workspaceAppendEvents(tx *ateauthority.Tx, team orchestration.TeamID, events ...orchestration.PendingEvent) error {
 	_, err := appendEvents(tx, orchestration.Stream{Type: orchestration.StreamWorkspace, ID: string(team), TeamID: team}, orchestration.AnySequence, events...)
 	return err
 }
 
+// CreateView persists the view specification and initial lifecycle state.
 func (store *Store) CreateView(ctx context.Context, spec workspacecoord.ViewSpec) (workspacecoord.View, error) {
 	// Validation inspects paths; keep it outside the retriable callback.
 	if err := spec.Validate(); err != nil {
@@ -153,6 +160,7 @@ func workspaceViewMatches(view workspacecoord.View, spec workspacecoord.ViewSpec
 		view.RootPath == spec.RootPath && view.BaseRevision == spec.BaseRevision
 }
 
+// GetView loads the workspace view metadata by ID.
 func (store *Store) GetView(ctx context.Context, id orchestration.WorkspaceViewID) (workspacecoord.View, error) {
 	if err := id.Validate(); err != nil {
 		return workspacecoord.View{}, err
@@ -166,6 +174,7 @@ func (store *Store) GetView(ctx context.Context, id orchestration.WorkspaceViewI
 	return view, err
 }
 
+// ListViews returns the stored workspace views matching the query.
 func (store *Store) ListViews(ctx context.Context, query workspacecoord.ViewQuery) ([]workspacecoord.View, error) {
 	if err := query.TeamID.Validate(); err != nil {
 		return nil, err
@@ -199,6 +208,7 @@ func (store *Store) ListViews(ctx context.Context, query workspacecoord.ViewQuer
 	return result, err
 }
 
+// ReleaseView records the release of a view and the reason for its state transition.
 func (store *Store) ReleaseView(ctx context.Context, id orchestration.WorkspaceViewID, reason string) (workspacecoord.View, error) {
 	if err := id.Validate(); err != nil {
 		return workspacecoord.View{}, err

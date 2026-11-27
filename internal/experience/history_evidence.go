@@ -32,6 +32,7 @@ type (
 	EvidenceReference = experienceport.EvidenceReference
 )
 
+// payloadDigest hashes the exact source payload bytes used as evidence.
 func payloadDigest(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

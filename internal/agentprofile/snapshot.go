@@ -18,6 +18,8 @@ type durableSnapshot struct {
 	Profile     Profile `json:"profile"`
 }
 
+// Fingerprint hashes the validated profile with its tool lists sorted so their order does
+// not change its identity.
 func (profile Profile) Fingerprint() (string, error) {
 	if err := profile.Validate(); err != nil {
 		return "", err
@@ -33,6 +35,8 @@ func (profile Profile) Fingerprint() (string, error) {
 	return "profile-sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
+// Encode serializes a profile together with its snapshot format version and verified
+// fingerprint.
 func Encode(profile Profile) (json.RawMessage, error) {
 	fingerprint, err := profile.Fingerprint()
 	if err != nil {
@@ -41,6 +45,8 @@ func Encode(profile Profile) (json.RawMessage, error) {
 	return json.Marshal(durableSnapshot{Version: 1, Fingerprint: fingerprint, Profile: profile})
 }
 
+// Decode verifies the snapshot version, profile fingerprint and requested revision before
+// returning a copy.
 func Decode(data json.RawMessage, revision string) (Profile, error) {
 	var snapshot durableSnapshot
 	if len(data) == 0 {

@@ -44,6 +44,7 @@ type ViewSpec struct {
 	IdempotencyKey string
 }
 
+// Validate checks the requested workspace view's ownership, mode and configuration.
 func (spec ViewSpec) Validate() error {
 	if err := spec.TeamID.Validate(); err != nil {
 		return fmt.Errorf("workspace view team: %w", err)
@@ -153,6 +154,8 @@ type View struct {
 	ReleasedAt     *time.Time                    `json:"released_at,omitempty"`
 }
 
+// Validate checks the ownership, workspace mode and paths of the stored view using the
+// same rules as a new view.
 func (view View) Validate() error {
 	return (ViewSpec{
 		TeamID: view.TeamID, AgentID: view.AgentID, TaskID: view.TaskID,
@@ -297,13 +300,22 @@ type MergeTransition struct {
 }
 
 type Repository interface {
+	// CreateView records a workspace view described by the supplied specification.
 	CreateView(context.Context, ViewSpec) (View, error)
+	// GetView reads the persisted workspace view by its ID.
 	GetView(context.Context, orchestration.WorkspaceViewID) (View, error)
+	// ListViews returns workspace views matching the supplied filters.
 	ListViews(context.Context, ViewQuery) ([]View, error)
+	// ReleaseView records that the view was released and preserves the reason for audit.
 	ReleaseView(context.Context, orchestration.WorkspaceViewID, string) (View, error)
+	// EnqueueMerge records a request to merge changes from a workspace view.
 	EnqueueMerge(context.Context, MergeSpec) (MergeRequest, error)
+	// GetMerge reads the current merge request by its ID.
 	GetMerge(context.Context, orchestration.MergeID) (MergeRequest, error)
+	// ListMerges returns merge requests matching the query, including any requested state
+	// filter.
 	ListMerges(context.Context, MergeQuery) ([]MergeRequest, error)
+	// TransitionMerge applies a merge state change against the caller's expected version.
 	TransitionMerge(context.Context, MergeTransition) (MergeRequest, error)
 }
 

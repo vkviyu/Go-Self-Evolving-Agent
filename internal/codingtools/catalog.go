@@ -61,6 +61,8 @@ func binding(name, description, schema string, risk tool.RiskClass, executor too
 	return bindingRevision(name, "builtin-v1", description, schema, risk, executor)
 }
 
+// bindingRevision pairs the executor with a descriptor carrying the supplied revision,
+// schema and risk.
 func bindingRevision(name, revision, description, schema string, risk tool.RiskClass, executor tool.Executor) tool.Binding {
 	return tool.Binding{Descriptor: tool.Descriptor{Name: name, Description: description, InputSchema: json.RawMessage(schema), Revision: revision, RiskClass: risk, Capabilities: []string{"tool.invoke"}}, Executor: executor}
 }

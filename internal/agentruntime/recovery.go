@@ -46,6 +46,8 @@ func (record TurnRecord) IsForegroundRequest() bool {
 	return !record.Background && record.RunID == "" && record.HasUserInput
 }
 
+// CheckTurnRecovery checks the session's recovery journal and enforces the factory's bound
+// session, if any.
 func (f *Factory) CheckTurnRecovery(ctx context.Context, id session.ID, turnID string) error {
 	if f.profile != nil && id != f.profileSession {
 		return errors.New("recovery session differs from bound Agent")
@@ -53,6 +55,8 @@ func (f *Factory) CheckTurnRecovery(ctx context.Context, id session.ID, turnID s
 	return session.CheckRecovery(ctx, f.events, id, turnID)
 }
 
+// TurnRecords loads turn history and checkpoint evidence used to decide which turns can
+// resume.
 func (f *Factory) TurnRecords(ctx context.Context, id session.ID) ([]TurnRecord, error) {
 	if f.profile != nil && id != f.profileSession {
 		return nil, errors.New("recovery session differs from bound Agent")

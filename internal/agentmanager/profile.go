@@ -8,6 +8,8 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
+// agentProfile verifies the profile saved with the agent or looks up its revision when no
+// snapshot was saved.
 func (supervisor *Supervisor) agentProfile(agent orchestration.AgentSnapshot) (agentprofile.Profile, bool) {
 	if len(agent.ProfileSnapshot) > 0 {
 		profile, err := agentprofile.Decode(agent.ProfileSnapshot, agent.ProfileRevision)

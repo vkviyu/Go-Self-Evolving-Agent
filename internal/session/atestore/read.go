@@ -50,6 +50,7 @@ func (s *Store) nativeSession(ctx context.Context, reader NativeReader, id sessi
 	return out.Session, out.Found, err
 }
 
+// CurrentSequence reads the authoritative session event sequence.
 func (s *Store) CurrentSequence(ctx context.Context, id session.ID) (uint64, error) {
 	if err := checkID(id); err != nil {
 		return 0, err
@@ -73,6 +74,7 @@ func (s *Store) CurrentSequence(ctx context.Context, id session.ID) (uint64, err
 	}
 }
 
+// Load retrieves session events strictly after the specified sequence.
 func (s *Store) Load(ctx context.Context, id session.ID, after uint64, limit int) ([]session.Event, error) {
 	items, err := s.read(ctx, id, after, nil, nil, limit)
 	if err != nil {

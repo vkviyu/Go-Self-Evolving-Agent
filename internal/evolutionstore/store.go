@@ -32,6 +32,8 @@ func New(authority *ateauthority.Store) (*Store, error) {
 
 const prefix = "gsea/evolution/v1/"
 
+// recordKey encodes each evolution record ID separately so IDs containing separators
+// cannot collide.
 func recordKey(kind string, ids ...string) string {
 	parts := []string{prefix + kind}
 	for _, id := range ids {

@@ -173,6 +173,7 @@ func sameStamp(left, right fileStamp) bool {
 		(!left.contentOK || !right.contentOK || bytes.Equal(left.content, right.content))
 }
 
+// joinCaptureMessage combines distinct nonempty diagnostics from change capture.
 func joinCaptureMessage(left, right string) string {
 	left, right = strings.TrimSpace(left), strings.TrimSpace(right)
 	if left == "" {

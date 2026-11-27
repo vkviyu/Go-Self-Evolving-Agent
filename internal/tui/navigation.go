@@ -106,6 +106,8 @@ func (model *Model) transcriptTopRow() int {
 	return model.headerHeight() + 1 + model.activityHeight()
 }
 
+// singleLinePreview strips terminal controls, collapses whitespace and truncates by
+// display width.
 func singleLinePreview(value string, width int) string {
 	return ansi.Truncate(strings.Join(strings.Fields(render.PlainText(value)), " "), max(1, width), "…")
 }
@@ -121,6 +123,8 @@ func (model *Model) windowTitleCommand() tea.Cmd {
 	return tea.SetWindowTitle("GSEA · " + model.displaySessionTitle())
 }
 
+// headerHeight fits session metadata into the available rows while preserving space for
+// transcript and input.
 func (model *Model) headerHeight() int {
 	if !model.showSessionInfo {
 		return 1

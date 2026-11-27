@@ -32,6 +32,8 @@ func (conversation *Conversation) Compress(ctx context.Context) (bool, agentrunt
 	return conversation.CompressWithSink(ctx, nil)
 }
 
+// CompressWithSink serializes compaction with foreground turns and returns the resulting
+// context usage.
 func (conversation *Conversation) CompressWithSink(ctx context.Context, sink agentruntime.EventSink) (bool, agentruntime.ContextUsage, error) {
 	conversation.mutex.Lock()
 	defer conversation.mutex.Unlock()

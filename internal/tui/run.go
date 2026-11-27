@@ -25,9 +25,15 @@ import (
 
 // Conversation is the application boundary required by the terminal UI.
 type Conversation interface {
+	// ID identifies the session currently displayed in the terminal.
 	ID() session.ID
+	// History returns the conversation messages used to initialize the displayed
+	// transcript.
 	History() []*schema.Message
+	// CompletedTurns reports how many conversation turns have finished successfully.
 	CompletedTurns() int
+	// RunTurn submits the user's input and sends incremental runtime events to the
+	// supplied sink.
 	RunTurn(context.Context, string, agentruntime.EventSink) (agentruntime.Result, error)
 }
 
@@ -35,22 +41,33 @@ type Conversation interface {
 // is optional at the UI boundary so lightweight embedders and tests can keep a
 // minimal Conversation implementation.
 type ContextConversation interface {
+	// ContextUsage returns the current estimate of the conversation's model input and its
+	// limits.
 	ContextUsage() agentruntime.ContextUsage
+	// Compress explicitly compacts the conversation and returns whether it changed and the
+	// resulting usage.
 	Compress(context.Context) (bool, agentruntime.ContextUsage, error)
 }
 
 type ContextEventConversation interface {
+	// CompressWithSink reports progress during explicit compaction and returns the
+	// resulting context usage.
 	CompressWithSink(context.Context, agentruntime.EventSink) (bool, agentruntime.ContextUsage, error)
 }
 
 type pendingContextConversation interface {
+	// ContextUsageFor estimates the context usage that would result from submitting the
+	// pending input.
 	ContextUsageFor(string) agentruntime.ContextUsage
 }
 
 // BackgroundConversation is implemented by a root conversation that can wake
 // itself for Agent messages that arrived while it was idle.
 type BackgroundConversation interface {
+	// PendingBackground reports how many background messages are waiting for a wake turn.
 	PendingBackground(context.Context) (int, error)
+	// RunBackgroundTurn processes waiting agent messages and publishes progress to the
+	// event sink.
 	RunBackgroundTurn(context.Context, agentruntime.EventSink) (agentruntime.Result, error)
 }
 

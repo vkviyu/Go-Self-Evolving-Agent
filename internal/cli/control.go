@@ -269,6 +269,8 @@ func emitSnapshot(ctx context.Context, reader agentmanager.TeamSnapshotReader, t
 	return writeControl(encoder, controlSnapshot{Protocol: controlProtocol, Type: "snapshot", TeamSnapshot: snapshot})
 }
 
+// emitResult writes a control protocol result only when all supplied operation errors are
+// nil.
 func emitResult(encoder *json.Encoder, command string, teamID orchestration.TeamID, value any, values ...error) error {
 	for _, err := range values {
 		if err != nil {
@@ -285,6 +287,7 @@ func valueOrZero(value *uint64) uint64 {
 	return *value
 }
 
+// writeControl emits one JSON value as a line of the control protocol.
 func writeControl(encoder *json.Encoder, value any) error {
 	return encoder.Encode(value)
 }

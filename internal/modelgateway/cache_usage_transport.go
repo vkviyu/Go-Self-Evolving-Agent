@@ -28,6 +28,8 @@ type cacheUsageTransport struct {
 	inner http.RoundTripper
 }
 
+// RoundTrip normalizes cache-usage fields in provider responses, including event streams,
+// for the downstream decoder.
 func (transport cacheUsageTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := transport.inner.RoundTrip(request)
 	if err != nil || response == nil || response.Body == nil {

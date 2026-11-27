@@ -13,7 +13,9 @@ import (
 // RecoveryConversation is optional; display code never reads the event store
 // or decides whether a checkpoint is safe to execute.
 type RecoveryConversation interface {
+	// Recoveries returns interrupted turns available for inspection in this conversation.
 	Recoveries(context.Context) ([]conversation.Recovery, error)
+	// ResumeTurn resumes the identified turn and delivers progress through the event sink.
 	ResumeTurn(context.Context, string, agentruntime.EventSink) (agentruntime.Result, error)
 }
 
@@ -29,6 +31,7 @@ func discoverRecoveries(ctx context.Context, source RecoveryConversation) tea.Cm
 	}
 }
 
+// recoveryFailure adds a recovery error to the transcript for inspection.
 func (model *Model) recoveryFailure(message string) {
 	model.notice(blockFailure, message)
 }

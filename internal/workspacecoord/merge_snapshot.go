@@ -33,6 +33,8 @@ type (
 
 	// MergeApprover decides whether a merge may change main.
 	MergeApprover interface {
+		// ApproveMerge requests approval for the proposed workspace merge before applying
+		// it.
 		ApproveMerge(context.Context, MergeApproval) (bool, error)
 	}
 

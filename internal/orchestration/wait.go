@@ -36,6 +36,8 @@ type WaitSpec struct {
 	IdempotencyKey string
 }
 
+// Validate checks the wait owner, condition and targets, rejecting duplicate targets and
+// self-waits.
 func (spec WaitSpec) Validate() error {
 	if err := spec.TeamID.Validate(); err != nil {
 		return fmt.Errorf("wait team: %w", err)
@@ -150,6 +152,8 @@ func WithWaitIntent(ctx context.Context, wait WaitSet) context.Context {
 	return context.WithValue(ctx, waitIntentKey{}, wait)
 }
 
+// WaitIntentFromContext retrieves the durable wait intent attached for a replayed tool
+// call.
 func WaitIntentFromContext(ctx context.Context) (WaitSet, bool) {
 	wait, ok := ctx.Value(waitIntentKey{}).(WaitSet)
 	return wait, ok
@@ -169,12 +173,20 @@ type WaitSetQuery struct {
 }
 
 type WaitRepository interface {
+	// CreateWaitSet persists the conditions that would wake the agent after suspension.
 	CreateWaitSet(context.Context, WaitSpec) (WaitSet, error)
+	// GetWaitSet reads the wait intent and its current lifecycle state by ID.
 	GetWaitSet(context.Context, WaitSetID) (WaitSet, error)
+	// ListWaitSets returns persisted waits matching the query filters.
 	ListWaitSets(context.Context, WaitSetQuery) ([]WaitSet, error)
+	// ResolveWaitSet records that the wait condition has been satisfied.
 	ResolveWaitSet(context.Context, WaitSetID, string) (WaitSet, error)
+	// ConsumeWaitSet marks a resolved or expired wait as consumed by its continuation.
 	ConsumeWaitSet(context.Context, WaitSetID, string) (WaitSet, error)
+	// ExpireWaitSet records that the wait has reached its deadline.
 	ExpireWaitSet(context.Context, WaitSetID, string) (WaitSet, error)
+	// CancelWaitSetsForAgent cancels outstanding waits owned by the agent with the
+	// supplied reason.
 	CancelWaitSetsForAgent(context.Context, AgentID, string) error
 }
 

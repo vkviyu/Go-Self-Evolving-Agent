@@ -30,6 +30,8 @@ type taskReceipt struct {
 	Children map[string]orchestration.TaskID `json:"children,omitempty"`
 }
 
+// taskContext supplies a background context for task repository calls whose caller omitted
+// one.
 func taskContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
@@ -37,17 +39,21 @@ func taskContext(ctx context.Context) context.Context {
 	return ctx
 }
 
+// taskPair encodes two IDs as an ordered pair for compound task record keys.
 func taskPair(a, b string) string {
 	data, _ := json.Marshal([2]string{a, b})
 	return string(data)
 }
 
+// taskHash hashes the JSON representation used to compare task requests for idempotency.
 func taskHash(value any) string {
 	data, _ := json.Marshal(value)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
+// taskEvent appends events to this task's stream within the transaction that changes the
+// task.
 func taskEvent(tx *ateauthority.Tx, task orchestration.TaskSnapshot, pending ...orchestration.PendingEvent) error {
 	_, err := appendEvents(tx, orchestration.Stream{Type: orchestration.StreamTask, ID: string(task.ID), TeamID: task.TeamID}, orchestration.AnySequence, pending...)
 	return err
@@ -77,6 +83,8 @@ func taskAgentLive(state orchestration.AgentState) bool {
 	return false
 }
 
+// taskAgentBelongs verifies inside the transaction that the agent belongs to the task's
+// team.
 func taskAgentBelongs(tx *ateauthority.Tx, id orchestration.AgentID, team orchestration.TeamID) error {
 	agent, err := getRecord[orchestration.AgentSnapshot](tx, "agent", string(id))
 	if err != nil {
@@ -165,6 +173,8 @@ func taskOpenMerges(tx *ateauthority.Tx, id orchestration.TaskID) (int, error) {
 	return n, nil
 }
 
+// taskDependenciesComplete checks that every prerequisite of the requested edge kind has
+// reached TaskCompleted.
 func taskDependenciesComplete(tx *ateauthority.Tx, id orchestration.TaskID, kind string) (bool, error) {
 	edges, err := listRecords[taskEdge](tx, kind)
 	if err != nil {

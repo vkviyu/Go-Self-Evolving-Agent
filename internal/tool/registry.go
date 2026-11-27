@@ -213,6 +213,8 @@ func (r *Registry) ActivateMany(bindingsToActivate ...Binding) (*Snapshot, error
 // becomes visible. It runs under the registry lock. An error rejects the batch.
 type PublicationCommit func(previous, next *Snapshot) error
 
+// ActivateManyWithCommit validates the batch and invokes commit before publishing the next
+// registry snapshot.
 func (r *Registry) ActivateManyWithCommit(commit PublicationCommit, bindingsToActivate ...Binding) (*Snapshot, error) {
 	if len(bindingsToActivate) == 0 {
 		return nil, errors.New("at least one tool binding is required")

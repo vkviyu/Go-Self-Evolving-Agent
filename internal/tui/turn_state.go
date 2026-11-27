@@ -138,6 +138,8 @@ func (model *Model) applyRuntimeEvent(event agentruntime.Event) bool {
 	return false
 }
 
+// finishInterruptedModelOutput closes active previews and clears the assistant index
+// before a model retry.
 func (model *Model) finishInterruptedModelOutput() {
 	model.finishActiveStreams()
 	model.activeAssistant = -1
@@ -160,6 +162,8 @@ func (model *Model) observeBlock(event agentruntime.Event, kind string) {
 	})
 }
 
+// toolStage builds a status label from the stage and the sanitized tool name when
+// available.
 func toolStage(prefix string, event agentruntime.Event) string {
 	if name := strings.TrimSpace(render.PlainText(event.ToolName)); name != "" {
 		if prefix == "Running" {
@@ -297,6 +301,8 @@ func (model *Model) resolveApproval(approved bool) tea.Cmd {
 	return nil
 }
 
+// applyAssistantMessage reconciles streamed output with the authoritative message and
+// opens blocks for its tool calls.
 func (model *Model) applyAssistantMessage(message *schema.Message) {
 	if message == nil {
 		return
@@ -332,6 +338,8 @@ func (model *Model) applyAssistantMessage(message *schema.Message) {
 	}
 }
 
+// reconcileAssistantContent replaces the live preview with the complete response,
+// including any suffix omitted by the stream.
 func (model *Model) reconcileAssistantContent(content string, completed int) {
 	if content == "" {
 		return
@@ -349,6 +357,8 @@ func (model *Model) reconcileAssistantContent(content string, completed int) {
 	model.activeAssistant = len(model.blocks) - 1
 }
 
+// applyToolResult links a result to its pending tool block, or creates a separate block
+// when no call is known.
 func (model *Model) applyToolResult(message *schema.Message) {
 	if message == nil {
 		return
@@ -368,6 +378,8 @@ func (model *Model) applyToolResult(message *schema.Message) {
 	model.blocks = append(model.blocks, transcriptBlock{kind: blockTool, content: content, toolName: message.ToolName, toolResult: toolResult})
 }
 
+// finishTurn settles terminal UI state, preserving partial output when the turn was
+// interrupted.
 func (model *Model) finishTurn(message turnDoneMsg) (tea.Model, tea.Cmd) {
 	model.busy = false
 	model.cancelling = false

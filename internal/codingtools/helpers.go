@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// contextError returns the caller's cancellation or deadline error, treating a nil context
+// as active.
 func contextError(ctx context.Context) error {
 	if ctx == nil {
 		return nil
@@ -37,6 +39,7 @@ func normalizePattern(pattern string) (string, error) {
 	return clean, nil
 }
 
+// decode decodes coding tool arguments and rejects unexpected struct fields.
 func decode(raw json.RawMessage, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -46,6 +49,8 @@ func decode(raw json.RawMessage, target any) error {
 	return nil
 }
 
+// bounded uses the default when the requested limit is zero and rejects out-of-range
+// explicit limits.
 func bounded(value, defaultValue, maximum int) (int, error) {
 	if value == 0 {
 		return defaultValue, nil

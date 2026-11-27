@@ -22,6 +22,8 @@ type flowRequestIndex struct {
 	Hash string
 }
 
+// flowKey encodes an ordered set of flow key components as a JSON array to preserve their
+// boundaries.
 func flowKey(parts ...string) string {
 	raw, _ := json.Marshal(parts)
 	return string(raw)
@@ -48,6 +50,7 @@ func flowHashRequest(request agentflow.RunRequest) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// CreateRun records the flow request and returns the corresponding run.
 func (store *Store) CreateRun(ctx context.Context, request agentflow.RunRequest) (run agentflow.Run, err error) {
 	if err = request.Validate(); err != nil {
 		return
@@ -97,6 +100,7 @@ func (store *Store) CreateRun(ctx context.Context, request agentflow.RunRequest)
 	return
 }
 
+// GetRun reads the persisted flow run snapshot by its run ID.
 func (store *Store) GetRun(ctx context.Context, id string) (run agentflow.Run, err error) {
 	err = store.authority.View(ctx, func(tx *ateauthority.Tx) error {
 		run, err = getRecord[agentflow.Run](tx, "flow", id)
@@ -112,6 +116,7 @@ func flowAppendStepEvent(tx *ateauthority.Tx, run agentflow.Run, eventType orche
 	return err
 }
 
+// StartStep checks the stored input hash when the same step is started again.
 func (store *Store) StartStep(ctx context.Context, runID, stepID, inputHash string) (step agentflow.Step, err error) {
 	err = store.authority.Update(ctx, func(tx *ateauthority.Tx) error {
 		run, err := getRecord[agentflow.Run](tx, "flow", runID)
@@ -150,6 +155,7 @@ func (store *Store) StartStep(ctx context.Context, runID, stepID, inputHash stri
 	return
 }
 
+// FinishStep records the outputs used when replaying this step of the flow.
 func (store *Store) FinishStep(ctx context.Context, runID, stepID string, outputs []agentflow.Value) (step agentflow.Step, err error) {
 	encoded, err := json.Marshal(outputs)
 	if err != nil {
@@ -189,6 +195,7 @@ func (store *Store) FinishStep(ctx context.Context, runID, stepID string, output
 	return
 }
 
+// FailStep persists the failure reason for a flow step.
 func (store *Store) FailStep(ctx context.Context, runID, stepID, reason string) error {
 	return store.authority.Update(ctx, func(tx *ateauthority.Tx) error {
 		run, err := getRecord[agentflow.Run](tx, "flow", runID)
@@ -212,6 +219,7 @@ func (store *Store) FailStep(ctx context.Context, runID, stepID, reason string) 
 	})
 }
 
+// FinishRun persists the run's terminal state, its output values and the supplied reason.
 func (store *Store) FinishRun(ctx context.Context, id string, state agentflow.State, outputs []agentflow.Value, reason string) (run agentflow.Run, err error) {
 	if state != agentflow.StateCompleted && state != agentflow.StateFailed && state != agentflow.StateCanceled {
 		return run, fmt.Errorf("unsupported terminal Flow state %q", state)
@@ -256,6 +264,7 @@ func (store *Store) FinishRun(ctx context.Context, id string, state agentflow.St
 	return
 }
 
+// SessionAgent reads the agent bound to a named session in this flow run.
 func (store *Store) SessionAgent(ctx context.Context, runID, name string) (id orchestration.AgentID, found bool, err error) {
 	err = store.authority.View(ctx, func(tx *ateauthority.Tx) error {
 		id, err = getRecord[orchestration.AgentID](tx, "flow-session", flowKey(runID, name))
@@ -268,6 +277,8 @@ func (store *Store) SessionAgent(ctx context.Context, runID, name string) (id or
 	return
 }
 
+// BeginSessionStage saves the choice to spawn or continue so replay of the step follows
+// the same path.
 func (store *Store) BeginSessionStage(ctx context.Context, runID, name, stepID string) (stage agentflow.SessionStage, err error) {
 	if name == "" || stepID == "" {
 		return stage, errors.New("Flow Agent session stage requires session and step names")
@@ -300,6 +311,8 @@ func (store *Store) BeginSessionStage(ctx context.Context, runID, name, stepID s
 	return
 }
 
+// BindSessionAgent verifies that the agent belongs to the run's team and rejects rebinding
+// the session to a different agent.
 func (store *Store) BindSessionAgent(ctx context.Context, runID, name string, id orchestration.AgentID) error {
 	if err := id.Validate(); err != nil {
 		return err

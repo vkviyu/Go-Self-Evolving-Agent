@@ -11,6 +11,8 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/strategy"
 )
 
+// BaselineConfigID identifies the execution configuration against which a candidate
+// strategy is compared.
 func (f *Factory) BaselineConfigID() string {
 	if f.config.StrategyScope == "" {
 		return f.executionConfigID()

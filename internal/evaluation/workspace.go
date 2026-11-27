@@ -316,6 +316,8 @@ func PatchSHA256(patch []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// safePathComponent makes a bounded filename component and appends a hash of the original
+// identifier to distinguish normalized names.
 func safePathComponent(identifier string) string {
 	var safe strings.Builder
 	for _, value := range identifier {
@@ -336,6 +338,7 @@ func safePathComponent(identifier string) string {
 	return name + "-" + hex.EncodeToString(sum[:4])
 }
 
+// runGit runs a Git command in the specified directory with a bounded output buffer.
 func runGit(ctx context.Context, directory string, arguments ...string) ([]byte, error) {
 	return runGitLimited(ctx, 4<<20, directory, arguments...)
 }

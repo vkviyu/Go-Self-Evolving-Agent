@@ -91,6 +91,8 @@ func nilPort(value any) bool {
 	}
 }
 
+// lock waits for exclusive use of the experience service or context cancellation and
+// returns a release function on success.
 func (s *Service) lock(ctx context.Context) (func(), error) {
 	if ctx == nil {
 		return nil, errors.New("experience: context required")
@@ -103,16 +105,21 @@ func (s *Service) lock(ctx context.Context) (func(), error) {
 	}
 }
 
+// digest returns the hex SHA-256 digest of a JSON-encodable experience value.
 func digest(v any) string {
 	raw, _ := json.Marshal(v)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
 
+// key derives a state key from the operational space, session and turn so records from
+// different spaces remain distinct.
 func (s *Service) key(session, turn string) string {
 	return "experience/v1/" + digest([]string{string(s.bridge.OperationalSpace()), session, turn})
 }
 
+// load decodes the state value at key into out. Its boolean distinguishes a missing record
+// from an invalid one.
 func (s *Service) load(ctx context.Context, key string, out any) (bool, error) {
 	raw, found, err := s.state.Get(ctx, key)
 	if err != nil || !found {
@@ -134,6 +141,8 @@ func (s *Service) save(ctx context.Context, key string, value any) error {
 	return s.state.Put(ctx, key, bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
 }
 
+// commit submits the prepared command to its ATE space using the supplied bridge operation
+// key.
 func (s *Service) commit(ctx context.Context, key string, request api.CommitRequest) (api.CommitResult, error) {
 	return s.bridge.ExecuteInSpace(ctx, request.Space, key, func(*client.Client) (api.CommitRequest, error) { return request, nil })
 }

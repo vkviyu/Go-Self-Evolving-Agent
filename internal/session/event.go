@@ -101,8 +101,13 @@ type Event struct {
 // interfaces separate prevents event projections and tool execution from
 // depending on framework-specific recovery storage.
 type EventStore interface {
+	// Append appends the batch to the session at the expected sequence. AnySequence
+	// accepts the current head.
 	Append(ctx context.Context, sessionID ID, expectedSequence uint64, events ...PendingEvent) ([]Event, error)
+	// Load reads events in increasing sequence order, starting strictly after
+	// afterSequence.
 	Load(ctx context.Context, sessionID ID, afterSequence uint64, limit int) ([]Event, error)
+	// CurrentSequence reports the current event sequence for the session.
 	CurrentSequence(ctx context.Context, sessionID ID) (uint64, error)
 }
 
@@ -111,5 +116,7 @@ type EventStore interface {
 // EventStore remains the compatibility boundary; correctness does not depend on
 // this optimization.
 type CorrelatedEventStore interface {
+	// LoadByCorrelation retrieves this session's events belonging to the supplied
+	// correlation ID.
 	LoadByCorrelation(ctx context.Context, sessionID ID, correlationID string) ([]Event, error)
 }

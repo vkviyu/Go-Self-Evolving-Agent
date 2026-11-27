@@ -15,6 +15,8 @@ type TextSanitizer struct {
 	output strings.Builder
 }
 
+// Filter returns printable text from this fragment, preserving parser state across partial
+// UTF-8 and terminal escape sequences.
 func (sanitizer *TextSanitizer) Filter(text string) string {
 	if sanitizer.parser == nil {
 		sanitizer.parser = new(ansi.Parser)

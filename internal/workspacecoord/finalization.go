@@ -60,8 +60,14 @@ func (executor *MergeExecutor) verificationIdentity() string {
 // FinalizationStore owns durable verification receipts and the bounded recovery
 // query. It is optional for test repositories without external verification.
 type FinalizationStore interface {
+	// BeginMergeFinalization persists the receipt identifying the merge and its pending
+	// finalization work.
 	BeginMergeFinalization(context.Context, MergeFinalization) (MergeFinalization, error)
+	// LoadMergeFinalization looks up the durable receipt for a merge and reports whether
+	// one exists.
 	LoadMergeFinalization(context.Context, orchestration.MergeID) (MergeFinalization, bool, error)
+	// TransitionMergeFinalization advances the receipt from its expected previous state,
+	// checking that the merge binding matches.
 	TransitionMergeFinalization(context.Context, MergeFinalization, FinalizationState) (MergeFinalization, error)
 	SettleMergeFinalization(context.Context, orchestration.MergeID, string) error
 	PendingMergeFinalizations(context.Context, orchestration.TeamID, int) ([]MergeRequest, error)

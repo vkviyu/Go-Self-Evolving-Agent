@@ -203,6 +203,8 @@ type profileToolGuard struct {
 	mutex     sync.Mutex
 }
 
+// CheckCall verifies both the bound actor and the profile's permission to use the
+// requested tool.
 func (guard *profileToolGuard) CheckCall(_ context.Context, call tool.Call, descriptor tool.Descriptor) error {
 	if call.SessionID != guard.sessionID || call.Actor != guard.scope {
 		return &ProfileConstraintError{Reason: "tool caller does not match bound Agent"}

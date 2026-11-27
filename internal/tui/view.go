@@ -12,6 +12,8 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"
 )
 
+// View renders the visible terminal frame at the current dimensions, including transcript,
+// status and input.
 func (model *Model) View() string {
 	if !model.ready {
 		return model.styles.metadata.Render("Starting GSEA...")
@@ -47,6 +49,8 @@ func (model *Model) resize(width, height int) {
 	model.resizeInput()
 }
 
+// resizeInput fits the editor to its wrapped lines and recomputes the viewport height from
+// the remaining terminal rows.
 func (model *Model) resizeInput() {
 	inputHeight := min(max(1, model.inputDisplayHeight()), maximumInputHeight)
 	if model.ready {
@@ -241,6 +245,7 @@ func (model *Model) compactStatusRight(width int) string {
 	return model.styles.metadata.Render(compact)
 }
 
+// formatTokens abbreviates token counts in thousands to fit the terminal status line.
 func formatTokens(tokens int) string {
 	if tokens < 1000 {
 		return fmt.Sprintf("%d", tokens)

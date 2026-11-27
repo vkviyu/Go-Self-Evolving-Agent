@@ -124,6 +124,8 @@ func (l *ClientLease) retireConnection() error {
 	return nil
 }
 
+// Close cancels the client lease, waits for the active operation and releases process
+// ownership once.
 func (l *ClientLease) Close() error {
 	if l == nil {
 		return nil

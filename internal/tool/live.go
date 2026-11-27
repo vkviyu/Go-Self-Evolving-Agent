@@ -53,6 +53,8 @@ func LiveEventSinkFromContext(ctx context.Context) LiveEventSink {
 	return sink
 }
 
+// emitLiveEvent forwards tool progress to the observer and UI sink without propagating
+// sink errors into execution.
 func emitLiveEvent(ctx context.Context, event LiveEvent) {
 	if observation.Enabled(ctx) {
 		var status string

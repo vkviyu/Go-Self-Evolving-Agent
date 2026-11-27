@@ -66,6 +66,8 @@ func (entry SnapshotEntry) Matches(binding Binding) bool {
 	return bytes.Equal(a, b)
 }
 
+// Encode validates the manifest and serializes its entries in tool-name order for stable
+// snapshot IDs.
 func (manifest SnapshotManifest) Encode() ([]byte, error) {
 	host, err := hex.DecodeString(manifest.Host)
 	if manifest.Version != 1 || err != nil || len(host) != sha256.Size || hex.EncodeToString(host) != manifest.Host || len(manifest.Tools) > 1024 {
@@ -96,6 +98,7 @@ func (manifest SnapshotManifest) Encode() ([]byte, error) {
 	return encoded, nil
 }
 
+// ID hashes the canonical manifest bytes and returns a registry-sha256 identifier.
 func (manifest SnapshotManifest) ID() (string, error) {
 	encoded, err := manifest.Encode()
 	if err != nil {
@@ -122,6 +125,7 @@ func DecodeSnapshotManifest(encoded []byte) (SnapshotManifest, error) {
 	return manifest, err
 }
 
+// Manifest builds the host-bound manifest describing the snapshot's tool bindings.
 func (snapshot *Snapshot) Manifest() (SnapshotManifest, error) {
 	if snapshot == nil {
 		return SnapshotManifest{}, ErrSnapshotUnavailable
@@ -152,6 +156,8 @@ type SnapshotReferenceRecord struct {
 	ReleaseReason string
 }
 
+// Validate checks that the reference names a turn or flow and has a bounded, nonempty
+// scope and ID.
 func (reference SnapshotReference) Validate() error {
 	if (reference.Kind != "turn" && reference.Kind != "flow") || reference.Scope == "" || reference.ID == "" || len(reference.Scope) > 4096 || len(reference.ID) > 4096 {
 		return errors.New("invalid runtime snapshot reference")

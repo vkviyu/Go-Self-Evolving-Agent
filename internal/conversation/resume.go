@@ -35,6 +35,8 @@ func (conversation *Conversation) ResumeTurn(ctx context.Context, turnID string,
 	return agentruntime.Result{}, fmt.Errorf("turn %s has no durable start", turnID)
 }
 
+// resumeRecordedTurn chooses the recovery path from recorded turn state and checks that
+// the required execution identity is still usable.
 func (conversation *Conversation) resumeRecordedTurn(ctx context.Context, record agentruntime.TurnRecord, sink agentruntime.EventSink, selectForeground bool) (agentruntime.Result, error) {
 	turnID := record.TurnID
 	ctx = observation.WithScope(ctx, observation.Scope{SessionID: string(conversation.sessionID), TurnID: turnID})

@@ -15,6 +15,8 @@ type modelEventWatchdog struct {
 	lifecycle map[string]bool
 }
 
+// startModelEventWatchdog attaches an event-progress deadline to a timed request when
+// event monitoring is enabled.
 func startModelEventWatchdog(ctx context.Context, timeout time.Duration) *modelEventWatchdog {
 	state, _ := ctx.Value(modelRequestKey{}).(*modelRequestState)
 	if state == nil || timeout <= 0 {
@@ -29,6 +31,8 @@ func startModelEventWatchdog(ctx context.Context, timeout time.Duration) *modelE
 	return w
 }
 
+// note extends the event deadline for meaningful progress while ignoring redundant
+// lifecycle notifications.
 func (w *modelEventWatchdog) note(event responsesStreamEvent) {
 	if w == nil {
 		return

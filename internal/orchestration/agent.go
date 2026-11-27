@@ -92,6 +92,8 @@ type WorkspaceDelivery struct {
 	ChangedPaths    int             `json:"changed_paths"`
 }
 
+// Validate checks that the result has a recognized status and any attached payload is
+// valid JSON.
 func (result AgentResult) Validate() error {
 	switch result.Status {
 	case ResultSucceeded, ResultPartial, ResultBlocked, ResultFailed, ResultCanceled:
@@ -192,11 +194,19 @@ type AgentTransition struct {
 }
 
 type AgentRepository interface {
+	// CreateChild persists the child under its parent, using the spawn identity to
+	// recognize duplicate requests.
 	CreateChild(ctx context.Context, spec SpawnSpec) (AgentSnapshot, error)
+	// FindSpawn looks up a previous spawn by its team-scoped idempotency key.
 	FindSpawn(ctx context.Context, teamID TeamID, idempotencyKey string) (AgentSnapshot, bool, error)
+	// ListTeams returns the team IDs known to the agent repository.
 	ListTeams(ctx context.Context) ([]TeamID, error)
+	// GetAgent loads the agent's current snapshot by ID, including its initial prompt.
 	GetAgent(ctx context.Context, agentID AgentID) (AgentSnapshot, error)
+	// ListAgents returns the agent snapshots matching the supplied query.
 	ListAgents(ctx context.Context, query AgentQuery) ([]AgentSnapshot, error)
+	// TransitionAgent applies an allowed state change against the expected agent version
+	// and returns the updated snapshot.
 	TransitionAgent(ctx context.Context, transition AgentTransition) (AgentSnapshot, error)
 }
 
@@ -205,5 +215,7 @@ type AgentRepository interface {
 // Supervisor uses it as an optimization; CreateChild remains the durable
 // transaction boundary and must repeat the check for races.
 type SpawnRequestFinder interface {
+	// FindSpawnRequest looks up a prior spawn and checks whether its recorded identity
+	// matches the supplied spec.
 	FindSpawnRequest(ctx context.Context, spec SpawnSpec) (AgentSnapshot, bool, error)
 }

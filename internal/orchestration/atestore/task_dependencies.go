@@ -10,14 +10,19 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
+// AddDependency adds a prerequisite edge subject to the repository's task and cycle
+// checks.
 func (store *Store) AddDependency(ctx context.Context, id, dependency orchestration.TaskID, actor orchestration.AgentID, correlation string) error {
 	return store.taskChangeDependency(ctx, id, dependency, actor, correlation, true)
 }
 
+// RemoveDependency deletes the prerequisite edge and records the change in the task's
+// history.
 func (store *Store) RemoveDependency(ctx context.Context, id, dependency orchestration.TaskID, actor orchestration.AgentID, correlation string) error {
 	return store.taskChangeDependency(ctx, id, dependency, actor, correlation, false)
 }
 
+// ListDependencies returns the prerequisite IDs recorded for this task.
 func (store *Store) ListDependencies(ctx context.Context, id orchestration.TaskID) ([]orchestration.TaskID, error) {
 	if err := id.Validate(); err != nil {
 		return nil, err

@@ -140,6 +140,7 @@ func workspaceMatches(recorded, current string, all bool) bool {
 
 type resumeItem struct{ sessionregistry.Session }
 
+// Title uses the display-safe session name, falling back to the ID for unnamed sessions.
 func (item resumeItem) Title() string {
 	if title := terminalLabel(item.Name); title != "" {
 		return title
@@ -147,6 +148,8 @@ func (item resumeItem) Title() string {
 	return item.ID
 }
 
+// Description shows local update time, session state, workspace and ID in the resume
+// picker.
 func (item resumeItem) Description() string {
 	workspace := terminalLabel(item.Workspace)
 	if workspace == "" {

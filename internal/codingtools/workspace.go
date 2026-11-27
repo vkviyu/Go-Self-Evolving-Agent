@@ -45,6 +45,8 @@ type (
 	// processes. A process that outlives the runtime keeps its leases until
 	// it exits, so another instance never writes beside an orphaned command.
 	DescendantLiveness interface {
+		// DescendantLock returns a file to pass to the subprocess so it keeps the
+		// workspace leases alive. The caller closes its copy after reaping the child.
 		DescendantLock() (*os.File, error)
 	}
 )
@@ -142,6 +144,8 @@ func (workspace *Workspace) runnerFor(root string) (sandbox.Runner, error) {
 	return runner, nil
 }
 
+// operationRoot selects the working directory and isolation mode for the current tool
+// call.
 func (workspace *Workspace) operationRoot(ctx context.Context) (string, workspacecoord.ViewMode, error) {
 	if workspace == nil {
 		return "", "", errors.New("workspace is unavailable")

@@ -488,6 +488,8 @@ func mergeHarborMetadata(metadata *HarborRunMetadata, trial harborTrialResult) {
 	}
 }
 
+// mergeRecordedValue keeps the first nonempty Harbor metadata value and records
+// conflicting observations as protocol violations.
 func mergeRecordedValue(target *string, observed, label string, metadata *HarborRunMetadata) {
 	observed = strings.TrimSpace(observed)
 	if observed == "" {
@@ -586,6 +588,8 @@ func ScoreSWEBenchVerified(report SWEBenchRunReport) Scorecard {
 	}
 }
 
+// readBoundedJSON reads a result file up to the official-result byte limit and rejects
+// oversized input.
 func readBoundedJSON(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {

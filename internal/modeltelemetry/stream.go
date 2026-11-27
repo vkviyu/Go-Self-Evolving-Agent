@@ -35,6 +35,8 @@ func RecordStream(ctx context.Context, stream Stream) {
 	}
 }
 
+// ReadStream returns the most recently captured stream telemetry, or nil if none has been
+// published.
 func ReadStream(ctx context.Context) *Stream {
 	if capture, ok := ctx.Value(streamKey{}).(*atomic.Pointer[Stream]); ok {
 		return capture.Load()

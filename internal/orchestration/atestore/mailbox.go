@@ -12,6 +12,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
+// Enqueue persists a mailbox message and its idempotency information.
 func (store *Store) Enqueue(ctx context.Context, spec orchestration.MessageSpec) (result orchestration.Message, err error) {
 	now := time.Now().UTC()
 	err = store.authority.Update(ctx, func(tx *ateauthority.Tx) error { var e error; result, e = enqueueTx(tx, spec, now); return e })
@@ -26,6 +27,9 @@ func findMessageTx(tx *ateauthority.Tx, team orchestration.TeamID, key string) (
 	message, err := getRecord[orchestration.Message](tx, "message", string(id))
 	return message, err == nil, err
 }
+
+// FindMessage retrieves the message previously enqueued with a team-scoped idempotency
+// key.
 func (store *Store) FindMessage(ctx context.Context, team orchestration.TeamID, key string) (result orchestration.Message, found bool, err error) {
 	if err = team.Validate(); err != nil {
 		return
@@ -122,6 +126,8 @@ func messagesTx(tx *ateauthority.Tx, match func(orchestration.Message) bool) ([]
 	sort.Slice(result, func(i, j int) bool { return result[i].Sequence < result[j].Sequence })
 	return result, nil
 }
+
+// ListMessages reads stored mailbox messages matching the query filters.
 func (store *Store) ListMessages(ctx context.Context, query orchestration.MessageQuery) (result []orchestration.Message, err error) {
 	if err = query.TeamID.Validate(); err != nil {
 		return
@@ -150,9 +156,14 @@ func mailboxEvent(tx *ateauthority.Tx, message orchestration.Message, kind orche
 	_, err := appendEvents(tx, orchestration.Stream{Type: orchestration.StreamMailbox, ID: string(message.RecipientAgentID), TeamID: message.TeamID}, orchestration.AnySequence, orchestration.PendingEvent{Type: kind, ActorAgentID: message.RecipientAgentID, CorrelationID: message.CorrelationID, Payload: orchestration.MustJSONPayload(payload)})
 	return err
 }
+
+// MarkDelivered records the delivery transition for the specified mailbox message.
 func (store *Store) MarkDelivered(ctx context.Context, id orchestration.MessageID) (orchestration.Message, error) {
 	return store.transitionMessage(ctx, id, orchestration.DeliveryDelivered)
 }
+
+// MarkAcknowledged records the acknowledgement transition for the specified mailbox
+// message.
 func (store *Store) MarkAcknowledged(ctx context.Context, id orchestration.MessageID) (orchestration.Message, error) {
 	return store.transitionMessage(ctx, id, orchestration.DeliveryAcknowledged)
 }

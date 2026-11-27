@@ -130,10 +130,15 @@ func (p *Pipeline) WithApprover(approver policy.Approver) *Pipeline {
 // until tool.started is durable; its release runs before the executor (which
 // can recursively call this pipeline).
 type ExecutionGuard interface {
+	// CheckCall verifies the execution scope and descriptor before the tool is allowed to
+	// run.
 	CheckCall(context.Context, Call, Descriptor) error
+	// BeforeStart acquires any guard required while recording the start of a tool call and
+	// returns its release function.
 	BeforeStart(context.Context, Call, Descriptor) (func(), error)
 }
 
+// WithExecutionGuard returns a copy of the pipeline with guard appended to its execution checks.
 func (p *Pipeline) WithExecutionGuard(guard ExecutionGuard) *Pipeline {
 	copyPipeline := *p
 	copyPipeline.guards = append(append([]ExecutionGuard(nil), p.guards...), guard)
@@ -224,6 +229,8 @@ func (p *Pipeline) Execute(ctx context.Context, call Call) (Result, error) {
 	return p.invokeAndRecord(ctx, call, binding, snapshot)
 }
 
+// invokeAndRecord returns the tool result only after its success receipt has been
+// recorded.
 func (p *Pipeline) invokeAndRecord(ctx context.Context, call Call, binding Binding, snapshot *Snapshot) (Result, error) {
 	data, err := p.invoke(ctx, call, binding, snapshot)
 	if err != nil {
@@ -235,6 +242,8 @@ func (p *Pipeline) invokeAndRecord(ctx context.Context, call Call, binding Bindi
 	return Result{CallID: call.CallID, Revision: binding.Descriptor.Revision, Data: data}, nil
 }
 
+// admitStart holds each acquired guard until the durable start record has been written or
+// an error occurs.
 func (p *Pipeline) admitStart(ctx context.Context, call Call, binding Binding) error {
 	for _, guard := range p.guards {
 		release, err := guard.BeforeStart(ctx, call, binding.Descriptor)
@@ -248,6 +257,7 @@ func (p *Pipeline) admitStart(ctx context.Context, call Call, binding Binding) e
 	return p.recordStart(ctx, call, binding)
 }
 
+// validateCall checks the required tool call identifiers and arguments before dispatch.
 func validateCall(call *Call) error {
 	if call.SessionID == "" || call.ToolName == "" {
 		return errors.New("tool call requires session ID and tool name")
@@ -271,6 +281,8 @@ func validateCall(call *Call) error {
 	return err
 }
 
+// resolve selects the call's pinned registry snapshot or the current one and rejects
+// snapshots owned by another registry.
 func (p *Pipeline) resolve(call Call) (*Snapshot, Binding, error) {
 	snapshot := call.Registry
 	if snapshot == nil {
@@ -285,6 +297,8 @@ func (p *Pipeline) resolve(call Call) (*Snapshot, Binding, error) {
 	return snapshot, binding, nil
 }
 
+// recordProposal appends a tool proposal correlated with the call ID and exact binding
+// revision.
 func (p *Pipeline) recordProposal(ctx context.Context, call Call, binding Binding, snapshot *Snapshot) error {
 	_, err := p.events.Append(ctx, call.SessionID, session.AnySequence, session.PendingEvent{
 		Type:              session.EventToolProposed,
@@ -312,6 +326,8 @@ func (p *Pipeline) recordProposal(ctx context.Context, call Call, binding Bindin
 	return nil
 }
 
+// makePolicyRequest translates the resolved binding and caller scope into the inputs for
+// policy evaluation.
 func makePolicyRequest(call Call, binding Binding) policy.Request {
 	return policy.Request{
 		Actor:         call.Actor,
@@ -327,6 +343,8 @@ func makePolicyRequest(call Call, binding Binding) policy.Request {
 	}
 }
 
+// evaluate obtains the policy decision and records its audit evidence before authorization
+// proceeds.
 func (p *Pipeline) evaluate(ctx context.Context, call Call, request policy.Request) (policy.Decision, error) {
 	emitLiveEvent(ctx, LiveEvent{
 		Type: LivePolicyChecking, CallID: call.CallID, TurnID: call.TurnID,
@@ -359,6 +377,8 @@ func (p *Pipeline) evaluate(ctx context.Context, call Call, request policy.Reque
 	return decision, nil
 }
 
+// authorize enforces the policy decision and obtains approval when required before
+// allowing execution.
 func (p *Pipeline) authorize(ctx context.Context, call Call, binding Binding, request policy.Request, decision policy.Decision) error {
 	switch decision.Effect {
 	case policy.EffectAllow:
@@ -422,6 +442,8 @@ func (p *Pipeline) recordAudit(ctx context.Context, call Call, event session.Pen
 	return err
 }
 
+// recordStart persists the boundary at which recovery must account for a possible tool
+// side effect.
 func (p *Pipeline) recordStart(ctx context.Context, call Call, binding Binding) error {
 	_, err := p.events.Append(ctx, call.SessionID, session.AnySequence, session.PendingEvent{
 		Type:              session.EventToolStarted,
@@ -446,6 +468,8 @@ func (p *Pipeline) recordStart(ctx context.Context, call Call, binding Binding) 
 	return nil
 }
 
+// invoke attaches the execution identity and registry snapshot to the context before
+// calling the tool executor.
 func (p *Pipeline) invoke(ctx context.Context, call Call, binding Binding, snapshot *Snapshot) (json.RawMessage, error) {
 	ctx = orchestration.WithActorScope(ctx, call.Actor)
 	ctx = orchestration.WithToolCallID(ctx, call.CallID)
@@ -496,6 +520,8 @@ func (p *Pipeline) invoke(ctx context.Context, call Call, binding Binding, snaps
 	return append(json.RawMessage(nil), data...), nil
 }
 
+// recordSuccess persists the result under a separate deadline so cancellation cannot
+// discard evidence of a completed call.
 func (p *Pipeline) recordSuccess(ctx context.Context, call Call, binding Binding, data json.RawMessage) error {
 	// Successful side effects must remain recordable after user cancellation.
 	durable, cancel := p.durableContext(ctx)
@@ -530,6 +556,8 @@ func (p *Pipeline) recordSuccess(ctx context.Context, call Call, binding Binding
 	return nil
 }
 
+// validate checks that the pipeline has the dependencies needed to authorize, coordinate
+// and record a tool call.
 func (p *Pipeline) validate() error {
 	if p.registry == nil || p.policy == nil || p.events == nil || p.calls == nil {
 		return errors.New("tool pipeline requires registry, policy and event store")
@@ -537,6 +565,8 @@ func (p *Pipeline) validate() error {
 	return nil
 }
 
+// replayOutcome checks prior receipts for this call ID and distinguishes a reusable result
+// from a side effect with unknown outcome.
 func (p *Pipeline) replayOutcome(ctx context.Context, call Call, binding Binding) (Result, bool, error) {
 	events, err := correlatedEvents(ctx, p.events, call.SessionID, call.CallID)
 	if err != nil {
@@ -641,6 +671,8 @@ func (p *Pipeline) replayOutcome(ctx context.Context, call Call, binding Binding
 	return Result{}, false, nil
 }
 
+// correlatedEvents uses a correlation index when available and otherwise filters the
+// session event stream.
 func correlatedEvents(ctx context.Context, store session.EventStore, sessionID session.ID, correlationID string) ([]session.Event, error) {
 	if indexed, ok := store.(session.CorrelatedEventStore); ok {
 		return indexed.LoadByCorrelation(ctx, sessionID, correlationID)
@@ -677,6 +709,8 @@ func newCallCoordinator() *callCoordinator {
 	return &callCoordinator{locks: make(map[string]*callLock)}
 }
 
+// lock serializes work on a single call key and returns a release function that removes
+// the entry after its last user.
 func (coordinator *callCoordinator) lock(key string) func() {
 	coordinator.mu.Lock()
 	entry := coordinator.locks[key]
@@ -698,6 +732,8 @@ func (coordinator *callCoordinator) lock(key string) func() {
 	}
 }
 
+// recordFailure persists the tool failure and any recovery receipt before publishing the
+// live failure event.
 func (p *Pipeline) recordFailure(ctx context.Context, call Call, binding Binding, cause error) error {
 	recordContext, cancel := p.durableContext(ctx)
 	defer cancel()

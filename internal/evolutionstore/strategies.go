@@ -40,6 +40,8 @@ func (s *Store) Save(ctx context.Context, spec strategy.Spec) (string, error) {
 	return doc.Digest, err
 }
 
+// loadSpec reads a strategy specification and validates it before use in the current
+// authority transaction.
 func loadSpec(tx *ateauthority.Tx, id string) (strategy.Spec, error) {
 	var spec strategy.Spec
 	if err := loadDocument(tx, "strategy-spec", id, &spec); err != nil {

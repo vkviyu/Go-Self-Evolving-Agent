@@ -48,6 +48,8 @@ type (
 	// Implementations may additionally expose CompareAndSwapStore.
 	StateStore interface {
 		Get(ctx context.Context, key string) (json.RawMessage, bool, error)
+		// Put creates a JSON value at key. Repeating identical bytes is allowed, while
+		// different bytes conflict.
 		Put(ctx context.Context, key string, value json.RawMessage) error
 	}
 
@@ -59,6 +61,8 @@ type (
 	// Limits default to DefaultLimit and are capped at MaxLimit.
 	// Readers supporting frozen, paginated cuts also implement HistoryCutStore.
 	HistoryReader interface {
+		// History returns an ordered page of source events strictly after the supplied
+		// session sequence.
 		History(ctx context.Context, sessionID string, after uint64, limit int) ([]Record, error)
 	}
 

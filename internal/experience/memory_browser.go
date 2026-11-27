@@ -23,7 +23,9 @@ type MemoryResult struct {
 }
 
 type MemoryBrowser interface {
+	// SearchMemories finds memory candidates for a query up to the requested limit.
 	SearchMemories(context.Context, string, int) ([]MemoryResult, error)
+	// ReadMemories resolves the supplied memory references into records for the caller.
 	ReadMemories(context.Context, []string) ([]MemoryResult, error)
 }
 

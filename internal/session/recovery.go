@@ -41,6 +41,8 @@ type AbandonRequest struct {
 	EffectsReviewed bool
 }
 
+// Validate requires the target session and turn and explicit review of possible side
+// effects before abandonment.
 func (request AbandonRequest) Validate() error {
 	if request.SessionID == "" || request.TurnID == "" {
 		return errors.New("abandon requires a session and turn")

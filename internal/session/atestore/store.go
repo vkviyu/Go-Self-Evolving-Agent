@@ -96,6 +96,8 @@ type Store struct {
 	reconciliationTimeout time.Duration
 }
 
+// New constructs an ATE-backed session store and validates the dependencies and
+// reconciliation timeout.
 func New(o Options) (*Store, error) {
 	if o.ReconciliationTimeout < 0 {
 		return nil, errors.New("atestore: reconciliation timeout must not be negative")
@@ -208,6 +210,7 @@ func checkID(id session.ID) error {
 	return nil
 }
 
+// validIdentity applies both session text constraints and the ATE identity byte limit.
 func validIdentity(value string) bool {
 	return validText(value) && len(value) <= model.MaxIdentityBytes
 }

@@ -34,7 +34,11 @@ type Counter interface {
 	Encoding() string
 	Status() Status
 	Exact() bool
+	// CountMessages returns the counter's input token count for the supplied message
+	// sequence.
 	CountMessages(messages []*schema.Message) int
+	// ObserveProviderInput records the provider's measured input alongside the estimate
+	// used for that request.
 	ObserveProviderInput(actual int, estimated int)
 }
 
@@ -93,6 +97,8 @@ func (counter *modelCounter) Status() Status {
 
 func (counter *modelCounter) Exact() bool { return counter.Status() == StatusExact }
 
+// CountMessages counts message input with the model's available tokenization and
+// calibration information.
 func (counter *modelCounter) CountMessages(messages []*schema.Message) int {
 	count := counter.CountLocalMessages(messages)
 	counter.mutex.RLock()
@@ -144,6 +150,8 @@ func (counter *modelCounter) Fork() Counter {
 	}
 }
 
+// ObserveProviderInput uses a provider-reported input count to calibrate subsequent local
+// estimates.
 func (counter *modelCounter) ObserveProviderInput(actual int, estimated int) {
 	if actual <= 0 || estimated < 0 {
 		return

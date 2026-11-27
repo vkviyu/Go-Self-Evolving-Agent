@@ -44,6 +44,8 @@ type (
 	}
 )
 
+// experienceEnabled allows experience processing on foreground model calls when an
+// experience service is configured.
 func (m *recordingModel) experienceEnabled() bool {
 	return m != nil && m.purpose == "" && m.factory != nil && m.factory.config.Experience != nil
 }
@@ -78,6 +80,8 @@ func (m *recordingModel) prepareExperience(ctx context.Context, input []*schema.
 	return err
 }
 
+// cloneExperienceContext makes a separate JSON copy of experience evidence before
+// retaining it with the request.
 func cloneExperienceContext(value *experienceport.Context) (*experienceport.Context, error) {
 	if value == nil {
 		return nil, nil
@@ -235,6 +239,7 @@ func (m *recordingModel) experienceGenerator() experienceport.Generate {
 	}
 }
 
+// experienceTimeout returns the configured experience operation deadline or its default.
 func (m *recordingModel) experienceTimeout() time.Duration {
 	if timeout := m.factory.config.ExperienceTimeout; timeout > 0 {
 		return timeout
@@ -480,6 +485,8 @@ func (m *recordingModel) syncExperience(ctx context.Context) error {
 	return work.Err()
 }
 
+// usageSessionID selects the budget session when set, otherwise the session executing the
+// model call.
 func (m *recordingModel) usageSessionID() session.ID {
 	if m.budgetSessionID != "" {
 		return m.budgetSessionID

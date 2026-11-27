@@ -22,6 +22,8 @@ type Recovery struct {
 
 const hostRecoveryGuidance = "Use the original GSEA executable to resume this turn, or review prior effects and send a new instruction in this session."
 
+// Recoveries lists interrupted turns and checks their snapshot hosts without starting
+// execution.
 func (conversation *Conversation) Recoveries(ctx context.Context) ([]Recovery, error) {
 	conversation.mutex.Lock()
 	defer conversation.mutex.Unlock()

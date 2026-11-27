@@ -133,6 +133,8 @@ type Result struct {
 	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
+// Validate checks the task schema, identity and evaluation inputs before the runner uses
+// them.
 func (task Task) Validate() error {
 	if task.Schema != TaskSchema {
 		return fmt.Errorf("task schema must be %q", TaskSchema)

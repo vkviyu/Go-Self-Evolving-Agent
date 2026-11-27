@@ -25,6 +25,7 @@ type Store struct {
 	sessions  session.EventStore
 }
 
+// New constructs the orchestration repository over the supplied ATE authority.
 func New(authority *ateauthority.Store, events session.EventStore) (*Store, error) {
 	if authority == nil {
 		return nil, fmt.Errorf("orchestration ATE authority is required")
@@ -32,10 +33,14 @@ func New(authority *ateauthority.Store, events session.EventStore) (*Store, erro
 	return &Store{authority: authority, sessions: events}, nil
 }
 
+// recordKey namespaces the record kind and base64url-encodes the ID for unambiguous prefix
+// scans.
 func recordKey(kind, id string) string {
 	return "gsea/v1/" + kind + "/" + base64.RawURLEncoding.EncodeToString([]byte(id))
 }
 
+// getRecord decodes a typed record from the current transaction and wraps ErrNotFound when
+// the key is absent.
 func getRecord[T any](tx *ateauthority.Tx, kind, id string) (T, error) {
 	var value T
 	var raw json.RawMessage
@@ -49,10 +54,12 @@ func getRecord[T any](tx *ateauthority.Tx, kind, id string) (T, error) {
 	return decodeRecord[T](raw)
 }
 
+// putRecord stages the encoded record under its kind and ID in the caller's transaction.
 func putRecord(tx *ateauthority.Tx, kind, id string, value any) error {
 	return tx.Put(recordKey(kind, id), encodeRecord(value))
 }
 
+// createRecord stages a new record using the transaction's create-only precondition.
 func createRecord(tx *ateauthority.Tx, kind, id string, value any) error {
 	return tx.Create(recordKey(kind, id), encodeRecord(value))
 }
@@ -113,6 +120,8 @@ func decodeRecord[T any](raw json.RawMessage) (T, error) {
 	return value, err
 }
 
+// listRecords scans one record-kind prefix and decodes its values in the current
+// transaction.
 func listRecords[T any](tx *ateauthority.Tx, kind string) ([]T, error) {
 	values := make([]T, 0)
 	err := tx.List(recordKey(kind, ""), func(key string, raw json.RawMessage) error {
@@ -126,10 +135,13 @@ func listRecords[T any](tx *ateauthority.Tx, kind string) ([]T, error) {
 	return values, err
 }
 
+// streamCounterID combines stream type and ID for the per-stream sequence counter.
 func streamCounterID(kind orchestration.StreamType, id string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(kind)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(id))
 }
 
+// appendEvents checks the expected stream sequence and stages events with their stream,
+// team and global counters in the same transaction.
 func appendEvents(tx *ateauthority.Tx, stream orchestration.Stream, expected uint64, pending ...orchestration.PendingEvent) ([]orchestration.Event, error) {
 	if err := stream.Validate(); err != nil {
 		return nil, err

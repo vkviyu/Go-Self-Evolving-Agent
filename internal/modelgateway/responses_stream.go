@@ -98,9 +98,13 @@ func streamResponsesBody(body io.Reader, writer *schema.StreamWriter[*schema.Mes
 }
 
 type responsesMessageSender interface {
+	// Send forwards a response delta or stream error and reports whether the receiving
+	// side has closed.
 	Send(*schema.Message, error) bool
 }
 
+// emitResponsesStreamEvent translates a provider event into text, reasoning or tool deltas
+// and signals when consumption should stop.
 func emitResponsesStreamEvent(event responsesStreamEvent, writer responsesMessageSender, callStates map[string]*responseStreamCallState, textSeen, reasoningSeen *bool, outputIndex *int) (bool, error) {
 	switch event.Type {
 	case "response.output_text.delta":
@@ -285,6 +289,7 @@ func streamOutputIndex(value *int, next *int) int {
 	return index
 }
 
+// firstNonEmpty picks the first supplied protocol field with a nonempty string value.
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {

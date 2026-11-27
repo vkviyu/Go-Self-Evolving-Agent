@@ -236,6 +236,7 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 	return model, nil
 }
 
+// Init schedules startup, input and background activity for the terminal event loop.
 func (model *Model) Init() tea.Cmd {
 	var resume tea.Cmd
 	if model.initialResumeTurn != "" {
@@ -255,6 +256,8 @@ func (model *Model) Init() tea.Cmd {
 	)
 }
 
+// Update applies one terminal or runtime message and returns the commands needed for
+// subsequent work.
 func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message.(type) {
 	case runtimeEventMsg, storageProgressMsg:

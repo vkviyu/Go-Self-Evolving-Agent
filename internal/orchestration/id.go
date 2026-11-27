@@ -24,36 +24,84 @@ type WorkspaceViewID string
 type WaitSetID string
 type MergeID string
 
-func NewTeamID() (TeamID, error)                   { return newTypedID[TeamID]("team") }
-func NewAgentID() (AgentID, error)                 { return newTypedID[AgentID]("agent") }
-func NewThreadID() (ThreadID, error)               { return newTypedID[ThreadID]("thread") }
-func NewTaskID() (TaskID, error)                   { return newTypedID[TaskID]("task") }
-func NewRunID() (RunID, error)                     { return newTypedID[RunID]("run") }
-func NewMessageID() (MessageID, error)             { return newTypedID[MessageID]("msg") }
-func NewApprovalID() (ApprovalID, error)           { return newTypedID[ApprovalID]("approval") }
-func NewLeaseID() (LeaseID, error)                 { return newTypedID[LeaseID]("lease") }
-func NewEventID() (EventID, error)                 { return newTypedID[EventID]("event") }
-func NewWorkspaceViewID() (WorkspaceViewID, error) { return newTypedID[WorkspaceViewID]("view") }
-func NewWaitSetID() (WaitSetID, error)             { return newTypedID[WaitSetID]("wait") }
-func NewMergeID() (MergeID, error)                 { return newTypedID[MergeID]("merge") }
+// NewTeamID returns a new UUIDv7 in the team_ namespace.
+func NewTeamID() (TeamID, error) { return newTypedID[TeamID]("team") }
 
-func (id TeamID) Validate() error          { return validateTypedID(string(id), "team") }
-func (id AgentID) Validate() error         { return validateTypedID(string(id), "agent") }
-func (id ThreadID) Validate() error        { return validateTypedID(string(id), "thread") }
-func (id TaskID) Validate() error          { return validateTypedID(string(id), "task") }
-func (id RunID) Validate() error           { return validateTypedID(string(id), "run") }
-func (id MessageID) Validate() error       { return validateTypedID(string(id), "msg") }
-func (id ApprovalID) Validate() error      { return validateTypedID(string(id), "approval") }
-func (id LeaseID) Validate() error         { return validateTypedID(string(id), "lease") }
-func (id EventID) Validate() error         { return validateTypedID(string(id), "event") }
+// NewAgentID returns a new UUIDv7 in the agent_ namespace.
+func NewAgentID() (AgentID, error) { return newTypedID[AgentID]("agent") }
+
+// NewThreadID returns a new UUIDv7 in the thread_ namespace.
+func NewThreadID() (ThreadID, error) { return newTypedID[ThreadID]("thread") }
+
+// NewTaskID returns a new UUIDv7 in the task_ namespace.
+func NewTaskID() (TaskID, error) { return newTypedID[TaskID]("task") }
+
+// NewRunID returns a new UUIDv7 in the run_ namespace.
+func NewRunID() (RunID, error) { return newTypedID[RunID]("run") }
+
+// NewMessageID returns a new UUIDv7 in the msg_ namespace.
+func NewMessageID() (MessageID, error) { return newTypedID[MessageID]("msg") }
+
+// NewApprovalID returns a new UUIDv7 in the approval_ namespace.
+func NewApprovalID() (ApprovalID, error) { return newTypedID[ApprovalID]("approval") }
+
+// NewLeaseID returns a new UUIDv7 in the lease_ namespace.
+func NewLeaseID() (LeaseID, error) { return newTypedID[LeaseID]("lease") }
+
+// NewEventID returns a new UUIDv7 in the event_ namespace.
+func NewEventID() (EventID, error) { return newTypedID[EventID]("event") }
+
+// NewWorkspaceViewID returns a new UUIDv7 in the view_ namespace.
+func NewWorkspaceViewID() (WorkspaceViewID, error) { return newTypedID[WorkspaceViewID]("view") }
+
+// NewWaitSetID returns a new UUIDv7 in the wait_ namespace.
+func NewWaitSetID() (WaitSetID, error) { return newTypedID[WaitSetID]("wait") }
+
+// NewMergeID returns a new UUIDv7 in the merge_ namespace.
+func NewMergeID() (MergeID, error) { return newTypedID[MergeID]("merge") }
+
+// Validate checks the team_ prefix and the UUIDv7 payload.
+func (id TeamID) Validate() error { return validateTypedID(string(id), "team") }
+
+// Validate checks the agent_ prefix and the UUIDv7 payload.
+func (id AgentID) Validate() error { return validateTypedID(string(id), "agent") }
+
+// Validate checks the thread_ prefix and the UUIDv7 payload.
+func (id ThreadID) Validate() error { return validateTypedID(string(id), "thread") }
+
+// Validate checks the task_ prefix and the UUIDv7 payload.
+func (id TaskID) Validate() error { return validateTypedID(string(id), "task") }
+
+// Validate checks the run_ prefix and the UUIDv7 payload.
+func (id RunID) Validate() error { return validateTypedID(string(id), "run") }
+
+// Validate checks the msg_ prefix and the UUIDv7 payload.
+func (id MessageID) Validate() error { return validateTypedID(string(id), "msg") }
+
+// Validate checks the approval_ prefix and the UUIDv7 payload.
+func (id ApprovalID) Validate() error { return validateTypedID(string(id), "approval") }
+
+// Validate checks the lease_ prefix and the UUIDv7 payload.
+func (id LeaseID) Validate() error { return validateTypedID(string(id), "lease") }
+
+// Validate checks the event_ prefix and the UUIDv7 payload.
+func (id EventID) Validate() error { return validateTypedID(string(id), "event") }
+
+// Validate checks the view_ prefix and the UUIDv7 payload.
 func (id WorkspaceViewID) Validate() error { return validateTypedID(string(id), "view") }
-func (id WaitSetID) Validate() error       { return validateTypedID(string(id), "wait") }
-func (id MergeID) Validate() error         { return validateTypedID(string(id), "merge") }
+
+// Validate checks the wait_ prefix and the UUIDv7 payload.
+func (id WaitSetID) Validate() error { return validateTypedID(string(id), "wait") }
+
+// Validate checks the merge_ prefix and the UUIDv7 payload.
+func (id MergeID) Validate() error { return validateTypedID(string(id), "merge") }
 
 type typedID interface {
 	~string
 }
 
+// newTypedID constructs a prefixed UUIDv7 using the current Unix millisecond timestamp and
+// random bits.
 func newTypedID[T typedID](prefix string) (T, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -71,6 +119,8 @@ func newTypedID[T typedID](prefix string) (T, error) {
 	return T(prefix + "_" + hex.EncodeToString(raw[:])), nil
 }
 
+// validateTypedID checks the expected prefix, hexadecimal payload, UUID version and
+// variant.
 func validateTypedID(value, prefix string) error {
 	wantPrefix := prefix + "_"
 	if !strings.HasPrefix(value, wantPrefix) {
@@ -157,11 +207,14 @@ func TurnIDFromContext(ctx context.Context) string {
 	return value
 }
 
+// IsZero reports whether all actor identifiers and the profile revision are empty.
 func (scope ActorScope) IsZero() bool {
 	return scope.TeamID == "" && scope.AgentID == "" && scope.ThreadID == "" && scope.TaskID == "" &&
 		scope.RunID == "" && scope.ParentAgentID == "" && scope.ProfileRevision == ""
 }
 
+// Validate requires team, agent and thread IDs and checks the optional identifiers when
+// present.
 func (scope ActorScope) Validate() error {
 	if scope.TeamID == "" || scope.AgentID == "" || scope.ThreadID == "" {
 		return errors.New("actor scope requires team, agent and thread IDs")

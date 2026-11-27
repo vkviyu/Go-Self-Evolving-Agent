@@ -190,6 +190,8 @@ func cloneMetadata(source map[string]string) map[string]string {
 	return clone
 }
 
+// joinMessage combines nonempty evaluation diagnostics without adding a separator for an
+// absent message.
 func joinMessage(first, second string) string {
 	first, second = strings.TrimSpace(first), strings.TrimSpace(second)
 	if first == "" {

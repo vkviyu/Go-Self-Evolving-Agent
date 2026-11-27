@@ -22,6 +22,8 @@ type Store struct {
 	MaxBytes int64
 }
 
+// NewStore prepares the artifact directory, resolves its physical path and verifies that
+// it can be opened as a root.
 func NewStore(root string) (*Store, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("artifact store root is required")
@@ -47,6 +49,8 @@ func NewStore(root string) (*Store, error) {
 	return &Store{Root: abs, MaxBytes: defaultMaxBytes}, nil
 }
 
+// maxBytes returns the per-artifact size limit, using the store default when none is
+// configured.
 func (store *Store) maxBytes() int64 {
 	if store == nil || store.MaxBytes <= 0 {
 		return defaultMaxBytes

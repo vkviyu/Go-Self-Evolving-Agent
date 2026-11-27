@@ -297,6 +297,8 @@ func (m *recordingModel) checkContextLimit(input []*schema.Message, options []mo
 	return nil
 }
 
+// requestOutputLimit selects the tighter positive limit from the runtime configuration and
+// per-call model options.
 func requestOutputLimit(f *Factory, options []model.Option) int {
 	limit := f.config.MaxOutputTokens
 	if common := model.GetCommonOptions(nil, options...); common.MaxTokens != nil && *common.MaxTokens > 0 && (limit <= 0 || *common.MaxTokens < limit) {
@@ -305,6 +307,8 @@ func requestOutputLimit(f *Factory, options []model.Option) int {
 	return limit
 }
 
+// requestPrefixDigest fingerprints the model-visible message prefix while excluding
+// runtime annotations and provider usage.
 func requestPrefixDigest(messages []*schema.Message) [sha256.Size]byte {
 	// Runtime IDs and provider usage metadata are not model-visible content.
 	// Ignore Eino's message annotations when checking an unchanged prefix.

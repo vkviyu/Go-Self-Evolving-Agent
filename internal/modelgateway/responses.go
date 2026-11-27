@@ -84,12 +84,15 @@ func responsesEndpoint(baseURL string) (string, error) {
 	return parsed.String(), nil
 }
 
+// WithTools returns a Responses model configured with the supplied function definitions.
 func (m *responsesModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	copyModel := *m
 	copyModel.tools = append([]*schema.ToolInfo(nil), tools...)
 	return &copyModel, nil
 }
 
+// Generate submits a nonstreaming Responses request and decodes its completed assistant
+// message.
 func (m *responsesModel) Generate(ctx context.Context, input []*schema.Message, options ...model.Option) (*schema.Message, error) {
 	common := model.GetCommonOptions(&model.Options{
 		Model: &m.model,
@@ -115,6 +118,8 @@ func (m *responsesModel) Generate(ctx context.Context, input []*schema.Message, 
 	return decodeResponsesPayload(body)
 }
 
+// Stream starts a Responses event stream and returns the reader used to consume assistant
+// output.
 func (m *responsesModel) Stream(ctx context.Context, input []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	common := model.GetCommonOptions(&model.Options{
 		Model: &m.model,
@@ -152,6 +157,8 @@ func (m *responsesModel) Stream(ctx context.Context, input []*schema.Message, op
 	return reader, nil
 }
 
+// buildResponsesRequest translates messages, tool options and reasoning effort into the
+// Responses wire format.
 func buildResponsesRequest(options *model.Options, input []*schema.Message, reasoningEffort string) (responsesRequest, error) {
 	request := responsesRequest{}
 	if options == nil || options.Model == nil || strings.TrimSpace(*options.Model) == "" {
@@ -315,6 +322,8 @@ func responseFunctionTool(tool *schema.ToolInfo) (responsesFunctionTool, error) 
 	}, nil
 }
 
+// decodeResponsesMessage converts provider errors or completed response output into the
+// model adapter's result.
 func decodeResponsesMessage(body []byte) (*schema.Message, error) {
 	var response responsesResponse
 	if err := json.Unmarshal(body, &response); err != nil {

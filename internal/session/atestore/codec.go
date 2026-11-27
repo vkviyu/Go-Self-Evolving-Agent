@@ -134,10 +134,13 @@ func decodeEnvelope(native agentprofile.SessionEvent, raw []byte) (session.Event
 	return event, nil
 }
 
+// validText checks that a required session envelope field is nonempty, size-bounded UTF-8.
 func validText(s string) bool {
 	return s != "" && len(s) <= 1024 && utf8.ValidString(s)
 }
 
+// optionalText accepts an empty envelope field or one satisfying the required text
+// constraints.
 func optionalText(s string) bool { return s == "" || validText(s) }
 
 func makeEvents(id session.ID, sequence uint64, pending []session.PendingEvent) ([]session.Event, error) {

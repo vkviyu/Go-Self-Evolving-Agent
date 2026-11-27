@@ -18,6 +18,7 @@ type inputDisplayLine struct {
 	end   int
 }
 
+// clearInputSelection clears the input editor's selection and drag state.
 func (model *Model) clearInputSelection() {
 	model.inputSelection = inputTextSelection{}
 }
@@ -51,6 +52,8 @@ func (model *Model) inputSelectionBounds() (int, int) {
 	return start, end
 }
 
+// inputDisplayLines reuses wrapped input rows until the editor text or its display width
+// changes.
 func (model *Model) inputDisplayLines() []inputDisplayLine {
 	value := model.input.Value()
 	width := model.input.Width()

@@ -304,6 +304,7 @@ type boundedPayload struct {
 	remaining int
 }
 
+// Bytes returns the accumulated payload bytes backed by the buffer.
 func (b *boundedPayload) Bytes() []byte { return b.buffer.Bytes() }
 
 func (b *boundedPayload) Write(data []byte) (int, error) {

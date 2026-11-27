@@ -60,6 +60,8 @@ func (err *RejectionCleanupError) Is(target error) bool {
 	return target == ErrRejectionCleanup || target == ErrRejected
 }
 
+// NewExecutor binds the ATE client and pending command store to a specific authority store
+// ID.
 func NewExecutor(client Client, pending PendingStore, storeID model.StoreID) (*Executor, error) {
 	if client == nil || pending == nil || !validStoreID(storeID) {
 		return nil, fmt.Errorf("%w: client, pending store and ATE store identity are required", ErrInvalid)
@@ -291,6 +293,8 @@ func (executor *Executor) finish(ctx context.Context, record Record, result api.
 	return result, nil
 }
 
+// unknown returns the request ID with CodeCommitUnknown and preserves the underlying cause
+// for reconciliation.
 func unknown(record Record, cause error) (api.CommitResult, error) {
 	return api.CommitResult{Code: api.CodeCommitUnknown, RequestID: record.Request.RequestID}, errors.Join(ErrUnknown, cause)
 }

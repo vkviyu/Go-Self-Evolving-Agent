@@ -31,6 +31,7 @@ type TeamSnapshot struct {
 // layers. Keeping this interface separate from Supervisor mutations makes
 // adapters and tests independent from the lifecycle implementation.
 type TeamSnapshotReader interface {
+	// LoadTeamSnapshot reads the team's activity for display and control queries.
 	LoadTeamSnapshot(context.Context, orchestration.TeamID) (TeamSnapshot, error)
 }
 

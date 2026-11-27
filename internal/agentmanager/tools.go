@@ -284,6 +284,8 @@ func (supervisor *Supervisor) messageTool(ctx context.Context, raw json.RawMessa
 	return json.Marshal(map[string]any{"message_id": message.ID, "recipient_agent_id": message.RecipientAgentID, "sequence": message.Sequence, "delivery_state": message.DeliveryState})
 }
 
+// actorFromContext requires a nonempty, valid actor scope before control tools can act on
+// a team's behalf.
 func actorFromContext(ctx context.Context) (orchestration.ActorScope, error) {
 	actor, ok := orchestration.ActorScopeFromContext(ctx)
 	if !ok || actor.IsZero() {
@@ -295,6 +297,7 @@ func actorFromContext(ctx context.Context) (orchestration.ActorScope, error) {
 	return actor, nil
 }
 
+// decodeToolArgs decodes agent control arguments and rejects unknown struct fields.
 func decodeToolArgs(raw json.RawMessage, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()

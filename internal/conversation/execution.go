@@ -44,6 +44,8 @@ func (conversation *Conversation) runInnerTurn(ctx context.Context, input string
 	return conversation.finishTurnExecution(ctx, turn.ID(), sink, result, err)
 }
 
+// resumeInnerTurn opens the recorded turn, optionally selects it as foreground and resumes
+// execution with a live event sink.
 func (conversation *Conversation) resumeInnerTurn(ctx context.Context, turnID string, sink agentruntime.EventSink, selectForeground bool) (agentruntime.Result, error) {
 	ctx = agentruntime.WithLiveSink(ctx, sink)
 	turn, err := conversation.factory.ResumeTurn(ctx, conversation.sessionID, turnID)

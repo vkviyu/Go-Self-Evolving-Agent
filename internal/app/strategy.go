@@ -12,6 +12,8 @@ import (
 // Agents only receive scoped tools and cannot register their own expectations.
 func (a *App) Strategies() strategy.Catalog { return a.strategies }
 
+// ShadowStrategy compares a candidate strategy with its baseline on a supplied fixture
+// suite.
 func (a *App) ShadowStrategy(ctx context.Context, factory *agentruntime.Factory, candidateID, suiteID string) (strategy.Report, string, error) {
 	ctx, finish, err := a.beginEvolution(ctx)
 	if err != nil {

@@ -79,6 +79,8 @@ type Event struct {
 // without changing durable behavior.
 type EventSink func(context.Context, Event) error
 
+// emitEvent forwards live runtime progress and propagates sink errors. A nil sink disables
+// delivery.
 func emitEvent(ctx context.Context, sink EventSink, event Event) error {
 	if sink == nil {
 		return nil

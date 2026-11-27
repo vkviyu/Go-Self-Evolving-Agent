@@ -56,6 +56,8 @@ func Acquire(databasePath string) (*Lock, error) {
 	return &Lock{file: file}, nil
 }
 
+// Close releases the OS lock and descriptor once, leaving the lock file in place for
+// subsequent owners.
 func (lock *Lock) Close() error {
 	if lock == nil {
 		return nil

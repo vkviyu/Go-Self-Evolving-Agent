@@ -34,6 +34,7 @@ type (
 	}
 	authorityPendingStore interface {
 		aterequest.PendingStore
+		// BindAuthority verifies or records which ATE store owns the local recovery state.
 		BindAuthority(context.Context, model.StoreID) error
 	}
 	authorityProcess struct {
@@ -130,6 +131,8 @@ func (p authorityProcess) WithFreshClient(ctx context.Context, fn func(*client.C
 	})
 }
 
+// validateClient checks protocol compatibility and verifies the snapshot belongs to the
+// expected ATE store.
 func (p authorityProcess) validateClient(ctx context.Context, c *client.Client) error {
 	if err := verifyAuthorityClient(c); err != nil {
 		return err

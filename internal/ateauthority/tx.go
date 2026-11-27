@@ -45,6 +45,8 @@ type Tx struct {
 
 func (tx *Tx) Context() context.Context { return tx.ctx }
 
+// check rejects operations on closed or canceled transactions and rejects writes in
+// read-only views.
 func (tx *Tx) check(write bool) error {
 	if !tx.active {
 		return ErrClosed
@@ -58,6 +60,7 @@ func (tx *Tx) check(write bool) error {
 	return nil
 }
 
+// validKey enforces the native state key limit in bytes before making a request.
 func validKey(key string) error {
 	if len(key) > api.MaxStateKeyBytes {
 		return fmt.Errorf("%w: key exceeds %d bytes", ErrLimit, api.MaxStateKeyBytes)
@@ -107,6 +110,8 @@ func (tx *Tx) raw(key string, writes map[string]api.StateMutation) (json.RawMess
 	return bytes.Clone(result.Value.Data), true, nil
 }
 
+// Put stages a bounded JSON state value in a writable transaction. It becomes durable when
+// the transaction commits.
 func (tx *Tx) Put(key string, value any) error {
 	if err := tx.check(true); err != nil {
 		return err

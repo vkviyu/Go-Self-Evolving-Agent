@@ -7,6 +7,8 @@ import (
 
 	"github.com/alecthomas/chroma/v2/quick"
 	"github.com/charmbracelet/glamour"
+	glamouransi "github.com/charmbracelet/glamour/ansi"
+	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"
@@ -24,18 +26,19 @@ type markdownSegment struct {
 }
 
 const (
-	codeBackground = "\x1b[48;5;235m"
-	codeTabWidth   = 4
+	minimumMarkdownWidth = 20
+	codeBackground       = "\x1b[48;5;235m"
+	codeTabWidth         = 4
 )
 
 func (renderer *markdownRenderer) render(markdown string, width int) string {
 	if strings.TrimSpace(markdown) == "" {
 		return ""
 	}
-	width = max(20, width)
+	width = max(minimumMarkdownWidth, width)
 	if renderer.renderer == nil || renderer.width != width {
 		termRenderer, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle("dark"),
+			glamour.WithStyles(transcriptMarkdownStyle()),
 			glamour.WithWordWrap(width),
 			glamour.WithPreservedNewLines(),
 		)
@@ -48,11 +51,11 @@ func (renderer *markdownRenderer) render(markdown string, width int) string {
 	segments := splitMarkdownSegments(markdown)
 	rendered := make([]string, 0, len(segments))
 	for _, segment := range segments {
-		if strings.TrimSpace(segment.content) == "" {
-			continue
-		}
 		if segment.code {
 			rendered = append(rendered, renderCodeBlock(segment.content, segment.language, width))
+			continue
+		}
+		if strings.TrimSpace(segment.content) == "" {
 			continue
 		}
 		output, err := renderer.renderer.Render(segment.content)
@@ -63,6 +66,21 @@ func (renderer *markdownRenderer) render(markdown string, width int) string {
 		rendered = append(rendered, strings.TrimSpace(output))
 	}
 	return strings.TrimSpace(strings.Join(rendered, "\n\n"))
+}
+
+func transcriptMarkdownStyle() glamouransi.StyleConfig {
+	style := glamourstyles.DarkStyleConfig
+	// The transcript supplies its own gutter for both prose and code.
+	style.Document.Margin = new(uint)
+	style.Document.BlockPrefix = ""
+	style.Document.BlockSuffix = ""
+	style.Document.Color = nil
+	style.H1 = glamouransi.StyleBlock{StylePrimitive: glamouransi.StylePrimitive{Color: new("81")}}
+	for _, heading := range []*glamouransi.StyleBlock{&style.H2, &style.H3, &style.H4, &style.H5, &style.H6} {
+		heading.Prefix = ""
+	}
+	style.H3.Color = new("75")
+	return style
 }
 
 func splitMarkdownSegments(markdown string) []markdownSegment {
@@ -93,21 +111,12 @@ func splitMarkdownSegments(markdown string) []markdownSegment {
 	for _, rawLine := range lines {
 		line := strings.TrimSuffix(rawLine, "\n")
 		if !inCode {
-			if nextMarker, nextLength, nextLanguage, ok := parseMarkdownFence(line); ok {
-				flushProse()
-				inCode = true
-				marker = nextMarker
-				markerLength = nextLength
-				language = nextLanguage
-				continue
-			}
-			if prefix, nextMarker, nextLength, nextLanguage, ok := parseInlineMarkdownFence(line); ok {
-				flushProse()
+			if prefix, nextMarker, nextLength, nextLanguage, ok := markdownFenceOpening(line); ok {
 				if strings.TrimSpace(prefix) != "" {
 					prose.WriteString(prefix)
 					prose.WriteByte('\n')
-					flushProse()
 				}
+				flushProse()
 				inCode = true
 				marker = nextMarker
 				markerLength = nextLength
@@ -132,7 +141,10 @@ func splitMarkdownSegments(markdown string) []markdownSegment {
 	return segments
 }
 
-func parseInlineMarkdownFence(line string) (string, byte, int, string, bool) {
+func markdownFenceOpening(line string) (string, byte, int, string, bool) {
+	if marker, length, language, ok := parseMarkdownFence(line); ok {
+		return "", marker, length, language, true
+	}
 	for _, candidate := range []byte{'`', '~'} {
 		markerText := strings.Repeat(string(candidate), 3)
 		index := strings.Index(line, markerText)
@@ -184,21 +196,26 @@ func isMarkdownFenceClose(line string, marker byte, openingLength int) bool {
 
 func renderCodeBlock(source, language string, width int) string {
 	innerWidth := max(1, width-2)
-	source = strings.ReplaceAll(source, "\t", strings.Repeat(" ", codeTabWidth))
-	source = ansi.Hardwrap(strings.TrimSuffix(source, "\n"), innerWidth, true)
+	source = wrapCode(source, innerWidth)
 	var highlighted strings.Builder
-	if err := quick.Highlight(&highlighted, source, language, "terminal256", "monokai"); err != nil {
-		highlighted.WriteString(source)
+	// Provide one terminator to the lexer, then remove only that one so
+	// leading, internal and trailing blank lines retain the panel background.
+	if err := quick.Highlight(&highlighted, source+"\n", language, "terminal256", "monokai"); err != nil {
+		return codePanelRows(source, innerWidth)
 	}
-	lines := strings.Split(strings.TrimSuffix(highlighted.String(), "\n"), "\n")
-	if len(lines) == 0 {
-		lines = []string{""}
+	return codePanelRows(strings.TrimSuffix(highlighted.String(), "\n"), innerWidth)
+}
+
+func wrapCode(source string, innerWidth int) string {
+	return ansi.Hardwrap(strings.ReplaceAll(source, "\t", strings.Repeat(" ", codeTabWidth)), innerWidth, true)
+}
+
+func codePanelRows(wrapped string, innerWidth int) string {
+	lines := strings.Split(wrapped, "\n")
+	for i, line := range lines {
+		lines[i] = renderCodeLine(line, innerWidth)
 	}
-	rendered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		rendered = append(rendered, renderCodeLine(line, innerWidth))
-	}
-	return strings.Join(rendered, "\n")
+	return strings.Join(lines, "\n")
 }
 
 func renderCodeLine(line string, width int) string {

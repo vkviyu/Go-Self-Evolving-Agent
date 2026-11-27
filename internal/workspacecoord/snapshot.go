@@ -44,6 +44,8 @@ type (
 	// Barrier pauses workspace writers that honor leases while a consistent
 	// image of the main workspace is read or written.
 	Barrier interface {
+		// Hold acquires the workspace barrier for the run and returns the function that
+		// releases it.
 		Hold(ctx context.Context, teamID orchestration.TeamID, agentID orchestration.AgentID, runID orchestration.RunID) (func(), error)
 	}
 

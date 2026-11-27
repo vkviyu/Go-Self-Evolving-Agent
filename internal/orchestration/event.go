@@ -120,6 +120,7 @@ type Stream struct {
 	TeamID TeamID
 }
 
+// Validate requires a stream type, a nonempty stream ID and a valid team ID.
 func (stream Stream) Validate() error {
 	if stream.Type == "" || stream.ID == "" {
 		return fmt.Errorf("%w: stream type and ID are required", ErrInvalidEvent)
@@ -192,6 +193,8 @@ func JSONPayload(value any) (json.RawMessage, error) {
 	return payload, nil
 }
 
+// MustJSONPayload encodes an event payload and panics if the value cannot be represented
+// as JSON.
 func MustJSONPayload(value any) json.RawMessage {
 	payload, err := JSONPayload(value)
 	if err != nil {

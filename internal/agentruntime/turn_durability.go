@@ -90,6 +90,8 @@ func (t *Turn) fail(ctx context.Context, cause error) error {
 	return errors.Join(cause, recordErr)
 }
 
+// durabilityContext preserves request values but gives final persistence work its own
+// bounded deadline. The caller must cancel it.
 func durabilityContext(parent context.Context) (context.Context, context.CancelFunc) {
 	// Native ATE writes may need to start a subprocess and complete the hello
 	// handshake before the actual append. Keep durable accounting alive for the

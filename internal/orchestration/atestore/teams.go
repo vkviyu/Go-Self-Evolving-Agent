@@ -10,6 +10,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
+// GetTeam reads a team snapshot, including its current version for subsequent transitions.
 func (store *Store) GetTeam(ctx context.Context, id orchestration.TeamID) (result orchestration.TeamSnapshot, err error) {
 	if err = id.Validate(); err != nil {
 		return
@@ -21,6 +22,8 @@ func (store *Store) GetTeam(ctx context.Context, id orchestration.TeamID) (resul
 	})
 	return
 }
+
+// ListTeams returns team IDs recorded by the orchestration authority.
 func (store *Store) ListTeams(ctx context.Context) (result []orchestration.TeamID, err error) {
 	err = store.authority.View(ctx, func(tx *ateauthority.Tx) error {
 		teams, e := listRecords[orchestration.TeamSnapshot](tx, "team")
@@ -57,6 +60,8 @@ func requireActiveTeam(tx *ateauthority.Tx, id orchestration.TeamID) error {
 	}
 	return nil
 }
+
+// TransitionTeam checks the team's version and records an allowed lifecycle transition.
 func (store *Store) TransitionTeam(ctx context.Context, transition orchestration.TeamTransition) (result orchestration.TeamSnapshot, err error) {
 	if err = transition.TeamID.Validate(); err != nil {
 		return

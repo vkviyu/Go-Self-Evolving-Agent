@@ -12,6 +12,8 @@ import (
 // must receive that operation's tx, never the pool: Database has one connection
 // and transaction-local state must stay visible.
 type rowQuery interface {
+	// QueryRowContext issues a single-row lookup within the current database or
+	// transaction.
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 

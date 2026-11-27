@@ -355,6 +355,8 @@ func durableContextMessages(messages []*schema.Message) []*schema.Message {
 	return result
 }
 
+// ensureHistoryTurn preserves first-seen event order when collecting later events for the
+// same turn.
 func ensureHistoryTurn(turns map[string]*historyTurn, order *[]string, id string, sequence uint64) *historyTurn {
 	if turn, ok := turns[id]; ok {
 		return turn

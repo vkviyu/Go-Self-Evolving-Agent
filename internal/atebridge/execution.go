@@ -237,6 +237,8 @@ func (b *Bridge) agentRequest(command agentprofile.Command) (api.CommitRequest, 
 	return api.CommitRequest{Space: b.OperationalSpace(), Method: api.MethodApplyAgent, Body: body}, err
 }
 
+// agent submits an agent-profile command under the execution namespace of the operational
+// space.
 func (b *Bridge) agent(ctx context.Context, c *client.Client, key string, command agentprofile.Command) (api.CommitResult, error) {
 	return b.execute(ctx, c, "execution/"+key, func(*client.Client) (api.CommitRequest, error) {
 		return b.agentRequest(command)

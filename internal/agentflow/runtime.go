@@ -207,6 +207,8 @@ type Execution struct {
 	runtimeSnapshotID string
 }
 
+// Do starts a step against its input hash and reuses the stored outputs if the step
+// already completed.
 func (execution *Execution) Do(ctx context.Context, stepID string, input Value, action func(context.Context) ([]Value, error)) ([]Value, error) {
 	if err := validName("Flow step", stepID); err != nil {
 		return nil, err
@@ -243,6 +245,8 @@ func (execution *Execution) Do(ctx context.Context, stepID string, input Value, 
 	return cloneValues(step.Outputs), nil
 }
 
+// Tool executes against the run's pinned tool snapshot. The run and step IDs form the tool
+// call ID.
 func (execution *Execution) Tool(ctx context.Context, stepID, toolName string, arguments any) (json.RawMessage, error) {
 	encoded, err := json.Marshal(arguments)
 	if err != nil {

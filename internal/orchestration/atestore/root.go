@@ -28,6 +28,8 @@ func rootThreadTx(tx *ateauthority.Tx, id session.ID) (orchestration.RootThread,
 	root.TeamState, root.AgentState, root.ProfileRevision = team.State, agent.State, agent.ProfileRevision
 	return root, nil
 }
+
+// RootThreadBySession resolves the persisted session-to-root association.
 func (store *Store) RootThreadBySession(ctx context.Context, id session.ID) (result orchestration.RootThread, err error) {
 	if id == "" {
 		return result, fmt.Errorf("%w: session ID is required", orchestration.ErrInvalidEvent)
@@ -35,6 +37,8 @@ func (store *Store) RootThreadBySession(ctx context.Context, id session.ID) (res
 	err = store.authority.View(ctx, func(tx *ateauthority.Tx) error { var e error; result, e = rootThreadTx(tx, id); return e })
 	return
 }
+
+// EnsureRootThread establishes or reopens the session's root team and thread.
 func (store *Store) EnsureRootThread(ctx context.Context, seed orchestration.RootThreadSeed) (root orchestration.RootThread, created bool, err error) {
 	if seed.SessionID == "" {
 		return root, false, fmt.Errorf("%w: session ID is required", orchestration.ErrInvalidEvent)

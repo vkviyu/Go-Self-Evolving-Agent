@@ -404,6 +404,7 @@ func formatElapsed(elapsed time.Duration) string {
 	}
 }
 
+// isFinishedAgent identifies terminal child states when presenting team activity.
 func isFinishedAgent(state orchestration.AgentState) bool {
 	return state == orchestration.AgentCompleted || state == orchestration.AgentFailed || state == orchestration.AgentCanceled
 }
@@ -516,6 +517,7 @@ func activitySuffix(value string) string {
 	return "  " + value
 }
 
+// shortID fits long IDs into status labels by keeping the identifying prefix and suffix.
 func shortID(value string) string {
 	value = strings.TrimSpace(value)
 	if len(value) <= 16 {

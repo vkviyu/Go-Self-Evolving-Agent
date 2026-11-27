@@ -48,6 +48,8 @@ func (f *Factory) Compact(ctx context.Context, sessionID session.ID, messages []
 	return f.CompactWithSink(ctx, sessionID, messages, nil)
 }
 
+// CompactWithSink runs explicit context compaction and reports preparation progress to the
+// event sink.
 func (f *Factory) CompactWithSink(ctx context.Context, sessionID session.ID, messages []*schema.Message, sink EventSink) ([]*schema.Message, bool, error) {
 	if len(messages) == 0 {
 		return nil, false, errors.New("context requires at least one message")
@@ -116,6 +118,8 @@ type contextPlan struct {
 	retainTokens int
 }
 
+// planContext chooses the compaction level and retained token budget from the window,
+// trigger and current input size.
 func planContext(window, trigger, tokens int, force bool) contextPlan {
 	level := contextLevelNormal
 	// Mark the context critical when it reaches approximately 90% of the window.

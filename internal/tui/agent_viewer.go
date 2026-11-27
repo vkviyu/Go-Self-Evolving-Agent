@@ -225,6 +225,8 @@ func (model *Model) closeTranscriptViewer() {
 	}
 }
 
+// displayBlocks selects the child transcript while the agent viewer is open, otherwise the
+// root transcript.
 func (model *Model) displayBlocks() []transcriptBlock {
 	if model.viewer != nil {
 		return model.viewer.blocks

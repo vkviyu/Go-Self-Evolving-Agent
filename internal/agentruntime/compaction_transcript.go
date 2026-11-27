@@ -77,6 +77,7 @@ func utf8PrefixBoundary(content string, end int) int {
 	return end
 }
 
+// utf8SuffixBoundary advances a suffix offset to the next complete UTF-8 rune.
 func utf8SuffixBoundary(content string, start int) int {
 	if start <= 0 {
 		return 0

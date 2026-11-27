@@ -19,6 +19,8 @@ func usageAdd[T ~int | ~int64](a, b T) (T, error) {
 	return sum, nil
 }
 
+// usageWouldExceed checks new usage against the limit after accounting for reservations,
+// without summing potentially overflowing counts. A nonpositive limit is uncapped.
 func usageWouldExceed(limit, used, reserved, requested int64) bool {
 	if limit <= 0 {
 		return false
@@ -121,6 +123,7 @@ func (store *Store) CanAdmit(ctx context.Context, id orchestration.TeamID) (bool
 	return !snapshot.Exhausted, nil
 }
 
+// UsageReport aggregates the persisted usage records matching the query.
 func (store *Store) UsageReport(ctx context.Context, query tokenusage.UsageQuery) (report tokenusage.UsageReport, err error) {
 	if err = query.TeamID.Validate(); err != nil {
 		return

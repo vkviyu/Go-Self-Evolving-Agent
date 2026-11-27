@@ -280,6 +280,8 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 	return supervisor, nil
 }
 
+// Spawn checks delegation and admission limits before creating the child. Its returned
+// snapshot may still be queued.
 func (supervisor *Supervisor) Spawn(ctx context.Context, spec orchestration.SpawnSpec) (orchestration.AgentSnapshot, error) {
 	if err := supervisor.ensureOpen(); err != nil {
 		return orchestration.AgentSnapshot{}, err
@@ -563,6 +565,8 @@ func (supervisor *Supervisor) ResumeAgent(ctx context.Context, agentID orchestra
 	return queued, nil
 }
 
+// Interrupt requests cancellation of the agent and its unfinished descendants, including
+// queued children.
 func (supervisor *Supervisor) Interrupt(ctx context.Context, agentID orchestration.AgentID) error {
 	if err := supervisor.ensureOpen(); err != nil {
 		return err
@@ -742,6 +746,8 @@ func (supervisor *Supervisor) cancelDurableAgents(ctx context.Context, teams []o
 	}
 }
 
+// signal wakes all current waiters to recheck repository state and installs a channel for
+// the next change.
 func (supervisor *Supervisor) signal() {
 	supervisor.mu.Lock()
 	old := supervisor.wake
@@ -750,6 +756,7 @@ func (supervisor *Supervisor) signal() {
 	close(old)
 }
 
+// ensureOpen returns ErrSupervisorClosed for an absent or closed supervisor.
 func (supervisor *Supervisor) ensureOpen() error {
 	if supervisor == nil {
 		return ErrSupervisorClosed
@@ -769,10 +776,14 @@ func (supervisor *Supervisor) hasRunner(agentID orchestration.AgentID) bool {
 	return ok
 }
 
+// isTerminal identifies states in which an agent has finished execution and can satisfy a
+// wait.
 func isTerminal(state orchestration.AgentState) bool {
 	return state == orchestration.AgentCompleted || state == orchestration.AgentFailed || state == orchestration.AgentCanceled
 }
 
+// activeAgentStates lists the nonterminal states included when accounting for active
+// agents.
 func activeAgentStates() []orchestration.AgentState {
 	return []orchestration.AgentState{
 		orchestration.AgentCreated,

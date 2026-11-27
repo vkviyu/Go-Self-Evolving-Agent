@@ -62,8 +62,13 @@ type (
 	}
 
 	LeaseRepository interface {
+		// AcquireLease claims the specified workspace lease subject to ownership and
+		// conflict checks.
 		AcquireLease(context.Context, LeaseSpec) (WorkspaceLease, error)
+		// ReleaseLease records the requesting agent's release of a lease and the supplied
+		// reason.
 		ReleaseLease(context.Context, LeaseID, AgentID, string) (WorkspaceLease, error)
+		// ListLeases returns workspace leases matching the query filters.
 		ListLeases(context.Context, LeaseQuery) ([]WorkspaceLease, error)
 		// ReapAbandonedLeases reclaims leases whose holder instance and all of
 		// its descendant processes have exited.

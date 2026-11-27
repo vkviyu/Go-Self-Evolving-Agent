@@ -500,6 +500,8 @@ func newSessionID() (session.ID, error) {
 	return session.ID("chat-" + time.Now().UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(random[:])), nil
 }
 
+// isTerminal reports whether the supplied value is an open file backed by a character
+// device.
 func isTerminal(value any) bool {
 	file, ok := value.(*os.File)
 	if !ok {

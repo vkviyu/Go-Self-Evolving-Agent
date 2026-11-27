@@ -47,6 +47,8 @@ func (binding Binding) IsDurable() bool {
 		binding.ContractHash != ""
 }
 
+// Validate accepts an empty binding and checks that supplied step and attempt IDs have the
+// required execution scope.
 func (binding Binding) Validate() error {
 	if binding.IsZero() {
 		return nil

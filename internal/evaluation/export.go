@@ -68,6 +68,8 @@ type SummaryBucket struct {
 	Resolved int `json:"resolved"`
 }
 
+// Summarize aggregates recorded outcomes by suite and language and computes task success
+// across attempts.
 func Summarize(results []Result) Summary {
 	summary := Summary{
 		Tasks: len(results), Failed: len(results),

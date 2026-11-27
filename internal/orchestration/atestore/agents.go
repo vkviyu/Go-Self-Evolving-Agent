@@ -12,6 +12,8 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
+// agentTx loads an agent snapshot and its separately stored initial prompt in the same
+// transaction.
 func agentTx(tx *ateauthority.Tx, id orchestration.AgentID) (orchestration.AgentSnapshot, error) {
 	agent, err := getRecord[orchestration.AgentSnapshot](tx, "agent", string(id))
 	if err != nil {
@@ -20,6 +22,9 @@ func agentTx(tx *ateauthority.Tx, id orchestration.AgentID) (orchestration.Agent
 	_, err = tx.Get(recordKey("agent-prompt", string(id)), &agent.InitialPrompt)
 	return agent, err
 }
+
+// GetAgent reads the snapshot and its separately stored initial prompt from one authority
+// view.
 func (store *Store) GetAgent(ctx context.Context, id orchestration.AgentID) (result orchestration.AgentSnapshot, err error) {
 	if err = id.Validate(); err != nil {
 		return
@@ -27,6 +32,8 @@ func (store *Store) GetAgent(ctx context.Context, id orchestration.AgentID) (res
 	err = store.authority.View(ctx, func(tx *ateauthority.Tx) error { var e error; result, e = agentTx(tx, id); return e })
 	return
 }
+
+// ListAgents filters the team's persisted agent snapshots using the supplied query.
 func (store *Store) ListAgents(ctx context.Context, query orchestration.AgentQuery) (result []orchestration.AgentSnapshot, err error) {
 	if err = query.TeamID.Validate(); err != nil {
 		return
@@ -64,9 +71,14 @@ func (store *Store) ListAgents(ctx context.Context, query orchestration.AgentQue
 	})
 	return
 }
+
+// isTerminalAgentState reports whether the agent completed, failed or was canceled.
 func isTerminalAgentState(state orchestration.AgentState) bool {
 	return state == orchestration.AgentCompleted || state == orchestration.AgentFailed || state == orchestration.AgentCanceled
 }
+
+// TransitionAgent changes the agent state and records the transition in the same authority
+// transaction.
 func (store *Store) TransitionAgent(ctx context.Context, transition orchestration.AgentTransition) (result orchestration.AgentSnapshot, err error) {
 	if err = transition.AgentID.Validate(); err != nil {
 		return
@@ -174,6 +186,9 @@ type completionRecord struct {
 func completionKey(agent orchestration.AgentID, run orchestration.RunID) string {
 	return string(agent) + "\x00" + string(run)
 }
+
+// PrepareAgentCompletion persists the completion record that later delivery or recovery
+// can settle.
 func (store *Store) PrepareAgentCompletion(ctx context.Context, completion orchestration.AgentCompletion) (orchestration.AgentCompletion, error) {
 	if completion.AgentID == "" || completion.RunID == "" {
 		return orchestration.AgentCompletion{}, fmt.Errorf("%w: completion identity is required", orchestration.ErrInvalidEvent)
@@ -213,6 +228,9 @@ func (store *Store) PrepareAgentCompletion(ctx context.Context, completion orche
 	}
 	return completion, nil
 }
+
+// PendingAgentCompletions reads unsettled completions for one team so delivery can resume
+// after interruption.
 func (store *Store) PendingAgentCompletions(ctx context.Context, team orchestration.TeamID) (result []orchestration.AgentCompletion, err error) {
 	err = store.authority.View(ctx, func(tx *ateauthority.Tx) error {
 		records, e := listRecords[completionRecord](tx, "agent-completion")
@@ -252,6 +270,8 @@ func (store *Store) PendingAgentCompletions(ctx context.Context, team orchestrat
 	})
 	return
 }
+
+// SettleAgentCompletion settles the completion identified by the agent and run.
 func (store *Store) SettleAgentCompletion(ctx context.Context, agent orchestration.AgentID, run orchestration.RunID) error {
 	now := time.Now().UTC()
 	return store.authority.Update(ctx, func(tx *ateauthority.Tx) error {

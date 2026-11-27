@@ -70,6 +70,8 @@ const (
 	mergeRunSchema       = `{"type":"object","properties":{"limit":{"type":"integer","minimum":1}}}`
 )
 
+// binding pairs a built-in agent control executor with its input schema, risk class and
+// required capability.
 func binding(name, description, schema string, risk appTool.RiskClass, executor appTool.Executor) appTool.Binding {
 	return appTool.Binding{Descriptor: appTool.Descriptor{
 		Name: name, Description: description, InputSchema: json.RawMessage(schema), Revision: "builtin-v1", RiskClass: risk,

@@ -13,6 +13,8 @@ type contextToolSchema struct {
 	Parameters  any    `json:"parameters,omitempty"`
 }
 
+// countRequestInput counts the request messages together with the tool schemas selected by
+// its model options.
 func (m *recordingModel) countRequestInput(messages []*schema.Message, options []model.Option) int {
 	if m.factory == nil {
 		return 0

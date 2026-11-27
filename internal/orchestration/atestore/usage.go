@@ -35,6 +35,8 @@ type usageBudget struct {
 	UpdatedAt time.Time
 }
 
+// usageContext supplies a background context for usage repository calls whose caller
+// omitted one.
 func usageContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
@@ -69,6 +71,8 @@ func usageHashRequest(request tokenusage.ReservationRequest) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// usageRecordMatches compares accounting identity, scope, usage and price to distinguish
+// duplicate reports from conflicting ones.
 func usageRecordMatches(a, b tokenusage.Record) bool {
 	return a.RecordID == b.RecordID && a.TeamID == b.TeamID && a.AgentID == b.AgentID &&
 		a.RunID == b.RunID && a.TurnID == b.TurnID && a.RequestID == b.RequestID &&
@@ -139,6 +143,8 @@ func usageRecordTx(tx *ateauthority.Tx, record tokenusage.Record) error {
 	return createRecord(tx, "usage-record-request", usageRequestKey(record.TeamID, record.RequestID), record.RecordID)
 }
 
+// RecordUsage distinguishes duplicate accounting records from conflicting records with the
+// same identity.
 func (store *Store) RecordUsage(ctx context.Context, record tokenusage.Record) error {
 	record, err := usageNormalizeReceipt(record)
 	if err != nil {

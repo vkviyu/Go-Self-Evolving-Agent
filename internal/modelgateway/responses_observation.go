@@ -41,6 +41,8 @@ func (o *responsesObservation) enable(ctx context.Context) {
 	}
 }
 
+// emit publishes stream diagnostics with the request context, labels and counters
+// collected by the Responses parser.
 func (s *responsesFrameStats) emit(name, status string, labels map[string]string, metrics map[string]int64) {
 	observation.Emit(s.ctx, observation.Event{
 		Component: "modelgateway", Name: name, Status: status, Labels: labels, Metrics: metrics,
@@ -87,6 +89,8 @@ func (s *responsesFrameStats) scanLines(data []byte, atEOF bool) (int, []byte, e
 	return advance, token, err
 }
 
+// line accounts for SSE comments, control lines and pending data before a frame has been
+// decoded.
 func (o *responsesObservation) line(line string, readFailed bool) {
 	s := o.stats
 	switch {
@@ -120,6 +124,8 @@ func (o *responsesObservation) invalidFrame() {
 	}
 }
 
+// frame attributes accumulated data bytes to the parsed event type and reports the first
+// frame.
 func (o *responsesObservation) frame(label string) {
 	if s := o.stats; s != nil {
 		s.parsed.count++
@@ -141,6 +147,8 @@ type responsesObservingSender struct {
 	observation *responsesObservation
 }
 
+// Send measures outgoing message content before handing it to a concurrent consumer and
+// reports a closed reader.
 func (w responsesObservingSender) Send(msg *schema.Message, err error) bool {
 	// Capture sizes before handing the message to a concurrent consumer.
 	s := w.observation.stats

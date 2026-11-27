@@ -134,6 +134,7 @@ type BudgetSnapshot struct {
 // Ledger is the narrow runtime contract for durable usage accounting. A nil
 // ledger means accounting is disabled; model execution must remain functional.
 type Ledger interface {
+	// RecordUsage records token usage against its operation and execution scope.
 	RecordUsage(context.Context, Record) error
 	CanAdmit(context.Context, orchestration.TeamID) (bool, error)
 }
@@ -162,6 +163,7 @@ type DurableReservationLedger interface {
 // Reader is implemented by durable ledgers that expose reporting without
 // coupling the runtime to a database-specific query API.
 type Reader interface {
+	// UsageReport aggregates recorded usage matching the supplied query.
 	UsageReport(context.Context, UsageQuery) (UsageReport, error)
 }
 
@@ -179,6 +181,8 @@ type Price struct {
 // Pricer calculates cost only when a matching, explicitly configured price
 // exists. Unknown models remain unpriced instead of using a guessed tariff.
 type Pricer interface {
+	// CostMicros prices the usage snapshot for a provider and model and reports whether a
+	// price is available.
 	CostMicros(provider, model string, usage Snapshot) (int64, bool)
 }
 

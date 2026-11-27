@@ -15,6 +15,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/session"
 )
 
+// History reads a page of original session records in source sequence order.
 func (s *Store) History(ctx context.Context, id string, after uint64, limit int) ([]ateports.Record, error) {
 	items, err := s.read(ctx, session.ID(id), after, nil, nil, limit)
 	if err != nil {
@@ -27,6 +28,8 @@ func (s *Store) HistoryCut(ctx context.Context, id string) (uint64, error) {
 	return s.CurrentSequence(ctx, session.ID(id))
 }
 
+// HistoryThrough returns session records after the cursor up to and including the frozen
+// sequence.
 func (s *Store) HistoryThrough(ctx context.Context, id string, after, through uint64, limit int) ([]ateports.Record, error) {
 	items, err := s.read(ctx, session.ID(id), after, &through, nil, limit)
 	if err != nil {

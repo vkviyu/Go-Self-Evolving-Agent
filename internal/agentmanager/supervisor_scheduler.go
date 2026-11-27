@@ -55,6 +55,8 @@ func (supervisor *Supervisor) start(agent orchestration.AgentSnapshot) {
 	}()
 }
 
+// startAvailable scans eligible teams for queued work and starts candidates within
+// admission limits.
 func (supervisor *Supervisor) startAvailable() {
 	if supervisor.runner == nil || !supervisor.backgroundEnabled() {
 		return

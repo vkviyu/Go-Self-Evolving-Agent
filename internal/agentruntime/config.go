@@ -57,6 +57,8 @@ type Config struct {
 }
 
 type ContextArtifactStore interface {
+	// Put stores an artifact and returns the reference to include in a model-visible
+	// context excerpt.
 	Put(context.Context, []byte) (string, error)
 }
 

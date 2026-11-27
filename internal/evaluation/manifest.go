@@ -11,6 +11,8 @@ import (
 
 const maximumJSONLRecordBytes = 64 << 20
 
+// LoadTasks reads JSONL task definitions and rejects invalid tasks or duplicate
+// identities.
 func LoadTasks(reader io.Reader) ([]Task, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("task reader is required")
@@ -37,6 +39,7 @@ func LoadTasks(reader io.Reader) ([]Task, error) {
 	return tasks, nil
 }
 
+// LoadResults reads JSONL evaluation results and checks each record's schema and task ID.
 func LoadResults(reader io.Reader) ([]Result, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("result reader is required")

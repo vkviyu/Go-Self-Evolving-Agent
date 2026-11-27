@@ -143,6 +143,8 @@ func (supervisor *Supervisor) ReconcileWaitSets(ctx context.Context, teamID orch
 	return resolved, nil
 }
 
+// Wait waits for any or all requested agents to reach a terminal state. A command timeout
+// returns the last snapshots with TimedOut set.
 func (supervisor *Supervisor) Wait(ctx context.Context, command WaitCommand) (WaitResult, error) {
 	if err := supervisor.ensureOpen(); err != nil {
 		return WaitResult{}, err

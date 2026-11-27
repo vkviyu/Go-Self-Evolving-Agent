@@ -113,6 +113,7 @@ func (store *Store) FinishApply(ctx context.Context, id orchestration.MergeID) e
 	})
 }
 
+// LoadApply reads the stored apply journal entry for a merge, reporting whether it exists.
 func (store *Store) LoadApply(ctx context.Context, id orchestration.MergeID) (workspacecoord.ApplyRecord, bool, error) {
 	var result workspacecoord.ApplyRecord
 	var found bool

@@ -54,6 +54,8 @@ type Profile struct {
 	CanSendMessages    bool
 }
 
+// Validate checks the profile's identity, inheritance and workspace modes, and execution
+// limits.
 func (profile Profile) Validate() error {
 	if profile.Name == "" || profile.Revision == "" {
 		return errors.New("Agent profile requires name and revision")
@@ -83,6 +85,8 @@ func (profile Profile) Validate() error {
 	return nil
 }
 
+// clone copies both tool lists so that editing a profile cannot mutate a published
+// snapshot.
 func (profile Profile) clone() Profile {
 	profile.Tools = slices.Clone(profile.Tools)
 	profile.DelegableTools = slices.Clone(profile.DelegableTools)
@@ -141,6 +145,7 @@ func (registry *Registry) Activate(profiles ...Profile) (uint64, error) {
 	return registry.generation, nil
 }
 
+// Snapshot copies the registry's current profiles and revisions under one read lock.
 func (registry *Registry) Snapshot() *Snapshot {
 	if registry == nil {
 		return nil
@@ -164,6 +169,8 @@ type Snapshot struct {
 	revisions  map[string]Profile
 }
 
+// Generation returns the registry generation captured by the snapshot, or zero for a nil
+// snapshot.
 func (snapshot *Snapshot) Generation() uint64 {
 	if snapshot == nil {
 		return 0
@@ -171,6 +178,7 @@ func (snapshot *Snapshot) Generation() uint64 {
 	return snapshot.generation
 }
 
+// Get returns a copy of the named profile, with independent tool lists.
 func (snapshot *Snapshot) Get(name string) (Profile, bool) {
 	if snapshot == nil {
 		return Profile{}, false
@@ -193,6 +201,7 @@ func (snapshot *Snapshot) GetRevision(revision string) (Profile, bool) {
 	return profile.clone(), ok
 }
 
+// Names returns the profile names in lexical order.
 func (snapshot *Snapshot) Names() []string {
 	if snapshot == nil {
 		return nil

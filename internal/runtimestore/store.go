@@ -20,10 +20,13 @@ type Database struct {
 	closeErr  error
 }
 
+// Checkpoints returns the store for the execution framework's opaque checkpoint bytes.
 func (database *Database) Checkpoints() *CheckpointStore {
 	return &CheckpointStore{db: database.db}
 }
 
+// Close closes the SQLite connection pool once and returns the same result on subsequent
+// calls.
 func (database *Database) Close() error {
 	if database == nil {
 		return nil

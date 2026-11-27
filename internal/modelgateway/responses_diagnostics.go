@@ -16,6 +16,8 @@ type observedResponsesBody struct {
 	observation *responsesObservation
 }
 
+// Read counts transport bytes before the Responses parser assigns them to events or
+// comments.
 func (body observedResponsesBody) Read(p []byte) (int, error) {
 	n, err := body.ReadCloser.Read(p)
 	if n > 0 {

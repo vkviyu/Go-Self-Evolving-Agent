@@ -52,6 +52,7 @@ func mergeSpecMatches(merge workspacecoord.MergeRequest, spec workspacecoord.Mer
 		merge.CandidateDigest == spec.CandidateDigest && merge.Supersedes == spec.Supersedes
 }
 
+// EnqueueMerge persists the proposed merge and its queue identity.
 func (store *Store) EnqueueMerge(ctx context.Context, spec workspacecoord.MergeSpec) (workspacecoord.MergeRequest, error) {
 	if err := spec.Validate(); err != nil {
 		return workspacecoord.MergeRequest{}, err
@@ -177,6 +178,7 @@ func mergeSupersedeTx(tx *ateauthority.Tx, spec workspacecoord.MergeSpec, id orc
 	}, nil
 }
 
+// GetMerge reads the current persisted merge request by ID.
 func (store *Store) GetMerge(ctx context.Context, id orchestration.MergeID) (workspacecoord.MergeRequest, error) {
 	if err := id.Validate(); err != nil {
 		return workspacecoord.MergeRequest{}, err
@@ -190,6 +192,7 @@ func (store *Store) GetMerge(ctx context.Context, id orchestration.MergeID) (wor
 	return result, err
 }
 
+// ListMerges reads queued and historical merges matching the requested filters.
 func (store *Store) ListMerges(ctx context.Context, query workspacecoord.MergeQuery) ([]workspacecoord.MergeRequest, error) {
 	if err := query.TeamID.Validate(); err != nil {
 		return nil, err
@@ -225,6 +228,7 @@ func mergeListTx(tx *ateauthority.Tx, query workspacecoord.MergeQuery) ([]worksp
 	return result, nil
 }
 
+// TransitionMerge checks the expected version and records the merge state change.
 func (store *Store) TransitionMerge(ctx context.Context, transition workspacecoord.MergeTransition) (workspacecoord.MergeRequest, error) {
 	if err := transition.MergeID.Validate(); err != nil {
 		return workspacecoord.MergeRequest{}, err

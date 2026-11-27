@@ -42,10 +42,14 @@ var (
 	_ aterequest.RetirementStore = (*ATERequestStore)(nil)
 )
 
+// ATERequests returns the database-backed journal for pending ATE commands and their
+// reconciliation.
 func (database *Database) ATERequests() *ATERequestStore {
 	return &ATERequestStore{db: database.db}
 }
 
+// requestKeyArgs returns the space, principal and request ID in the order used by journal
+// queries.
 func requestKeyArgs(key api.RequestKey) []any {
 	return []any{key.Space, key.Principal, key.RequestID}
 }
@@ -57,6 +61,8 @@ func validateRequestKey(key api.RequestKey) error {
 	return nil
 }
 
+// checkRequestAuthority checks the runtime's store binding before operating on a saved
+// request.
 func checkRequestAuthority(ctx context.Context, query rowQuery, id model.StoreID) error {
 	var bound string
 	err := query.QueryRowContext(ctx, `SELECT store_id FROM runtime_authority WHERE singleton=1`).Scan(&bound)
@@ -72,6 +78,8 @@ func checkRequestAuthority(ctx context.Context, query rowQuery, id model.StoreID
 	return nil
 }
 
+// loadRequestTerminal reads and checks the persisted rejection for a request key and
+// reports whether one exists.
 func loadRequestTerminal(ctx context.Context, query rowQuery, key api.RequestKey) (aterequest.Rejection, bool, error) {
 	var raw []byte
 	var checksum string
@@ -135,6 +143,8 @@ func scanPendingRequest(row rowScanner) (aterequest.Record, int, error) {
 	return record, len(raw), nil
 }
 
+// loadPendingRequest retrieves a validated pending command identified by space, principal
+// and request ID.
 func loadPendingRequest(ctx context.Context, query rowQuery, key api.RequestKey) (aterequest.Record, bool, error) {
 	record, _, err := scanPendingRequest(query.QueryRowContext(ctx, pendingSelect+` WHERE p.space=? AND p.principal=? AND p.request_id=?`, requestKeyArgs(key)...))
 	if errors.Is(err, sql.ErrNoRows) {

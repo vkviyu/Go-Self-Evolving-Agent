@@ -90,6 +90,8 @@ type BinaryTrial struct {
 	Disqualified bool
 }
 
+// ProtocolForBenchmark returns the dataset, harness and scoring protocol associated with a
+// supported benchmark.
 func ProtocolForBenchmark(name string) (BenchmarkProtocol, error) {
 	switch name {
 	case BenchmarkTerminalBench21:

@@ -14,11 +14,15 @@ import (
 // GitRunner is intentionally tiny so worktree behavior can be tested without
 // invoking a real repository or coupling the coordinator to os/exec details.
 type GitRunner interface {
+	// Run executes Git with the supplied working directory and arguments and returns its
+	// output.
 	Run(context.Context, string, ...string) ([]byte, error)
 }
 
 type commandGit struct{ workspace string }
 
+// Run executes Git in the requested directory with the workspace runner's command
+// settings.
 func (runner commandGit) Run(ctx context.Context, directory string, arguments ...string) ([]byte, error) {
 	return runner.RunWithEnvironment(ctx, directory, nil, arguments...)
 }
@@ -29,6 +33,7 @@ type WorktreeManager struct {
 	Worktrees string
 }
 
+// NewWorktreeManager prepares the manager for Git worktrees associated with the workspace.
 func NewWorktreeManager(root string) (*WorktreeManager, error) {
 	root, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {

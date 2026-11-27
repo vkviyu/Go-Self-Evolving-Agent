@@ -61,6 +61,8 @@ var catalog = map[string]struct{ window, output int }{
 
 var datedSnapshot = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
 
+// Lookup returns context-window metadata for the provider and model, including the source
+// of the chosen limit.
 func Lookup(provider, name string) Metadata {
 	if strings.EqualFold(strings.TrimSpace(provider), "openai") {
 		name = datedSnapshot.ReplaceAllString(strings.TrimSpace(name), "")
@@ -126,6 +128,8 @@ func InputLimit(window, output int) int {
 	return max(1, remaining-max(0, output))
 }
 
+// SafetyMargin reserves five percent of the context window, clamped to one through 4096
+// tokens.
 func SafetyMargin(window int) int { return max(1, min(4096, window/20)) }
 
 // DefaultTrigger separates model capacity from the working-context policy.

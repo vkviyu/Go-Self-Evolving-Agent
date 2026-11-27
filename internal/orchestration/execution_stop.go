@@ -45,6 +45,8 @@ func (stop *ExecutionStop) Unwrap() error {
 	return stop.Cause
 }
 
+// ExecutionStopKindOf unwraps cause and reports whether it represents a recognized
+// interruption of execution.
 func ExecutionStopKindOf(cause error) (ExecutionStopKind, bool) {
 	var stop *ExecutionStop
 	if !errors.As(cause, &stop) || stop == nil {

@@ -133,6 +133,8 @@ func (f *Factory) boundSummaryInput(input []*schema.Message, inputLimit int) err
 	return nil
 }
 
+// boundedSummaryEntry fits an excerpt into a byte budget at UTF-8 boundaries, retaining
+// both ends when the omission marker fits.
 func boundedSummaryEntry(content string, maxBytes int) string {
 	if len(content) <= maxBytes {
 		return content

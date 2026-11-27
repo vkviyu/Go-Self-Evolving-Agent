@@ -53,6 +53,7 @@ type startupPublisher struct {
 	states chan tui.StartupState
 }
 
+// phase publishes a startup phase to the TUI while the startup channel is open.
 func (publisher *startupPublisher) phase(ctx context.Context, phase tui.StartupPhase) {
 	publisher.mu.Lock()
 	defer publisher.mu.Unlock()

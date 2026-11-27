@@ -48,6 +48,8 @@ type recordingModel struct {
 
 var _ model.BaseChatModel = (*recordingModel)(nil)
 
+// Generate reuses a recorded response during replay or dispatches and records the model
+// request.
 func (m *recordingModel) Generate(ctx context.Context, input []*schema.Message, options ...model.Option) (*schema.Message, error) {
 	m.receipt = modelReceipt{Version: 2, RawDigest: rawRequestDigest(input)}
 	if response, replayed, err := m.replayResponse(ctx, input, options); replayed {
@@ -94,6 +96,8 @@ func (m *recordingModel) Generate(ctx context.Context, input []*schema.Message, 
 	return response, nil
 }
 
+// Stream replays a recorded response when available. For a live foreground call it
+// persists partial messages before publishing their deltas.
 func (m *recordingModel) Stream(ctx context.Context, input []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	m.receipt = modelReceipt{Version: 2, RawDigest: rawRequestDigest(input)}
 	if response, replayed, err := m.replayResponse(ctx, input, options); replayed {
@@ -225,10 +229,12 @@ func (m *recordingModel) emitLive(ctx context.Context, event Event) {
 	_ = emitStage(ctx, m.liveSink, event)
 }
 
+// modelLifecycleEvent attaches the turn ID and request purpose to a transient model event.
 func (m *recordingModel) modelLifecycleEvent(eventType EventType) Event {
 	return Event{Type: eventType, TurnID: m.turnID, Purpose: m.purpose}
 }
 
+// cloneMessage makes an independent JSON copy of a streamed message before it is retained.
 func cloneMessage(message *schema.Message) (*schema.Message, error) {
 	encoded, err := json.Marshal(message)
 	if err != nil {
@@ -254,6 +260,8 @@ func (m *recordingModel) requestID() string {
 	return fmt.Sprintf("%s:%d", m.turnID, m.requestSequence.Add(1))
 }
 
+// observeProviderUsage calibrates input counting when the completed response includes a
+// positive provider token count.
 func (m *recordingModel) observeProviderUsage(message *schema.Message, estimated int, requestID string) {
 	if m.factory == nil || message == nil || message.ResponseMeta == nil || message.ResponseMeta.Usage == nil {
 		return
@@ -264,6 +272,8 @@ func (m *recordingModel) observeProviderUsage(message *schema.Message, estimated
 	}
 }
 
+// recordModelRequest persists the request identity, input estimate and dispatch settings
+// for this model step.
 func (m *recordingModel) recordModelRequest(ctx context.Context, input []*schema.Message, options []model.Option, streaming, corrected bool, estimated int, requestID string) error {
 	common := model.GetCommonOptions(nil, options...)
 	payload := map[string]any{
@@ -308,6 +318,8 @@ func (m *recordingModel) recordModelRequest(ctx context.Context, input []*schema
 	return m.recordHostMaintenanceUsage(ctx, session.EventModelRequested, payload)
 }
 
+// recordAssistantMessage persists the completed response and settles usage under a
+// durability deadline even if the turn has been canceled.
 func (m *recordingModel) recordAssistantMessage(ctx context.Context, message *schema.Message, streaming bool, requestID string) (err error) {
 	defer func() { observeModelFinished(ctx, message, err) }()
 	// The provider response is already complete when this method runs. Its
@@ -376,6 +388,8 @@ func (m *recordingModel) recordAssistantMessage(ctx context.Context, message *sc
 	return m.recordHostMaintenanceUsage(durable, session.EventAssistantMessage, payload)
 }
 
+// reserve checks the estimated request against the execution and team budgets before
+// dispatch.
 func (m *recordingModel) reserve(ctx context.Context, estimated int, requestID string, options []model.Option) error {
 	m.emitLive(ctx, m.modelLifecycleEvent(EventModelBudgetReservationStarted))
 	output := 0
@@ -443,6 +457,8 @@ func (m *recordingModel) reserve(ctx context.Context, estimated int, requestID s
 	return nil
 }
 
+// releaseUnsent discards the input estimate and attempts to release the usage reservation
+// for an undispatched request.
 func (m *recordingModel) releaseUnsent(ctx context.Context, requestID, reason string) {
 	m.estimates.Delete(requestID)
 	if m.factory == nil || m.factory.config.UsageLedger == nil {
@@ -459,6 +475,8 @@ func (m *recordingModel) releaseUnsent(ctx context.Context, requestID, reason st
 	}
 }
 
+// recordModelFailure records the failed request and any available stream telemetry under a
+// separate durability deadline.
 func (m *recordingModel) recordModelFailure(ctx context.Context, requestID string, cause error, streaming bool) error {
 	recordContext, cancel := durabilityContext(ctx)
 	defer cancel()

@@ -30,6 +30,7 @@ func (evidenceError) Error() string {
 }
 func (evidenceError) ToolExecutionFatal() bool { return true }
 
+// Validate checks the strategy format, identity and bounds on its configurable behavior.
 func (spec Spec) Validate() error {
 	if spec.Version != 1 || strings.TrimSpace(spec.Revision) == "" || len(spec.Revision) > 128 || len(spec.OwnerSession) > 128 || len(spec.InstructionSuffix) > 8192 || spec.MaxIterations < 0 || spec.MaxIterations > 100 || spec.MaxOutputTokens < 0 || spec.MaxOutputTokens > 32768 {
 		return errors.New("invalid bounded LoopSpec")
@@ -40,17 +41,23 @@ func (spec Spec) Validate() error {
 	return nil
 }
 
+// Digest returns the hexadecimal SHA-256 of a JSON-encodable strategy value.
 func Digest(value any) string {
 	raw, _ := json.Marshal(value)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
+
+// ID returns the digest of the complete strategy specification.
 func (spec Spec) ID() string { return Digest(spec) }
 
 // Store is the execution-time port: only the composition root can publish.
 type Store interface {
 	Active(context.Context, string) (*Spec, error)
+	// Load resolves a stored strategy specification by its ID.
 	Load(context.Context, string) (Spec, error)
+	// Fallback withdraws the specified candidate if it is still active for that baseline
+	// and records the reason.
 	Fallback(context.Context, string, string, string) error
 }
 
@@ -66,6 +73,8 @@ type Suite struct {
 	Fixtures []Fixture `json:"fixtures"`
 }
 
+// Validate checks the shadow fixtures, including their bounds, distinct names and required
+// safety coverage.
 func (suite Suite) Validate() error {
 	if suite.Name == "" || len(suite.Name) > 128 || len(suite.Fixtures) < 1 || len(suite.Fixtures) > 8 {
 		return errors.New("shadow suite requires a bounded name and 1 to 8 fixtures")
@@ -108,6 +117,8 @@ type Report struct {
 	EvaluatedAt      time.Time `json:"evaluated_at"`
 }
 
+// Acceptance compares paired fixtures and rejects safety failures, a lower pass count or
+// more model calls.
 func (report Report) Acceptance() (bool, string) {
 	if report.Failure != "" {
 		return false, "comparison failed: " + report.Failure

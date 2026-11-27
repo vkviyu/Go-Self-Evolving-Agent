@@ -40,6 +40,8 @@ func operational(id model.SpaceID) bool {
 	return id == "gsea-authority" || strings.HasPrefix(string(id), "gsea-history-") || strings.HasPrefix(string(id), "gsea-execution-")
 }
 
+// budget checks both catalog item count and serialized size, returning ErrIncomplete if
+// either limit is exceeded.
 func budget(v any, count int) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -198,6 +200,8 @@ func queryAll(ctx context.Context, c *client.Client, r api.QueryMemoryRequest) (
 	return nil, ErrIncomplete
 }
 
+// memoryIdentity pairs the source's space and source ID for deduplication across memory
+// results.
 func memoryIdentity(src memory.Source) string {
 	return string(src.Anchor.Space) + "/" + string(src.SourceID)
 }

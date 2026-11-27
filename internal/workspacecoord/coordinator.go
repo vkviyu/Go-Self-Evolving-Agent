@@ -21,6 +21,7 @@ type Coordinator struct {
 	Snapshots *SnapshotStore
 }
 
+// NewCoordinator binds the workspace repository and optional Git worktree manager.
 func NewCoordinator(repository Repository, worktrees *WorktreeManager) (*Coordinator, error) {
 	if repository == nil {
 		return nil, errors.New("workspace coordinator requires a repository")
@@ -74,6 +75,8 @@ func (coordinator *Coordinator) DiscardSnapshotView(ctx context.Context, viewID 
 	return err
 }
 
+// CreateView records the workspace view and materializes a worktree when required by its
+// isolation mode.
 func (coordinator *Coordinator) CreateView(ctx context.Context, spec ViewSpec) (View, error) {
 	if coordinator == nil || coordinator.Repository == nil {
 		return View{}, errors.New("workspace coordinator is unavailable")

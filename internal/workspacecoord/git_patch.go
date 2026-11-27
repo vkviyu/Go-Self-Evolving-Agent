@@ -45,7 +45,10 @@ type boundedGitOutput struct {
 	limit  int
 }
 
-func (output *boundedGitOutput) Bytes() []byte  { return output.buffer.Bytes() }
+// Bytes returns the retained portion of Git output.
+func (output *boundedGitOutput) Bytes() []byte { return output.buffer.Bytes() }
+
+// String returns the retained Git output as text.
 func (output *boundedGitOutput) String() string { return output.buffer.String() }
 
 func (output *boundedGitOutput) Write(data []byte) (int, error) {

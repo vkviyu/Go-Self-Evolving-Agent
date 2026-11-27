@@ -190,6 +190,8 @@ func (b *Bridge) OperationalSpace() model.SpaceID {
 	return b.operationalSpace
 }
 
+// digest hashes the JSON array of identity components so boundaries between components are
+// preserved.
 func digest(parts ...string) string {
 	raw, _ := json.Marshal(parts)
 	sum := sha256.Sum256(raw)

@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// resolveExistingAt resolves a workspace-relative path under the supplied root and checks
+// the resolved location.
 func (workspace *Workspace) resolveExistingAt(root, path string) (string, string, error) {
 	relative, err := normalizeRelative(path)
 	if err != nil {

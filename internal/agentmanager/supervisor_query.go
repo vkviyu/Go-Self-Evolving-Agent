@@ -8,6 +8,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
 )
 
+// ListAgents reads agent snapshots matching the query from the supervisor's repository.
 func (supervisor *Supervisor) ListAgents(ctx context.Context, query orchestration.AgentQuery) ([]orchestration.AgentSnapshot, error) {
 	if err := supervisor.ensureOpen(); err != nil {
 		return nil, err
@@ -18,6 +19,7 @@ func (supervisor *Supervisor) ListAgents(ctx context.Context, query orchestratio
 	return supervisor.agents.ListAgents(ctx, query)
 }
 
+// GetTask reads the current task snapshot from the supervisor's configured repository.
 func (supervisor *Supervisor) GetTask(ctx context.Context, taskID orchestration.TaskID) (orchestration.TaskSnapshot, error) {
 	if err := supervisor.ensureOpen(); err != nil {
 		return orchestration.TaskSnapshot{}, err
@@ -31,6 +33,7 @@ func (supervisor *Supervisor) GetTask(ctx context.Context, taskID orchestration.
 	return supervisor.tasks.GetTask(ctx, taskID)
 }
 
+// ListTasks reads task snapshots matching the query from the supervisor's task repository.
 func (supervisor *Supervisor) ListTasks(ctx context.Context, query orchestration.TaskQuery) ([]orchestration.TaskSnapshot, error) {
 	if err := supervisor.ensureOpen(); err != nil {
 		return nil, err

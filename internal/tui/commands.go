@@ -156,6 +156,8 @@ func (model *Model) recallNext() bool {
 	return true
 }
 
+// updateCommandSuggestions rebuilds slash-command matches from the current input and
+// clears stale suggestions.
 func (model *Model) updateCommandSuggestions() {
 	value := strings.ToLower(strings.TrimSpace(model.input.Value()))
 	model.commandSuggestions = nil

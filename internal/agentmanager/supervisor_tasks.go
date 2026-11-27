@@ -10,6 +10,8 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
+// authorizeTaskControl rejects task management when the actor's resolved profile forbids
+// it.
 func (supervisor *Supervisor) authorizeTaskControl(ctx context.Context, actor orchestration.ActorScope) error {
 	profile, ok, err := supervisor.actorProfile(ctx, actor)
 	if err != nil {
@@ -158,6 +160,8 @@ func (supervisor *Supervisor) UpdateTask(ctx context.Context, update orchestrati
 	return updated, err
 }
 
+// TransitionTask checks completion and verification constraints before applying the
+// requested task transition.
 func (supervisor *Supervisor) TransitionTask(ctx context.Context, transition orchestration.TaskTransition) (orchestration.TaskSnapshot, error) {
 	if err := supervisor.ensureOpen(); err != nil {
 		return orchestration.TaskSnapshot{}, err

@@ -19,12 +19,19 @@ import (
 // Catalog maps stable user-facing session identities to their runtime resources.
 // Conversation events are stored separately in native ATE sessions.
 type Catalog interface {
+	// Create registers the supplied managed session in the catalog.
 	Create(context.Context, Session) error
+	// Get retrieves the managed session entry by ID.
 	Get(context.Context, string) (Session, error)
+	// List returns registered sessions from the catalog.
 	List(context.Context) ([]Session, error)
+	// UpdateState persists the session state and associated process ID.
 	UpdateState(context.Context, string, State, int) error
+	// ReconcileStopped checks the registered process and reconciles its stopped state.
 	ReconcileStopped(context.Context, string) (Session, error)
+	// Remove deletes the managed session's catalog entry.
 	Remove(context.Context, string) error
+	// Close releases resources held by this session catalog handle.
 	Close() error
 }
 
@@ -62,6 +69,7 @@ func (r *Authority) Close() error {
 	return r.closeErr
 }
 
+// available rejects registry operations on a missing or closed authority.
 func (r *Authority) available() error {
 	if r == nil || r.records == nil || r.closed.Load() {
 		return errors.New("session registry is unavailable")
@@ -69,6 +77,8 @@ func (r *Authority) available() error {
 	return nil
 }
 
+// catalogKey encodes a session ID under the catalog namespace without treating embedded
+// separators as path components.
 func catalogKey(id string) string {
 	return catalogPrefix + base64.RawURLEncoding.EncodeToString([]byte(id))
 }
@@ -135,6 +145,7 @@ func (r *Authority) Create(ctx context.Context, item Session) error {
 	})
 }
 
+// Get reads the registered session by ID from the authority.
 func (r *Authority) Get(ctx context.Context, id string) (Session, error) {
 	if err := r.available(); err != nil {
 		return Session{}, err

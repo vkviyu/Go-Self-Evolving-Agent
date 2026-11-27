@@ -40,11 +40,15 @@ type Event struct {
 type scopeKey struct{}
 type recorderKey struct{}
 
+// ScopeFrom returns the correlation IDs carried by ctx, or the zero scope when none are
+// present.
 func ScopeFrom(ctx context.Context) Scope {
 	scope, _ := ctx.Value(scopeKey{}).(Scope)
 	return scope
 }
 
+// WithScope overlays the supplied correlation IDs on the existing observation scope when
+// recording is enabled.
 func WithScope(ctx context.Context, scope Scope) context.Context {
 	if !Enabled(ctx) {
 		return ctx
@@ -100,6 +104,7 @@ func recorderFrom(ctx context.Context) *Recorder {
 	return r
 }
 
+// Enabled reports whether the context has a recorder that is still accepting observations.
 func Enabled(ctx context.Context) bool {
 	r := recorderFrom(ctx)
 	return r != nil && !r.stopped.Load()

@@ -44,6 +44,7 @@ func (m *requestTimingModel) WithTools(tools []*schema.ToolInfo) (model.ToolCall
 	return &copyModel, nil
 }
 
+// Generate applies the configured request deadline to a nonstreaming model call.
 func (m *requestTimingModel) Generate(ctx context.Context, input []*schema.Message, options ...model.Option) (*schema.Message, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, m.timeout, &modelDeadline{phase: "request", timeout: m.timeout})
 	defer cancel()
@@ -64,6 +65,8 @@ func (m *requestTimingModel) Generate(ctx context.Context, input []*schema.Messa
 	return message, err
 }
 
+// Stream attaches timing state for the transport and preserves upstream read errors for
+// adapters that would otherwise hide them.
 func (m *requestTimingModel) Stream(ctx context.Context, input []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	state := &modelRequestState{streaming: true}
 	upstream, err := m.ToolCallingChatModel.Stream(context.WithValue(ctx, modelRequestKey{}, state), input, options...)
@@ -105,6 +108,8 @@ func (err *modelDeadline) Error() string {
 
 func (*modelDeadline) Unwrap() error { return context.DeadlineExceeded }
 
+// modelTimingHTTPClient copies the supplied client and wraps its transport with header and
+// idle deadlines.
 func modelTimingHTTPClient(client *http.Client, headers, idle time.Duration) *http.Client {
 	clone := &http.Client{}
 	if client != nil {
@@ -125,6 +130,8 @@ type modelTimingTransport struct {
 	idle    time.Duration
 }
 
+// RoundTrip applies phase deadlines to instrumented requests and transfers body-read
+// timing to the response reader.
 func (transport modelTimingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	ctx := request.Context()
 	state, _ := ctx.Value(modelRequestKey{}).(*modelRequestState)
@@ -176,6 +183,8 @@ type modelTimingBody struct {
 	idle   *modelDeadline
 }
 
+// Read bounds each body read by the remaining idle deadlines and preserves the cause of a
+// timeout.
 func (body *modelTimingBody) Read(p []byte) (int, error) {
 	var stopRead func()
 	if body.cancel != nil && len(p) != 0 {
@@ -209,6 +218,8 @@ func (body *modelTimingBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// armModelDeadline schedules cancellation with a phase-specific cause. Its stop function
+// synchronizes with an already firing timer.
 func armModelDeadline(delay time.Duration, failure *modelDeadline, cancel context.CancelCauseFunc) func() {
 	done := make(chan struct{})
 	timer := time.AfterFunc(delay, func() {

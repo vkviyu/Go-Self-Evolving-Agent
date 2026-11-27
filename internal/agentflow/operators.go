@@ -16,12 +16,17 @@ import (
 )
 
 type Stage interface {
+	// Name identifies the stage within a flow definition and must be unique in that
+	// definition.
 	Name() string
+	// Apply consumes the upstream stream and returns the stream for the next stage.
 	Apply(context.Context, *Execution, Stream) Stream
 }
 
 type Processor interface {
+	// Name identifies the processor when constructing step IDs and parallel branches.
 	Name() string
+	// Process transforms one value under the supplied execution and step ID.
 	Process(context.Context, *Execution, string, Value) (Value, error)
 }
 
@@ -33,8 +38,10 @@ type ProcessorFunc struct {
 	Function func(context.Context, *Execution, string, Value) (Value, error)
 }
 
+// Name returns the name registered for this processor callback.
 func (processor ProcessorFunc) Name() string { return processor.ProcessorName }
 
+// Process invokes the callback with the current execution, step ID and input value.
 func (processor ProcessorFunc) Process(ctx context.Context, execution *Execution, stepID string, input Value) (Value, error) {
 	if processor.Function == nil {
 		return Value{}, errors.New("nil Flow processor")
@@ -53,6 +60,8 @@ func Pipeline(name, revision string, stages ...Stage) *Definition {
 	return &Definition{Name: name, Revision: revision, Stages: append([]Stage(nil), stages...)}
 }
 
+// Validate checks the flow identity, stage names and processor configuration before
+// execution.
 func (definition *Definition) Validate() error {
 	if definition == nil {
 		return errors.New("Flow definition is nil")
@@ -625,6 +634,7 @@ func itemIdentity(item Item, stageName string, ordinal int, seen map[string]int)
 	return identity
 }
 
+// sendItem delivers an item downstream or returns false if cancellation wins the send.
 func sendItem(ctx context.Context, output chan<- Item, item Item) bool {
 	select {
 	case output <- item:

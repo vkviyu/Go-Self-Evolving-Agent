@@ -47,12 +47,14 @@ type Decision struct {
 
 // Engine evaluates an authorization request without performing the action.
 type Engine interface {
+	// Evaluate decides how the proposed tool call should proceed before execution.
 	Evaluate(ctx context.Context, request Request) (Decision, error)
 }
 
 // Approver resolves a require-approval decision. Implementations may interrupt
 // an Agent runner rather than blocking a terminal directly.
 type Approver interface {
+	// Approve asks for a decision on a tool request that policy routed to approval.
 	Approve(ctx context.Context, request Request, decision Decision) (bool, error)
 }
 

@@ -16,6 +16,8 @@ type spawnReceipt struct {
 	Hash    string
 }
 
+// scopedKey encodes the scope and idempotency key together for lookup in the orchestration
+// store.
 func scopedKey(team orchestration.TeamID, key string) string { return string(team) + "\x00" + key }
 func hashSpawnRequest(spec orchestration.SpawnSpec) string {
 	workspace := spec.Workspace
@@ -49,6 +51,8 @@ func findSpawnTx(tx *ateauthority.Tx, team orchestration.TeamID, key, hash strin
 	agent, err := agentTx(tx, receipt.AgentID)
 	return agent, err == nil, err
 }
+
+// FindSpawn resolves a team's idempotency key to its previously created child agent.
 func (store *Store) FindSpawn(ctx context.Context, team orchestration.TeamID, key string) (result orchestration.AgentSnapshot, found bool, err error) {
 	if err = team.Validate(); err != nil {
 		return
@@ -63,6 +67,9 @@ func (store *Store) FindSpawn(ctx context.Context, team orchestration.TeamID, ke
 	})
 	return
 }
+
+// FindSpawnRequest checks the saved spawn request against the original spec before
+// returning the existing child.
 func (store *Store) FindSpawnRequest(ctx context.Context, spec orchestration.SpawnSpec) (result orchestration.AgentSnapshot, found bool, err error) {
 	if err = spec.TeamID.Validate(); err != nil {
 		return
@@ -83,6 +90,9 @@ func (store *Store) FindSpawnRequest(ctx context.Context, spec orchestration.Spa
 	})
 	return
 }
+
+// CreateChild records the child, parent relationship and spawn identity together after
+// checking admission.
 func (store *Store) CreateChild(ctx context.Context, spec orchestration.SpawnSpec) (result orchestration.AgentSnapshot, err error) {
 	if err = spec.TeamID.Validate(); err != nil {
 		return

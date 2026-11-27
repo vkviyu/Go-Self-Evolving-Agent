@@ -19,6 +19,7 @@ type Rejection struct {
 	Retired bool
 }
 
+// Validate checks that a saved rejection identifies the rejected request and its store.
 func (rejection Rejection) Validate() error {
 	if !validStoreID(rejection.StoreID) || !model.ValidDigest(string(rejection.Digest)) {
 		return fmt.Errorf("%w: terminal identity", ErrInvalid)
@@ -44,6 +45,7 @@ type rejectionWire struct {
 	Retired bool             `json:"retired"`
 }
 
+// EncodeRejection validates and serializes a versioned rejection receipt for persistence.
 func EncodeRejection(rejection Rejection) ([]byte, error) {
 	if err := rejection.Validate(); err != nil {
 		return nil, err
@@ -107,6 +109,8 @@ func verifyRejection(key api.RequestKey, result api.CommitResult) error {
 	return nil
 }
 
+// VerifyAcknowledgement requires a durable acknowledgement matching the recorded command
+// digest, request ID and store fence.
 func VerifyAcknowledgement(record Record, result api.CommitResult) error {
 	if err := record.Validate(); err != nil {
 		return err

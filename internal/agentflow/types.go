@@ -69,6 +69,8 @@ func NewValue(value any) (Value, error) {
 	return Value{Data: encoded}, nil
 }
 
+// Clone copies the data and each variable's JSON bytes so branches can modify them
+// independently.
 func (value Value) Clone() Value {
 	clone := Value{Key: value.Key, Data: append(json.RawMessage(nil), value.Data...), identity: value.identity}
 	if len(value.Vars) > 0 {
@@ -80,6 +82,7 @@ func (value Value) Clone() Value {
 	return clone
 }
 
+// Validate checks that Data and all named variables contain valid JSON.
 func (value Value) Validate() error {
 	if len(value.Data) == 0 || !json.Valid(value.Data) {
 		return errors.New("Flow value data must be valid JSON")
@@ -200,17 +203,32 @@ type SessionStage struct {
 }
 
 type Store interface {
+	// CreateRun records the flow invocation and its execution identity before the first
+	// stage runs.
 	CreateRun(context.Context, RunRequest) (Run, error)
+	// GetRun loads the persisted state and outputs for a flow run ID.
 	GetRun(context.Context, string) (Run, error)
+	// StartStep records the input hash for a run and step so a retry can identify prior
+	// work.
 	StartStep(context.Context, string, string, string) (Step, error)
+	// FinishStep stores the outputs that a retry of the completed step can reuse.
 	FinishStep(context.Context, string, string, []Value) (Step, error)
+	// FailStep records the failure reason against the step in its owning run.
 	FailStep(context.Context, string, string, string) error
+	// FinishRun records the final run state, outputs and reason and returns the resulting
+	// run.
 	FinishRun(context.Context, string, State, []Value, string) (Run, error)
+	// BeginSessionStage determines whether the step starts or continues the named session
+	// in this run.
 	BeginSessionStage(context.Context, string, string, string) (SessionStage, error)
+	// SessionAgent looks up the agent bound to a named session within a flow run.
 	SessionAgent(context.Context, string, string) (orchestration.AgentID, bool, error)
+	// BindSessionAgent records which agent later stages in the same named session should
+	// use.
 	BindSessionAgent(context.Context, string, string, orchestration.AgentID) error
 }
 
+// NewID returns a random flow run ID with the flow- prefix.
 func NewID() (string, error) {
 	var value [12]byte
 	if _, err := rand.Read(value[:]); err != nil {

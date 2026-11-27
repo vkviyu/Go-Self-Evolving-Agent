@@ -18,6 +18,8 @@ type TaskAttemptFailureCode string
 
 const TaskAttemptIterationLimit TaskAttemptFailureCode = "iteration_limit"
 
+// Retryable reports whether this failure code permits another attempt under the task retry
+// policy.
 func (code TaskAttemptFailureCode) Retryable() bool {
 	return code == TaskAttemptIterationLimit
 }

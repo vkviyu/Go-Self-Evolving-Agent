@@ -12,6 +12,7 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 )
 
+// sha256Hex returns the hexadecimal SHA-256 fingerprint of the supplied bytes.
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
@@ -44,6 +45,8 @@ func orchestrationChecksum(event orchestration.Event) (string, error) {
 	return sha256Hex(data), nil
 }
 
+// Append writes an orchestration event batch and its sequence counters in one authority
+// transaction.
 func (store *Store) Append(ctx context.Context, stream orchestration.Stream, expected uint64, pending ...orchestration.PendingEvent) (result []orchestration.Event, err error) {
 	if err = stream.Validate(); err != nil {
 		return nil, err
@@ -117,6 +120,8 @@ func (store *Store) LoadTeam(ctx context.Context, id orchestration.TeamID, after
 	}
 	return store.loadEvents(ctx, "team", string(id), uint64(after), limit)
 }
+
+// CurrentSequence reads the current counter for the specified orchestration stream.
 func (store *Store) CurrentSequence(ctx context.Context, kind orchestration.StreamType, id string) (result uint64, err error) {
 	if kind == "" || id == "" {
 		return 0, fmt.Errorf("%w: stream type and ID are required", orchestration.ErrInvalidEvent)

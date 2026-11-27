@@ -93,6 +93,8 @@ func prepareInvocation(configured string, request Request) (Request, func(), err
 	return request, cleanup, nil
 }
 
+// insideDirectory checks lexical containment relative to root without resolving filesystem
+// links.
 func insideDirectory(root, value string) bool {
 	relative, err := filepath.Rel(root, value)
 	return err == nil && filepath.IsLocal(relative)

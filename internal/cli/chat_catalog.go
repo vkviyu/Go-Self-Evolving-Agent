@@ -22,6 +22,8 @@ type chatSession struct {
 	registered bool
 }
 
+// canonicalDirectory resolves a path for workspace comparison, falling back to its
+// absolute path if symlinks cannot be resolved.
 func canonicalDirectory(path string) string {
 	if path == "" {
 		return ""
@@ -47,6 +49,8 @@ func workspaceForChat(path string) (string, error) {
 	return canonicalDirectory(wd), nil
 }
 
+// chatDataDirectory resolves the selected chat data directory, using the configured home
+// when no override is present.
 func chatDataDirectory(resolved config.Config, options chatOptions) string {
 	selected := canonicalDirectory(options.dataDirectory)
 	if selected == "" {

@@ -18,6 +18,7 @@ import (
 )
 
 type headlessConversation interface {
+	// ID identifies the session receiving headless chat commands.
 	ID() session.ID
 	CompletedTurns() int
 	RunTurn(context.Context, string, agentruntime.EventSink) (agentruntime.Result, error)

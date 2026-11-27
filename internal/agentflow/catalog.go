@@ -48,6 +48,7 @@ type (
 	}
 )
 
+// NewCatalog creates an empty host flow catalog backed by runtime.
 func NewCatalog(runtime *Runtime) (*Catalog, error) {
 	if runtime == nil {
 		return nil, errors.New("Flow catalog requires a runtime")
@@ -96,6 +97,7 @@ func (catalog *Catalog) Register(registrations ...Registration) error {
 	return nil
 }
 
+// List returns registered flow descriptors in name order.
 func (catalog *Catalog) List() []Descriptor {
 	if catalog == nil {
 		return nil
@@ -110,6 +112,8 @@ func (catalog *Catalog) List() []Descriptor {
 	return descriptors
 }
 
+// Run checks that the named definition still matches its registered fingerprint before
+// invoking it.
 func (catalog *Catalog) Run(ctx context.Context, name string, invocation Invocation) (Result, error) {
 	if catalog == nil || catalog.runtime == nil {
 		return Result{}, errors.New("Flow catalog is unavailable")
@@ -130,6 +134,7 @@ func (catalog *Catalog) Run(ctx context.Context, name string, invocation Invocat
 	return catalog.runtime.Run(ctx, entry.definition, invocation)
 }
 
+// CatalogBindings exposes the catalog's list and run operations through the tool pipeline.
 func CatalogBindings(catalog *Catalog) []tool.Binding {
 	return []tool.Binding{
 		{

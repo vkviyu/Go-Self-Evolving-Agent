@@ -153,6 +153,8 @@ func runStorageBatch(ctx context.Context, lease *storageBatchLease, parent *stor
 	return scope.check(ctx, lease.process)
 }
 
+// check verifies that this batch and its ancestors still hold a live lease on the
+// requested authority.
 func (s *storageBatchScope) check(ctx context.Context, p authorityProcess) error {
 	if s.lease.process.manager != p.manager || s.lease.process.storeID != p.storeID {
 		// Never fall back to another manager: it may target the same directory

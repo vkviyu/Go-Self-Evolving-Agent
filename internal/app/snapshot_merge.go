@@ -23,6 +23,7 @@ const (
 type (
 	// agentLookup loads the Agent behind a merge for approval attribution.
 	agentLookup interface {
+		// GetAgent loads the snapshot used to resolve an agent by ID.
 		GetAgent(context.Context, orchestration.AgentID) (orchestration.AgentSnapshot, error)
 	}
 

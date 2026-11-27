@@ -32,7 +32,9 @@ type (
 	// turn already holds; Acknowledge and Release settle a finished turn.
 	// Available counts the messages a new turn could claim.
 	BackgroundMailbox interface {
+		// Claim retrieves background messages for the specified turn and model request.
 		Claim(ctx context.Context, turnID string, request uint64) ([]orchestration.Message, error)
+		// Acknowledge confirms delivery of the background messages claimed by the turn.
 		Acknowledge(ctx context.Context, turnID string) error
 		Release(ctx context.Context, turnID string) error
 		BoundTurns(ctx context.Context) ([]string, error)

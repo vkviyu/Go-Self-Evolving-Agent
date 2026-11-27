@@ -35,6 +35,8 @@ func (conversation *Conversation) RunTurn(ctx context.Context, input string, sin
 	return result, err
 }
 
+// emit records the conversation event and forwards it to the caller's live sink when one
+// is attached.
 func emit(sink agentruntime.EventSink, ctx context.Context, event agentruntime.Event) error {
 	observation.Emit(ctx, observation.Event{Component: "conversation", Name: string(event.Type), Scope: observation.Scope{TurnID: event.TurnID}})
 	if sink == nil {

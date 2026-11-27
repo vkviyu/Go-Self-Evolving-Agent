@@ -49,6 +49,7 @@ type PendingStore interface {
 	// rejected/retired keys remain reserved after payload deletion and return
 	// ErrRejected/ErrRetired for identical envelopes, ErrConflict otherwise.
 	Insert(context.Context, Record) error
+	// Get looks up a pending request by key and reports whether a record exists.
 	Get(context.Context, api.RequestKey) (Record, bool, error)
 	// List orders keys lexicographically by (Space, Principal, RequestID).
 	// After is exclusive. Both count and total EncodeRecord byte bounds apply.
@@ -172,6 +173,8 @@ func NewRecord(storeID model.StoreID, request api.CommitRequest) (Record, error)
 	return record, nil
 }
 
+// Validate checks the command digest, store fence and any recorded rejection before a
+// pending request can be used.
 func (record Record) Validate() error {
 	if !validStoreID(record.StoreID) {
 		return fmt.Errorf("%w: store identity", ErrInvalid)

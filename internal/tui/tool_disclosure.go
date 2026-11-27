@@ -48,6 +48,8 @@ func (model *Model) openToolInspector(start, end int, diffsOnly bool) bool {
 	return true
 }
 
+// resetToolPage clears the transcript selection and starts the tool inspector at its first
+// row.
 func (model *Model) resetToolPage() {
 	model.autoScroll = false
 	model.selection = transcriptSelection{}
@@ -56,6 +58,8 @@ func (model *Model) resetToolPage() {
 	model.refreshTranscript(false)
 }
 
+// closeToolInspector restores the transcript reading position saved on entry to the tool
+// details view.
 func (model *Model) closeToolInspector() {
 	view := model.toolInspector
 	if view == nil {

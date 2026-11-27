@@ -41,6 +41,8 @@ type (
 		BeginApply(context.Context, ApplyPlan) (ApplyRecord, error)
 		MarkPathApplied(context.Context, orchestration.MergeID, string) error
 		FinishApply(context.Context, orchestration.MergeID) error
+		// LoadApply reads the apply receipt used to decide whether a workspace operation
+		// can resume.
 		LoadApply(context.Context, orchestration.MergeID) (ApplyRecord, bool, error)
 	}
 

@@ -130,6 +130,8 @@ func blocksFromHistory(messages []*schema.Message) []transcriptBlock {
 	return blocks
 }
 
+// refreshTranscript rebuilds visible rows and query anchors, following new output or
+// restoring the reader's prior position.
 func (model *Model) refreshTranscript(forceBottom bool) {
 	if !model.ready {
 		return
@@ -412,13 +414,12 @@ func (model *Model) renderBlockWithDetails(block *transcriptBlock, arguments, re
 			body += "\n" + model.styles.failure.Render(ansi.Hardwrap("  failed: "+render.PlainText(failure), width, false))
 		}
 	}
-	output := body
+	var output string
 	if marker != "" {
-		output = lipgloss.JoinHorizontal(lipgloss.Top, markerStyle.Render(marker)+" ", body)
+		output = markedTranscriptRows(body, markerStyle.Render(marker)+" ", viewportWidth)
+	} else {
+		output = scopeFileLinksByLine(ansi.Hardwrap(body, viewportWidth, true))
 	}
-	// Cache the final terminal rows, including CJK wrapping and row-scoped
-	// hyperlinks. Later deltas in another block cannot change these rows.
-	output = scopeFileLinksByLine(ansi.Hardwrap(output, viewportWidth, true))
 	block = original
 	block.cachedContent = block.content
 	block.cachedToolName = block.toolName
@@ -433,6 +434,14 @@ func (model *Model) renderBlockWithDetails(block *transcriptBlock, arguments, re
 	block.cachedApprovalChoice = model.approvalChoice
 	block.cachedOutput = output
 	return output
+}
+
+// Wrap each row within its own gutter. Aligning the whole block as columns
+// would pad every line to the longest word before wrapping those spaces.
+func markedTranscriptRows(body, marker string, width int) string {
+	gutter := ansi.StringWidth(marker)
+	body = scopeFileLinksByLine(ansi.Hardwrap(body, max(1, width-gutter), true))
+	return marker + strings.ReplaceAll(body, "\n", "\n"+strings.Repeat(" ", gutter))
 }
 
 func (model *Model) renderToolBody(block *transcriptBlock, width int) string {

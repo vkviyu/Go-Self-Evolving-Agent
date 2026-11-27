@@ -23,6 +23,8 @@ type startupConversation struct {
 	readyErr func() error
 }
 
+// await waits for the startup conversation to be attached or returns the startup or
+// cancellation error.
 func (conversation *startupConversation) await(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -47,6 +49,7 @@ func (conversation *startupConversation) setBase(base tui.Conversation) {
 	conversation.baseMu.Unlock()
 }
 
+// currentBase reads the currently attached conversation under the startup handoff lock.
 func (conversation *startupConversation) currentBase() tui.Conversation {
 	conversation.baseMu.RLock()
 	defer conversation.baseMu.RUnlock()

@@ -17,6 +17,7 @@ func mergeSameFinalization(a, b workspacecoord.MergeFinalization) bool {
 	return a.BindingDigest == b.BindingDigest && a.WorkspaceDigest == b.WorkspaceDigest && a.VerificationDigest == b.VerificationDigest
 }
 
+// BeginMergeFinalization records the receipt that binds finalization to this merge.
 func (store *Store) BeginMergeFinalization(ctx context.Context, receipt workspacecoord.MergeFinalization) (workspacecoord.MergeFinalization, error) {
 	if receipt.State != workspacecoord.FinalizationPrepared || receipt.BindingDigest == "" || receipt.Settled {
 		return workspacecoord.MergeFinalization{}, fmt.Errorf("%w: invalid initial merge finalization", orchestration.ErrInvalidEvent)
@@ -54,6 +55,8 @@ func (store *Store) BeginMergeFinalization(ctx context.Context, receipt workspac
 	return result, nil
 }
 
+// LoadMergeFinalization reads the stored merge finalization receipt, returning false when
+// it is absent.
 func (store *Store) LoadMergeFinalization(ctx context.Context, id orchestration.MergeID) (workspacecoord.MergeFinalization, bool, error) {
 	var result workspacecoord.MergeFinalization
 	var found bool
@@ -72,6 +75,8 @@ func (store *Store) LoadMergeFinalization(ctx context.Context, id orchestration.
 	return result, found, nil
 }
 
+// TransitionMergeFinalization checks the receipt binding and previous state before saving
+// the next finalization state.
 func (store *Store) TransitionMergeFinalization(ctx context.Context, receipt workspacecoord.MergeFinalization, previous workspacecoord.FinalizationState) (workspacecoord.MergeFinalization, error) {
 	valid := previous == workspacecoord.FinalizationPrepared && (receipt.State == workspacecoord.FinalizationDispatched || receipt.State == workspacecoord.FinalizationCompleted) ||
 		previous == workspacecoord.FinalizationDispatched && (receipt.State == workspacecoord.FinalizationCompleted || receipt.State == workspacecoord.FinalizationUnknown)

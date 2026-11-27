@@ -176,6 +176,7 @@ func OpenWithNativeDir(t testing.TB, ctx context.Context, path, nativePath strin
 func (f *Database) Orchestration() *OrchestrationStore { return f.records }
 func (f *Database) SessionEvents() *sessionate.Store   { return f.events }
 
+// Close releases the native engine and fixture database once and reports cleanup errors.
 func (f *Database) Close() error {
 	f.closeOnce.Do(func() {
 		if f.Process != nil {

@@ -15,6 +15,7 @@ type State struct{ Authority *ateauthority.Store }
 
 type stateValue struct{ Bytes []byte }
 
+// stateKey encodes a fixture state key under the isolated test experience namespace.
 func stateKey(key string) string {
 	return "test/experience/" + base64.RawURLEncoding.EncodeToString([]byte(key))
 }

@@ -26,12 +26,15 @@ type ExecutionBinding struct {
 	ContractHash string `json:"contract_hash,omitempty"`
 }
 
+// IsZero reports whether all execution identity fields are absent.
 func (binding ExecutionBinding) IsZero() bool {
 	return binding.PlanID == "" && binding.TaskID == "" && binding.ExecutionID == "" &&
 		binding.AttemptID == "" && binding.StepID == "" && binding.TurnID == "" &&
 		binding.Attempt == 0 && binding.ContractHash == ""
 }
 
+// Validate checks the execution binding's scope and the relationship between its
+// identifiers.
 func (binding ExecutionBinding) Validate() error {
 	return (execution.Binding{
 		PlanID:       binding.PlanID,

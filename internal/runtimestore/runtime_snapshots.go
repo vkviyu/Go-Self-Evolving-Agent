@@ -31,6 +31,7 @@ func (store *RuntimeSnapshots) WithReferenceGuard(guard func(context.Context, to
 
 var _ tool.SnapshotStore = (*RuntimeSnapshots)(nil)
 
+// RuntimeSnapshots returns the database-backed store for tool registry snapshot manifests.
 func (database *Database) RuntimeSnapshots() *RuntimeSnapshots {
 	return &RuntimeSnapshots{db: database.db}
 }
@@ -240,6 +241,7 @@ func (store *RuntimeSnapshots) CloseArchivedReferences(ctx context.Context, rece
 	return count, tx.Commit()
 }
 
+// Load reads the tool manifest for the requested runtime snapshot ID.
 func (store *RuntimeSnapshots) Load(ctx context.Context, id string) (tool.SnapshotManifest, error) {
 	var encoded []byte
 	if err := store.db.QueryRowContext(ctx, `SELECT manifest FROM runtime_snapshots WHERE snapshot_id = ?`, id).Scan(&encoded); err != nil {

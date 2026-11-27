@@ -100,9 +100,13 @@ type MessageQuery struct {
 }
 
 type MailboxRepository interface {
+	// Enqueue records a message for later delivery to the recipient's mailbox.
 	Enqueue(ctx context.Context, spec MessageSpec) (Message, error)
+	// ListMessages returns mailbox entries matching the supplied query.
 	ListMessages(ctx context.Context, query MessageQuery) ([]Message, error)
+	// MarkDelivered records that the message has been delivered to its recipient.
 	MarkDelivered(ctx context.Context, messageID MessageID) (Message, error)
+	// MarkAcknowledged records that the recipient has acknowledged the message.
 	MarkAcknowledged(ctx context.Context, messageID MessageID) (Message, error)
 }
 
@@ -147,5 +151,7 @@ type MailboxLedger interface {
 // MessageRequestFinder resolves an idempotent mailbox write without scanning a
 // recipient queue. It is used to recover compound orchestration operations.
 type MessageRequestFinder interface {
+	// FindMessage resolves a team-scoped message idempotency key and reports whether it
+	// exists.
 	FindMessage(context.Context, TeamID, string) (Message, bool, error)
 }

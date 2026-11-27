@@ -253,10 +253,14 @@ func shapeCheck(v any, t reflect.Type) error {
 	return nil
 }
 
+// boundedText checks UTF-8 validity and byte length, and rejects whitespace-only values
+// when required.
 func boundedText(v string, n int, required bool) bool {
 	return utf8.ValidString(v) && len(v) <= n && (!required || strings.TrimSpace(v) != "")
 }
 
+// stringsValid checks that the list is bounded and each entry is valid, nonempty and
+// unique.
 func stringsValid(values []string, maxItems, maxBytes int) bool {
 	if len(values) > maxItems {
 		return false

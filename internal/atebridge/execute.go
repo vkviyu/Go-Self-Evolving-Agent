@@ -12,6 +12,8 @@ import (
 	"github.com/vkviyu/go-self-evolving-agent/internal/aterequest"
 )
 
+// execute sends a command to the bridge's operational space under the supplied operation
+// key.
 func (b *Bridge) execute(ctx context.Context, c *client.Client, key string, build func(*client.Client) (api.CommitRequest, error)) (api.CommitResult, error) {
 	return b.executeNative(ctx, c, b.OperationalSpace(), key, build)
 }

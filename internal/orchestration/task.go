@@ -96,6 +96,8 @@ type TaskRefinementRepository interface {
 	RefineTasks(context.Context, TaskRefinementSpec) (TaskRefinementResult, error)
 }
 
+// Validate checks the proposed task refinement before its child tasks and dependency edges
+// are recorded.
 func (spec TaskRefinementSpec) Validate() error {
 	if err := spec.TeamID.Validate(); err != nil {
 		return fmt.Errorf("refinement team: %w", err)
@@ -152,6 +154,7 @@ func (spec TaskRefinementSpec) Validate() error {
 	return nil
 }
 
+// Validate checks the task's identity, title and execution requirements before creation.
 func (spec TaskSpec) Validate() error {
 	if err := spec.TeamID.Validate(); err != nil {
 		return fmt.Errorf("task team: %w", err)
@@ -217,14 +220,26 @@ type TaskUpdate struct {
 }
 
 type TaskRepository interface {
+	// CreateTask records a task in its owning team and returns its initial snapshot.
 	CreateTask(context.Context, TaskSpec) (TaskSnapshot, error)
+	// GetTask loads the current persisted snapshot for a task ID.
 	GetTask(context.Context, TaskID) (TaskSnapshot, error)
+	// ListTasks returns task snapshots matching the query filters.
 	ListTasks(context.Context, TaskQuery) ([]TaskSnapshot, error)
+	// TransitionTask applies a permitted state change against the expected task version.
 	TransitionTask(context.Context, TaskTransition) (TaskSnapshot, error)
+	// ClaimTask assigns the task to an agent subject to the caller's expected task
+	// version.
 	ClaimTask(context.Context, TaskID, AgentID, uint64) (TaskSnapshot, error)
+	// ReleaseTask releases the agent's claim subject to the expected task version.
 	ReleaseTask(context.Context, TaskID, AgentID, uint64) (TaskSnapshot, error)
+	// AddDependency records that the first task depends on the second. The change
+	// event carries the actor and correlation ID.
 	AddDependency(context.Context, TaskID, TaskID, AgentID, string) error
+	// RemoveDependency removes the second task from the first task's prerequisites.
+	// The change event carries the actor and correlation ID.
 	RemoveDependency(context.Context, TaskID, TaskID, AgentID, string) error
+	// ListDependencies returns the IDs of the specified task's prerequisites.
 	ListDependencies(context.Context, TaskID) ([]TaskID, error)
 }
 

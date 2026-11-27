@@ -60,6 +60,8 @@ func newMarkdownStreamRenderer(writer io.Writer, color bool) *markdownStreamRend
 	return &markdownStreamRenderer{writer: writer, color: color}
 }
 
+// Write renders another untrusted text fragment, retaining parser state across split
+// fences and escape sequences.
 func (r *markdownStreamRenderer) Write(delta string) error {
 	delta = r.sanitizer.Filter(delta)
 	if delta == "" {
@@ -135,6 +137,7 @@ func potentialFencePrefix(value string) bool {
 	return trimmed[0] == '`' || trimmed[0] == '~'
 }
 
+// Finish flushes buffered text at the end of the Markdown stream.
 func (r *markdownStreamRenderer) Finish() error {
 	if !r.color {
 		return nil
@@ -302,6 +305,7 @@ func isFenceClosing(line string, marker byte, openingLength int) bool {
 	return length >= openingLength && strings.TrimSpace(line[length:]) == ""
 }
 
+// fenceLength counts the leading run of the specified Markdown fence character.
 func fenceLength(line string, marker byte) int {
 	length := 0
 	for length < len(line) && line[length] == marker {

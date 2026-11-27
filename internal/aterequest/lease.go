@@ -23,6 +23,8 @@ func DeferReconciliation(ctx context.Context) context.Context {
 	return context.WithValue(ctx, reconciliationDeferredKey{}, true)
 }
 
+// ReconciliationDeferred reports whether this context defers reconciliation of pending
+// commands.
 func ReconciliationDeferred(ctx context.Context) bool {
 	if ctx == nil {
 		return false

@@ -10,6 +10,7 @@ import (
 )
 
 type ArtifactWriter interface {
+	// Put stores artifact bytes and returns the reference used to retrieve them.
 	Put(context.Context, []byte) (string, error)
 }
 

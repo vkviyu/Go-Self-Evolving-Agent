@@ -38,7 +38,10 @@ type Request struct {
 
 // Runner executes a command inside a platform sandbox.
 type Runner interface {
+	// Run executes the request under the configured sandbox and streams stdout and stderr
+	// to their respective writers.
 	Run(context.Context, Request, io.Writer, io.Writer) error
+	// Name identifies the sandbox implementation used to run the request.
 	Name() string
 }
 
@@ -96,6 +99,8 @@ func NewWithMode(workspace string, mode Mode) (Runner, error) {
 	}
 }
 
+// canonicalDirectory resolves the workspace to an absolute physical directory for sandbox
+// configuration.
 func canonicalDirectory(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", errors.New("sandbox workspace is required")

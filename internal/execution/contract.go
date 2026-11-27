@@ -40,6 +40,7 @@ type Contract struct {
 	MaxCostMicros   int64              `json:"max_cost_micros,omitempty"`
 }
 
+// IsZero reports whether the contract omits all objectives, requirements and limits.
 func (contract Contract) IsZero() bool {
 	return strings.TrimSpace(contract.Objective) == "" &&
 		strings.TrimSpace(contract.Scope) == "" &&
@@ -54,6 +55,8 @@ func (contract Contract) IsZero() bool {
 		contract.MaxCostMicros == 0
 }
 
+// Validate checks the objective, criteria, verification policy, deadline and resource
+// limits of the contract.
 func (contract Contract) Validate() error {
 	if strings.TrimSpace(contract.Objective) == "" {
 		return errors.New("execution objective is required")

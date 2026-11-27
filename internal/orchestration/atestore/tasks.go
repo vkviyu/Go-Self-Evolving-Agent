@@ -13,6 +13,7 @@ import (
 var _ orchestration.TaskRepository = (*Store)(nil)
 var _ orchestration.TaskClaimReaper = (*Store)(nil)
 
+// CreateTask validates the spec and records the initial task and its creation event.
 func (store *Store) CreateTask(ctx context.Context, spec orchestration.TaskSpec) (orchestration.TaskSnapshot, error) {
 	if err := spec.Validate(); err != nil {
 		return orchestration.TaskSnapshot{}, err
@@ -85,6 +86,7 @@ func (store *Store) CreateTask(ctx context.Context, spec orchestration.TaskSpec)
 	return result, nil
 }
 
+// GetTask reads the persisted task snapshot by ID within an authority view.
 func (store *Store) GetTask(ctx context.Context, id orchestration.TaskID) (orchestration.TaskSnapshot, error) {
 	if err := id.Validate(); err != nil {
 		return orchestration.TaskSnapshot{}, err
@@ -101,6 +103,7 @@ func (store *Store) GetTask(ctx context.Context, id orchestration.TaskID) (orche
 	return result, nil
 }
 
+// ListTasks returns stored task snapshots matching the query.
 func (store *Store) ListTasks(ctx context.Context, query orchestration.TaskQuery) ([]orchestration.TaskSnapshot, error) {
 	if err := query.TeamID.Validate(); err != nil {
 		return nil, err
@@ -141,6 +144,8 @@ func (store *Store) ListTasks(ctx context.Context, query orchestration.TaskQuery
 	return result, nil
 }
 
+// TransitionTask checks the version and state change and commits the task snapshot with
+// its events.
 func (store *Store) TransitionTask(ctx context.Context, transition orchestration.TaskTransition) (orchestration.TaskSnapshot, error) {
 	if err := taskValidateTransition(transition); err != nil {
 		return orchestration.TaskSnapshot{}, err
@@ -311,10 +316,12 @@ func claimTaskTx(tx *ateauthority.Tx, taskID orchestration.TaskID, agentID orche
 	return transitionTaskTx(tx, orchestration.TaskTransition{TaskID: taskID, Expected: expected, Target: orchestration.TaskClaimed, AssigneeAgentID: agentID, ActorAgentID: agentID, Reason: "claimed by spawned Agent"}, now)
 }
 
+// ClaimTask checks the expected version and records the agent's claim on the task.
 func (store *Store) ClaimTask(ctx context.Context, id orchestration.TaskID, agent orchestration.AgentID, expected uint64) (orchestration.TaskSnapshot, error) {
 	return store.TransitionTask(ctx, orchestration.TaskTransition{TaskID: id, Expected: expected, Target: orchestration.TaskClaimed, AssigneeAgentID: agent, ActorAgentID: agent, Reason: "claimed"})
 }
 
+// ReleaseTask checks the assignee and version before releasing the task claim.
 func (store *Store) ReleaseTask(ctx context.Context, id orchestration.TaskID, agent orchestration.AgentID, expected uint64) (orchestration.TaskSnapshot, error) {
 	return store.TransitionTask(ctx, orchestration.TaskTransition{TaskID: id, Expected: expected, Target: orchestration.TaskReady, ActorAgentID: agent, Reason: "released"})
 }

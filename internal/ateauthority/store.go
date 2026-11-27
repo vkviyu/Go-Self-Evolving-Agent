@@ -208,6 +208,8 @@ func (s *Store) run(ctx context.Context, fn func(*Tx) error, writable bool) erro
 	})
 }
 
+// requestError translates native commit conflicts into authority errors while preserving
+// the request identity for reconciliation.
 func requestError(key api.RequestKey, store model.StoreID, result api.CommitResult, err error) error {
 	if errors.Is(err, aterequest.ErrRejected) && result.Code == api.CodeConflict {
 		switch result.Conflict {
@@ -288,6 +290,8 @@ func (s *Store) begin(ctx context.Context, c *client.Client, writable bool) (*Tx
 	return tx, nil
 }
 
+// close invalidates the transaction and gives the view-close request its own short
+// deadline.
 func (tx *Tx) close() error {
 	tx.active = false
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(tx.ctx), time.Second)
@@ -317,6 +321,8 @@ func (tx *Tx) request(options Options) (api.CommitRequest, error) {
 	return request, nil
 }
 
+// mapReadError makes a native resource-limit failure recognizable as ErrLimit while
+// preserving the remote error.
 func mapReadError(err error) error {
 	var remote *protocol.Error
 	if errors.As(err, &remote) && remote.Code == api.ErrorResourceLimit {

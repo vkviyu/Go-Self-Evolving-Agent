@@ -18,8 +18,12 @@ type AgentCompletion struct {
 // AgentCompletionRepository is an optional durable extension. Production
 // SQLite stores implement it; small in-memory runner adapters need not.
 type AgentCompletionRepository interface {
+	// PrepareAgentCompletion records the completion facts needed to finish delivery after
+	// an interruption.
 	PrepareAgentCompletion(context.Context, AgentCompletion) (AgentCompletion, error)
+	// PendingAgentCompletions returns unsettled completion records for the given team.
 	PendingAgentCompletions(context.Context, TeamID) ([]AgentCompletion, error)
+	// SettleAgentCompletion marks completion delivery for an agent and run as settled.
 	SettleAgentCompletion(context.Context, AgentID, RunID) error
 }
 

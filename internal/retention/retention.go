@@ -35,6 +35,7 @@ func (plan Plan) Digest() string {
 	return Digest(encoded)
 }
 
+// Digest returns the hexadecimal SHA-256 fingerprint of the supplied bytes.
 func Digest(value []byte) string {
 	sum := sha256.Sum256(value)
 	return hex.EncodeToString(sum[:])
