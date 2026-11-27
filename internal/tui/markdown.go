@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"strings"
 
+	"charm.land/glamour/v2"
+	glamouransi "charm.land/glamour/v2/ansi"
+	glamourstyles "charm.land/glamour/v2/styles"
 	"github.com/alecthomas/chroma/v2/quick"
-	"github.com/charmbracelet/glamour"
-	glamouransi "github.com/charmbracelet/glamour/ansi"
-	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"

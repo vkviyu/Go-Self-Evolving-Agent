@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
@@ -84,18 +84,6 @@ type backgroundTickMsg struct{}
 type backgroundPendingMsg struct {
 	count int
 	err   error
-}
-
-func runTurnCommand(
-	ctx context.Context,
-	lifetime context.Context,
-	conversation Conversation,
-	input string,
-	events chan<- tea.Msg,
-) tea.Cmd {
-	return runOperationCommand(ctx, func(ctx context.Context, sink agentruntime.EventSink) (agentruntime.Result, error) {
-		return conversation.RunTurn(ctx, input, sink)
-	}, events, lifetime)
 }
 
 func runOperationCommand(ctx context.Context, run func(context.Context, agentruntime.EventSink) (agentruntime.Result, error), events chan<- tea.Msg, lifetime context.Context) tea.Cmd {

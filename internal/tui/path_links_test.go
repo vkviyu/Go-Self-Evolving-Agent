@@ -43,6 +43,30 @@ func TestLinkFilePathsLeavesUnknownTokensUntouched(t *testing.T) {
 	}
 }
 
+func TestMarkdownLinkDestinationsAreSeparateFromTheirLabels(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.md"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const label = "read ./notes.md"
+	for _, tc := range []struct{ target, want string }{
+		{"https://example.org/notes.md", "https://example.org/notes.md"},
+		{"file:///outside-the-workspace/notes.md", ""},
+		{"custom:action", ""},
+	} {
+		for _, terminator := range []string{"\a", "\x1b\\"} {
+			md := "\x1b]8;id=1;" + tc.target + terminator + label + "\x1b]8;;" + terminator
+			want := label
+			if tc.want != "" {
+				want = ansi.SetHyperlink(tc.want) + label + ansi.ResetHyperlink()
+			}
+			if got := linkFilePaths(md, root); got != want {
+				t.Errorf("target %q: got %q, want %q", tc.target, got, want)
+			}
+		}
+	}
+}
+
 func TestRestoredMarkdownFileLinksStayOnTheirOwnRows(t *testing.T) {
 	workspace, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -80,11 +104,7 @@ func TestRestoredMarkdownFileLinksStayOnTheirOwnRows(t *testing.T) {
 				t.Fatalf("width %d: corrupt visible text %q: %q", width, unwanted, plain)
 			}
 		}
-		anchors := []string{"L310"}
-		if width == wide {
-			anchors = append(anchors, "L244", "L258")
-		}
-		for _, anchor := range anchors {
+		for _, anchor := range []string{"L244", "L258", "L310"} {
 			target := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), Fragment: anchor}).String()
 			if !strings.Contains(model.transcriptContent, target) {
 				t.Fatalf("width %d: missing target %s in %q", width, target, plain)
@@ -94,7 +114,7 @@ func TestRestoredMarkdownFileLinksStayOnTheirOwnRows(t *testing.T) {
 		// The viewport can start or end in the middle of the wrapped citation.
 		for row := range strings.Count(model.transcriptContent, "\n") + 1 {
 			model.viewport.SetYOffset(row)
-			assertFileLinksClosedOnEveryRow(t, model.View())
+			assertFileLinksClosedOnEveryRow(t, model.View().Content)
 		}
 	}
 }
@@ -126,7 +146,7 @@ func TestWrappedToolFileLinkRetainsCompleteTarget(t *testing.T) {
 	assertFileLinksClosedOnEveryRow(t, model.transcriptContent)
 	for row := range strings.Count(model.transcriptContent, "\n") + 1 {
 		model.viewport.SetYOffset(row)
-		assertFileLinksClosedOnEveryRow(t, model.View())
+		assertFileLinksClosedOnEveryRow(t, model.View().Content)
 	}
 }
 

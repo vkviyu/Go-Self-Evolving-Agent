@@ -11,8 +11,8 @@ import (
 	"text/tabwriter"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/vkviyu/go-self-evolving-agent/internal/app"
 	"github.com/vkviyu/go-self-evolving-agent/internal/config"
@@ -202,8 +202,9 @@ func pickChatSession(ctx context.Context, stdin io.Reader, stdout io.Writer, ses
 		picker.items = append(picker.items, resumeItem{item})
 	}
 	picker.refilter()
+	picker.filter.SetVirtualCursor(false)
 	picker.filter.Focus()
-	model, err := tea.NewProgram(picker, tea.WithContext(ctx), tea.WithInput(stdin), tea.WithOutput(stdout), tea.WithAltScreen()).Run()
+	model, err := tea.NewProgram(picker, tea.WithContext(ctx), tea.WithInput(stdin), tea.WithOutput(stdout)).Run()
 	if err != nil {
 		return sessionregistry.Session{}, err
 	}
@@ -221,9 +222,9 @@ func (picker *resumePicker) refilter() {
 	picker.cursor = 0
 }
 
-func (picker resumePicker) Init() tea.Cmd { return textinput.Blink }
+func (picker resumePicker) Init() tea.Cmd { return nil }
 
-func (picker resumePicker) View() string {
+func (picker resumePicker) View() tea.View {
 	var view strings.Builder
 	fmt.Fprintln(&view, "Resume a previous session")
 	fmt.Fprintln(&view, picker.filter.View())
@@ -242,27 +243,33 @@ func (picker resumePicker) View() string {
 		fmt.Fprintln(&view, "No matching sessions")
 	}
 	fmt.Fprint(&view, "↑/↓ select · Enter resume · Esc close")
-	return view.String()
+	frame := tea.NewView(view.String())
+	frame.AltScreen = true
+	if cursor := picker.filter.Cursor(); cursor != nil {
+		cursor.Y++ // The search field follows the title.
+		frame.Cursor = cursor
+	}
+	return frame
 }
 
 func (picker resumePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		picker.width, picker.height = message.Width, message.Height
-		picker.filter.Width = max(1, message.Width-3)
-	case tea.KeyMsg:
-		switch message.Type {
-		case tea.KeyEsc, tea.KeyCtrlC:
+		picker.filter.SetWidth(max(1, message.Width-3))
+	case tea.KeyPressMsg:
+		switch message.Keystroke() {
+		case "esc", "ctrl+c":
 			return picker, tea.Quit
-		case tea.KeyEnter:
+		case "enter":
 			if len(picker.matches) > 0 {
 				picker.selected = picker.items[picker.matches[picker.cursor]].Session
 				return picker, tea.Quit
 			}
-		case tea.KeyUp:
+		case "up":
 			picker.cursor = max(0, picker.cursor-1)
 			return picker, nil
-		case tea.KeyDown:
+		case "down":
 			picker.cursor = min(picker.cursor+1, max(0, len(picker.matches)-1))
 			return picker, nil
 		}

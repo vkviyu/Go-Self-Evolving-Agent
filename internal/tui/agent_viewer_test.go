@@ -130,7 +130,7 @@ func TestAgentViewerReturnsToRootForApproval(t *testing.T) {
 	if model.openAgentTranscript(child) != nil || model.viewer != nil || model.approvalPending == nil {
 		t.Fatal("switching the transcript hid a pending approval")
 	}
-	if plain := ansi.Strip(model.View()); !strings.Contains(plain, "workspace_write") || !strings.Contains(plain, "approval required") {
+	if plain := ansi.Strip(model.View().Content); !strings.Contains(plain, "workspace_write") || !strings.Contains(plain, "approval required") {
 		t.Fatalf("pending approval is not visible: %q", plain)
 	}
 }

@@ -16,7 +16,7 @@ func TestMarkdownReadingLayout(t *testing.T) {
 	text := prose + code + strings.Repeat("超宽段落", 50)
 	check := func() {
 		t.Helper()
-		rows := strings.Split(model.View(), "\n")
+		rows := strings.Split(model.View().Content, "\n")
 		start := -1
 		for i, row := range rows {
 			if strings.Contains(ansi.Strip(row), "2. Recorder 如何进入 Context") {

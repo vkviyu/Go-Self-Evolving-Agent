@@ -7,8 +7,8 @@ import (
 	"testing"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
@@ -55,19 +55,19 @@ func TestSessionInfoMouseAndKeyboardPreserveDraftAndFrame(t *testing.T) {
 	model.modelName = "model-detail"
 	model.input.SetValue("unfinished draft 你好")
 	model.resizeInput()
-	collapsedHeight := model.viewport.Height
+	collapsedHeight := model.viewport.Height()
 	if header := ansi.Strip(model.renderHeader(98)); strings.Contains(header, "private-workspace") || strings.Contains(header, "session-detail") || !strings.Contains(header, "Alt+I") {
 		t.Fatalf("unexpected compact header: %q", header)
 	}
-	model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: 0, X: 2})
-	if !model.showSessionInfo || model.viewport.Height != collapsedHeight-3 {
-		t.Fatalf("info did not expand: height=%d", model.viewport.Height)
+	model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: 0, X: 2})
+	if !model.showSessionInfo || model.viewport.Height() != collapsedHeight-3 {
+		t.Fatalf("info did not expand: height=%d", model.viewport.Height())
 	}
 	if header := ansi.Strip(model.renderHeader(98)); !strings.Contains(header, "private-workspace") || !strings.Contains(header, "session-detail") || !strings.Contains(header, "model-detail") {
 		t.Fatalf("expanded info missing metadata: %q", header)
 	}
-	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}, Alt: true})
-	if model.showSessionInfo || model.viewport.Height != collapsedHeight {
+	model.handleKey(tea.KeyPressMsg{Code: 'i', Mod: tea.ModAlt})
+	if model.showSessionInfo || model.viewport.Height() != collapsedHeight {
 		t.Fatal("Alt+I did not restore compact header")
 	}
 	if model.input.Value() != "unfinished draft 你好" || model.busy {
@@ -80,7 +80,7 @@ func TestSessionInfoMouseAndKeyboardPreserveDraftAndFrame(t *testing.T) {
 			model.activity.Agents = []orchestration.AgentSnapshot{{ID: "agent-child", State: orchestration.AgentRunning}}
 			model.input.SetValue(strings.Repeat("draft ", 20))
 			model.resize(dimensions[0], dimensions[1])
-			if got := lipgloss.Height(model.View()); got != dimensions[1] {
+			if got := lipgloss.Height(model.View().Content); got != dimensions[1] {
 				t.Fatalf("%v expanded=%v: frame height=%d", dimensions, expanded, got)
 			}
 			if model.inputTopRow()+model.input.Height() != dimensions[1] {
@@ -95,23 +95,23 @@ func TestQuestionNavigationTracksReadingAndJumpsWithoutSubmitting(t *testing.T) 
 	first, second := model.queryAnchors[0], model.queryAnchors[1]
 	model.autoScroll = false
 	model.viewport.SetYOffset(first.end + 2)
-	if nav := ansi.Strip(model.renderQuestionNavigation(model.viewport.Width)); !strings.Contains(nav, "第一个问题") || !strings.Contains(nav, "Alt+P") {
+	if nav := ansi.Strip(model.renderQuestionNavigation(model.viewport.Width())); !strings.Contains(nav, "第一个问题") || !strings.Contains(nav, "Alt+P") {
 		t.Fatalf("first answer has wrong query navigation: %q", nav)
 	}
 	model.input.SetValue("keep this draft")
-	model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 3, Y: model.headerHeight()})
-	if model.viewport.YOffset != first.start {
+	model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3, Y: model.headerHeight()})
+	if model.viewport.YOffset() != first.start {
 		t.Fatal("query navigation click did not jump to first question")
 	}
-	if nav := model.renderQuestionNavigation(model.viewport.Width); strings.Contains(ansi.Strip(nav), "Alt+P") {
+	if nav := model.renderQuestionNavigation(model.viewport.Width()); strings.Contains(ansi.Strip(nav), "Alt+P") {
 		t.Fatal("already visible question was repeated in navigation")
 	}
 	model.viewport.SetYOffset(second.end + 2)
-	if nav := ansi.Strip(model.renderQuestionNavigation(model.viewport.Width)); !strings.Contains(nav, "第二个问题") {
+	if nav := ansi.Strip(model.renderQuestionNavigation(model.viewport.Width())); !strings.Contains(nav, "第二个问题") {
 		t.Fatalf("second answer has wrong query navigation: %q", nav)
 	}
-	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}, Alt: true})
-	if model.viewport.YOffset != second.start || model.autoScroll {
+	model.handleKey(tea.KeyPressMsg{Code: 'p', Mod: tea.ModAlt})
+	if model.viewport.YOffset() != second.start || model.autoScroll {
 		t.Fatal("Alt+P did not jump to second question with manual scroll")
 	}
 	if model.input.Value() != "keep this draft" || model.busy {
@@ -119,7 +119,7 @@ func TestQuestionNavigationTracksReadingAndJumpsWithoutSubmitting(t *testing.T) 
 	}
 	model.viewport.SetYOffset(second.end + 2)
 	model.handleCommand("/question")
-	if model.viewport.YOffset != second.start {
+	if model.viewport.YOffset() != second.start {
 		t.Fatal("/question did not jump to the visible answer's question")
 	}
 }
@@ -145,7 +145,7 @@ func TestReadingQuestionSurvivesResizeAndToolDisclosure(t *testing.T) {
 	model.activity.Agents = []orchestration.AgentSnapshot{{ID: "agent-child", State: orchestration.AgentRunning}}
 	model.resizeInput()
 	line, inside := model.transcriptLine(model.transcriptTopRow())
-	if !inside || line != model.viewport.YOffset {
+	if !inside || line != model.viewport.YOffset() {
 		t.Fatalf("activity panel offset broke transcript selection: line=%d inside=%v", line, inside)
 	}
 	if _, inside := model.transcriptLine(model.transcriptTopRow() - 1); inside {
@@ -191,7 +191,7 @@ func TestAssistantTerminalMessagesReconcileStreamedPreview(t *testing.T) {
 	if len(assistants) != 2 || assistants[0] != "tool prelude complete" || assistants[1] != "越强的技术门槛，或者越不可持续的代币补贴。以上是一般性科普。" {
 		t.Fatalf("canonical messages were lost, duplicated or mixed across tools: %+v", assistants)
 	}
-	if plain := compactDisplay(model.View()); !strings.Contains(plain, "或者越不可持续的代币补贴。以上是一般性科普。") {
+	if plain := compactDisplay(model.View().Content); !strings.Contains(plain, "或者越不可持续的代币补贴。以上是一般性科普。") {
 		t.Fatalf("canonical suffix missing from visible final frame: %s", plain)
 	}
 }
@@ -201,11 +201,11 @@ func TestTurnCompletionPreservesHistoricalReadingPosition(t *testing.T) {
 	model.busy = true
 	model.autoScroll = false
 	model.viewport.SetYOffset(model.queryAnchors[0].end + 3)
-	before := model.viewport.YOffset
+	before := model.viewport.YOffset()
 	model.applyRuntimeEvent(agentruntime.Event{Type: agentruntime.EventAssistantTextDelta, Delta: "new streamed answer"})
 	model.refreshTranscript(false)
 	model.finishTurn(turnDoneMsg{result: agentruntime.Result{Final: schema.AssistantMessage("new streamed answer complete", nil)}})
-	if model.viewport.YOffset != before || model.autoScroll {
+	if model.viewport.YOffset() != before || model.autoScroll {
 		t.Fatal("completion pulled the reader away from history")
 	}
 	if query, ok := model.currentQuestion(); !ok || !strings.Contains(query.preview, "第一个问题") {
@@ -224,15 +224,15 @@ func TestUnspacedCJKAndUnicodeTailRemainsVisible(t *testing.T) {
 					t.Fatal(err)
 				}
 				model.resize(width, height)
-				if !strings.Contains(compactDisplay(model.View()), tail) {
+				if !strings.Contains(compactDisplay(model.View().Content), tail) {
 					t.Fatalf("visible tail was clipped at %d columns", width)
 				}
 				for line := range strings.SplitSeq(model.transcriptContent, "\n") {
-					if got := ansi.StringWidth(line); got > model.viewport.Width {
-						t.Fatalf("rendered line width=%d exceeds viewport %d", got, model.viewport.Width)
+					if got := ansi.StringWidth(line); got > model.viewport.Width() {
+						t.Fatalf("rendered line width=%d exceeds viewport %d", got, model.viewport.Width())
 					}
 				}
-				if got := lipgloss.Height(model.View()); got != height {
+				if got := lipgloss.Height(model.View().Content); got != height {
 					t.Fatalf("frame height=%d, want %d", got, height)
 				}
 			})

@@ -45,8 +45,8 @@ func TestActivityPanelLoadsAndRendersControlPlaneSnapshot(t *testing.T) {
 			t.Fatalf("activity panel missing %q: %q", expected, panel)
 		}
 	}
-	if model.viewport.Height >= 24-1-model.input.Height() {
-		t.Fatalf("activity panel did not reserve viewport height: %d", model.viewport.Height)
+	if model.viewport.Height() >= 24-1-model.input.Height() {
+		t.Fatalf("activity panel did not reserve viewport height: %d", model.viewport.Height())
 	}
 	if command := model.toggleActivity(); command != nil {
 		t.Fatal("hiding activity unexpectedly started refresh")

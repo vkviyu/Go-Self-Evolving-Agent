@@ -3,7 +3,7 @@ package tui
 import (
 	"errors"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/ateprocess"
@@ -74,7 +74,7 @@ func (model *Model) applyStartup(message StartupMsg) tea.Cmd {
 				waitForTurnEvent(model.ctx, model.turnEvents),
 			)
 		}
-		return tea.Batch(operation, model.windowTitleCommand(),
+		return tea.Batch(operation,
 			model.startActivityRefresh(), model.scheduleBackgroundCheck())
 	}
 	if state.Phase != 0 && state.Phase != model.startupPhase {

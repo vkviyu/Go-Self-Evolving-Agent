@@ -35,31 +35,6 @@ type Tool struct {
 
 var _ einotool.InvokableTool = (*Tool)(nil)
 
-// NewTools adapts every tool in snapshot to Eino using stable, name-sorted
-// descriptors. The returned tools must not be reused for a different turn.
-func NewTools(
-	pipeline *appTool.Pipeline,
-	registry *appTool.Snapshot,
-	sessionID session.ID,
-	runtimeSnapshotID string,
-	turnID string,
-) ([]einotool.BaseTool, error) {
-	return NewToolsWithExecution(pipeline, registry, sessionID, runtimeSnapshotID, turnID, orchestration.ActorScope{}, orchestration.ExecutionBinding{})
-}
-
-// NewToolsWithActor adapts a registry snapshot and attaches the durable actor
-// identity to every invocation routed through the pipeline.
-func NewToolsWithActor(
-	pipeline *appTool.Pipeline,
-	registry *appTool.Snapshot,
-	sessionID session.ID,
-	runtimeSnapshotID string,
-	turnID string,
-	actor orchestration.ActorScope,
-) ([]einotool.BaseTool, error) {
-	return NewToolsWithExecution(pipeline, registry, sessionID, runtimeSnapshotID, turnID, actor, orchestration.ExecutionBinding{})
-}
-
 // NewToolsWithExecution attaches both actor identity and the immutable
 // execution scope to every Eino tool invocation.
 func NewToolsWithExecution(

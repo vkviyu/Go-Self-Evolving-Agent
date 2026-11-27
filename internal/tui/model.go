@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
@@ -119,13 +119,8 @@ type Model struct {
 	transcriptLayout      []transcriptSpan
 	queryAnchors          []queryAnchor
 	selection             transcriptSelection
-	inputSelection        inputTextSelection
+	draggingInput         bool
 	clipboardNotice       string
-	inputScrollOffset     int
-	inputLayoutValue      string
-	inputLayoutWidth      int
-	inputLayout           []inputDisplayLine
-	inputLayoutReady      bool
 	inputHistory          []string
 	historyIndex          int
 	historyDraft          string
@@ -151,16 +146,21 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 	input.ShowLineNumbers = false
 	input.CharLimit = 1 << 20
 	input.MaxHeight = maximumInputHeight
+	input.DynamicHeight = true
+	input.SetVirtualCursor(false)
 	input.SetHeight(1)
 	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("ctrl+j"))
 	input.KeyMap.Paste = key.NewBinding(key.WithKeys("ctrl+v", "alt+v"))
 
 	styles := defaultStyles()
-	input.FocusedStyle.Prompt = styles.input
-	input.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	input.FocusedStyle.Text = lipgloss.NewStyle()
-	input.FocusedStyle.Placeholder = styles.metadata
-	input.BlurredStyle = input.FocusedStyle
+	inputStyles := input.Styles()
+	inputStyles.Focused.Prompt = styles.input
+	inputStyles.Focused.CursorLine = lipgloss.NewStyle()
+	inputStyles.Focused.Text = lipgloss.NewStyle()
+	inputStyles.Focused.Placeholder = styles.metadata
+	inputStyles.Focused.Selection = styles.selection
+	inputStyles.Blurred = inputStyles.Focused
+	input.SetStyles(inputStyles)
 
 	spinnerModel := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(styles.status))
 	var history []*schema.Message
@@ -195,7 +195,7 @@ func NewModel(ctx context.Context, config Config) (*Model, error) {
 		initialResumeTurn:    config.ResumeTurnID,
 		startup:              config.Startup,
 		startupTitleExplicit: strings.TrimSpace(config.SessionTitle) != "",
-		viewport:             viewport.New(0, 0),
+		viewport:             viewport.New(),
 		input:                input,
 		spinner:              spinnerModel,
 		styles:               styles,
@@ -244,13 +244,13 @@ func (model *Model) Init() tea.Cmd {
 	}
 	if model.startup != nil {
 		return tea.Batch(
-			model.input.Focus(), model.windowTitleCommand(), resume,
+			model.input.Focus(), resume,
 			waitForApproval(model.ctx, model.approvalBroker),
 			waitForStartup(model.ctx, model.startup), model.spinner.Tick,
 		)
 	}
 	return tea.Batch(
-		model.input.Focus(), model.windowTitleCommand(), resume,
+		model.input.Focus(), resume,
 		waitForApproval(model.ctx, model.approvalBroker),
 		model.startActivityRefresh(), model.scheduleBackgroundCheck(),
 	)
@@ -286,7 +286,7 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		model.resize(message.Width, message.Height)
 		return model, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if command, handled := model.handleKey(message); handled {
 			return model, command
 		}
@@ -307,16 +307,16 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			var command tea.Cmd
 			model.viewport, command = model.viewport.Update(message)
 			if view := model.toolInspector; view != nil {
-				if !view.detail && tea.MouseEvent(message).IsWheel() {
-					top := model.viewport.YOffset
-					view.selected = min(max(top, view.selected), min(len(view.indices)-1, top+model.viewport.Height-1))
+				if _, wheel := message.(tea.MouseWheelMsg); !view.detail && wheel {
+					top := model.viewport.YOffset()
+					view.selected = min(max(top, view.selected), min(len(view.indices)-1, top+model.viewport.Height()-1))
 					model.refreshTranscript(false)
 				}
 				return model, command
 			}
-			if message.Button == tea.MouseButtonWheelUp {
+			if message.Mouse().Button == tea.MouseWheelUp {
 				model.autoScroll = false
-			} else if message.Button == tea.MouseButtonWheelDown && model.viewport.AtBottom() {
+			} else if message.Mouse().Button == tea.MouseWheelDown && model.viewport.AtBottom() {
 				model.autoScroll = true
 			}
 			return model, command
@@ -366,21 +366,22 @@ func (model *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	previous := model.input.Value()
+	previousHeight := model.input.Height()
 	var inputCommand tea.Cmd
 	model.input, inputCommand = model.input.Update(message)
 	if inputCommand != nil {
 		commands = append(commands, inputCommand)
 	}
 	if model.input.Value() != previous {
-		model.clearInputSelection()
+		model.input.ClearSelection()
 		model.historyIndex = len(model.inputHistory)
 		model.updateCommandSuggestions()
 		if command := model.refreshMemorySuggestions(); command != nil {
 			commands = append(commands, command)
 		}
 		model.resizeInput()
-	} else {
-		model.updateInputScroll()
+	} else if model.input.Height() != previousHeight {
+		model.resizeInput()
 	}
 	return model, tea.Batch(commands...)
 }

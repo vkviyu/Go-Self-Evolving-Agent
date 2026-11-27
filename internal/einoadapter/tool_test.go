@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/approval"
+	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
 	appTool "github.com/vkviyu/go-self-evolving-agent/internal/tool"
@@ -42,7 +43,7 @@ func TestToolUsesTurnScopedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tools, err := NewTools(pipeline, turnSnapshot, "session-1", "runtime-1", "turn-1")
+	tools, err := NewToolsWithExecution(pipeline, turnSnapshot, "session-1", "runtime-1", "turn-1", orchestration.ActorScope{}, orchestration.ExecutionBinding{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestToolReturnsRecordedExecutionFailureToModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools, err := NewTools(pipeline, registry.Snapshot(), "session-1", "runtime-1", "turn-1")
+	tools, err := NewToolsWithExecution(pipeline, registry.Snapshot(), "session-1", "runtime-1", "turn-1", orchestration.ActorScope{}, orchestration.ExecutionBinding{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestToolReturnsResultWhenApprovalIsDenied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools, err := NewTools(pipeline, registry.Snapshot(), "session-1", "runtime-1", "turn-1")
+	tools, err := NewToolsWithExecution(pipeline, registry.Snapshot(), "session-1", "runtime-1", "turn-1", orchestration.ActorScope{}, orchestration.ExecutionBinding{})
 	if err != nil {
 		t.Fatal(err)
 	}

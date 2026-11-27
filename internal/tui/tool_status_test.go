@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
@@ -130,27 +130,27 @@ func TestToolInspectionKeepsLongResultsOutOfChatAndRestoresReading(t *testing.T)
 	groupLine := model.transcriptLayout[1].start
 	model.viewport.SetYOffset(groupLine)
 	click := func(row int) {
-		model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 3, Y: row})
+		model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3, Y: row})
 	}
 	click(model.transcriptTopRow())
 	if got := ansi.Strip(model.transcriptContent); !strings.Contains(got, "*.go") || strings.Contains(got, "long result row") || strings.Contains(got, "answer") {
 		t.Fatalf("unexpected tool list: %q", got)
 	}
 	click(model.transcriptTopRow() + 1)
-	model.Update(tea.KeyMsg{Type: tea.KeyPgDown})
-	if model.viewport.YOffset == 0 || !strings.Contains(model.transcriptContent, "result tail") {
+	model.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if model.viewport.YOffset() == 0 || !strings.Contains(model.transcriptContent, "result tail") {
 		t.Fatal("long result did not open in its own scrollable view")
 	}
-	offset := model.viewport.YOffset
+	offset := model.viewport.YOffset()
 	model.blocks = append(model.blocks, transcriptBlock{kind: blockSystem, content: "later progress"})
 	model.refreshRootTranscript(true)
-	if model.viewport.YOffset != offset || strings.Contains(model.transcriptContent, "later progress") {
+	if model.viewport.YOffset() != offset || strings.Contains(model.transcriptContent, "later progress") {
 		t.Fatal("live activity displaced tool inspection")
 	}
 	click(model.headerHeight()) // The return control stays visible even deep inside a result.
-	model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	got := ansi.Strip(model.transcriptContent)
-	if model.toolInspector != nil || model.viewport.YOffset != groupLine || model.input.Value() != "unfinished draft" ||
+	if model.toolInspector != nil || model.viewport.YOffset() != groupLine || model.input.Value() != "unfinished draft" ||
 		!strings.Contains(got, "workspace_glob ×2") || !strings.Contains(got, "later progress") || strings.Contains(got, "result tail") {
 		t.Fatal("chat, reading position, or draft was lost when closing details")
 	}
@@ -162,7 +162,7 @@ func TestPendingApprovalTakesPrecedenceOverToolInspection(t *testing.T) {
 	model.refreshTranscript(true)
 	model.toggleToolDetails()
 	model.Update(approvalRequestMsg{request: approval.Request{ID: "approve", Policy: policy.Request{ToolName: "write"}}})
-	if model.toolInspector != nil || model.approvalPending == nil || !strings.Contains(model.View(), "Allow") {
+	if model.toolInspector != nil || model.approvalPending == nil || !strings.Contains(model.View().Content, "Allow") {
 		t.Fatal("a live approval was hidden by tool inspection")
 	}
 }

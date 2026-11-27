@@ -5,13 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 )
 
@@ -58,7 +57,7 @@ func TestFileLinksDoNotResolveOutsideWorkspace(t *testing.T) {
 
 func TestTranscriptStripsUntrustedTerminalCommands(t *testing.T) {
 	model := &Model{styles: defaultStyles()}
-	model.viewport.Width = 80
+	model.viewport.SetWidth(80)
 	for _, block := range []transcriptBlock{
 		{kind: blockReasoning, content: "visible\x1b]52;c;secret\x07"},
 		{kind: blockFailure, content: "visible\x1b[2J\x08"},
@@ -71,44 +70,31 @@ func TestTranscriptStripsUntrustedTerminalCommands(t *testing.T) {
 	}
 }
 
-func TestInputSpanLayoutMatchesTextareaUnicodeAndWrapping(t *testing.T) {
-	for _, width := range []int{8, 20, 40} {
-		for _, source := range []string{"", "hello world", "one  two    three ", strings.Repeat("z", 101), "你好 世界 你好世界 再见", "🙂👩‍💻 emoji e\u0301e\u0301 test", "abc 末尾 ", strings.Repeat(" ", 27)} {
-			probe := textarea.New()
-			probe.Prompt = ""
-			probe.ShowLineNumbers = false
-			probe.SetWidth(width)
-			probe.SetValue(source)
-			count := len([]rune(probe.Value()))
-			height := probe.LineInfo().Height
-			expected := make([]inputDisplayLine, height)
-			seen := make([]bool, height)
-			for column := 0; column <= count; column++ {
-				probe.SetCursor(column)
-				info := probe.LineInfo()
-				if !seen[info.RowOffset] {
-					start := min(info.StartColumn, count)
-					expected[info.RowOffset] = inputDisplayLine{start: start, end: min(count, start+info.Width)}
-					seen[info.RowOffset] = true
-				}
-			}
-			lastEnd := 0
-			for index := range expected {
-				if !seen[index] {
-					expected[index] = inputDisplayLine{start: lastEnd, end: lastEnd}
-				}
-				lastEnd = expected[index].end
-			}
-			if actual := wrapInputSpans(probe.Value(), probe.Width()); !reflect.DeepEqual(actual, expected) {
-				t.Fatalf("width=%d source=%q\nactual=%+v\nexpected=%+v", width, source, actual, expected)
-			}
-		}
+func TestInputDragUsesGraphemeColumnsAfterWrapping(t *testing.T) {
+	model := newTestModel(t)
+	model.resize(28, 18)
+	model.input.Focus()
+	prefix := strings.Repeat("z", model.input.Width())
+	const cluster = "👩‍💻"
+	model.input.SetValue(prefix + cluster + "e\u0301")
+	model.resizeInput()
+	y := model.inputTopRow() + 1
+	x := 1 + ansi.StringWidth(model.input.Prompt)
+	model.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	model.Update(tea.MouseReleaseMsg{X: x + 2, Y: y, Button: tea.MouseLeft})
+	if got := model.input.SelectedText(); got != cluster {
+		t.Fatalf("selected %q, want intact grapheme %q", got, cluster)
 	}
 }
 
 func BenchmarkLongInputLayout(b *testing.B) {
-	value := strings.Repeat("word ", 20_000)
+	model, err := NewModel(context.Background(), Config{Conversation: &fakeConversation{}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	model.resize(80, 24)
+	model.input.SetValue(strings.Repeat("word ", 20_000))
 	for b.Loop() {
-		wrapInputSpans(value, 80)
+		model.resizeInput()
 	}
 }

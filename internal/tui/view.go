@@ -7,22 +7,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"
 )
 
 // View renders the visible terminal frame at the current dimensions, including transcript,
 // status and input.
-func (model *Model) View() string {
+func (model *Model) View() tea.View {
+	view := tea.View{AltScreen: true, MouseMode: tea.MouseModeCellMotion, WindowTitle: "GSEA · " + model.displaySessionTitle()}
 	if !model.ready {
-		return model.styles.metadata.Render("Starting GSEA...")
+		view.SetContent(model.styles.metadata.Render("Starting GSEA..."))
+		return view
 	}
 	if model.width < minimumWidth || model.height < minimumHeight {
-		return model.styles.failure.Render("Terminal is too small")
+		view.SetContent(model.styles.failure.Render("Terminal is too small"))
+		return view
 	}
 	innerWidth := max(1, model.width-2)
-	inputView := model.renderInput()
+	inputView := model.input.View()
 	parts := []string{
 		model.renderHeader(innerWidth),
 		model.renderQuestionNavigation(innerWidth),
@@ -32,19 +36,20 @@ func (model *Model) View() string {
 	}
 	parts = append(parts, model.renderViewport(), model.renderStatus(innerWidth), model.renderCommandSuggestions(innerWidth), inputView)
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	frame := lipgloss.NewStyle().Width(model.width).Padding(0, 1).Render(content)
-	if model.inputSelection.active {
-		return frame
+	view.SetContent(lipgloss.NewStyle().Width(model.width).Padding(0, 1).Render(content))
+	if cursor := model.input.Cursor(); cursor != nil && !model.input.HasSelection() {
+		cursor.X++ // The frame has one column of outer padding.
+		cursor.Y += model.inputTopRow()
+		view.Cursor = cursor
 	}
-	return frame + model.cursorMarker()
+	return view
 }
 
 func (model *Model) resize(width, height int) {
 	model.width = width
 	model.height = height
 	innerWidth := max(1, width-2)
-	model.input.SetWidth(innerWidth)
-	model.viewport.Width = innerWidth
+	model.viewport.SetWidth(innerWidth)
 	model.ready = true
 	model.resizeInput()
 }
@@ -52,83 +57,27 @@ func (model *Model) resize(width, height int) {
 // resizeInput fits the editor to its wrapped lines and recomputes the viewport height from
 // the remaining terminal rows.
 func (model *Model) resizeInput() {
-	inputHeight := min(max(1, model.inputDisplayHeight()), maximumInputHeight)
-	if model.ready {
-		// Keep one header, navigation, transcript, status and suggestions row.
-		reserved := 5 + max(0, model.suggestionHeight()-1)
-		if model.hasActivityOverview() {
-			reserved++
-		}
-		inputHeight = min(inputHeight, max(1, model.height-reserved))
-	}
-	model.input.SetHeight(inputHeight)
-	model.updateInputScroll()
 	if !model.ready {
 		return
 	}
+	// Reflow at the available width before applying the screen height limit.
+	model.input.SetWidth(max(1, model.width-2))
+
+	// Keep one header, navigation, transcript, status and suggestions row.
+	reserved := 5 + max(0, model.suggestionHeight()-1)
+	if model.hasActivityOverview() {
+		reserved++
+	}
+	if available := max(1, model.height-reserved); model.input.Height() > available {
+		model.input.SetHeight(available)
+	}
 	// Navigation, status and command suggestions each occupy one row.
-	model.viewport.Height = max(1, model.height-model.headerHeight()-3-inputHeight-model.activityHeight()-max(0, model.suggestionHeight()-1))
+	model.viewport.SetHeight(max(1, model.height-model.headerHeight()-3-model.input.Height()-model.activityHeight()-max(0, model.suggestionHeight()-1)))
 	model.refreshTranscript(false)
 }
 
-func (model *Model) inputDisplayHeight() int {
-	lines := model.inputDisplayLines()
-	return max(1, len(lines))
-}
-
-func (model *Model) updateInputScroll() {
-	lineCount := len(model.inputDisplayLines())
-	height := max(1, model.input.Height())
-	if lineCount <= height {
-		model.inputScrollOffset = 0
-		return
-	}
-
-	cursorLine := model.inputCursorDisplayLine()
-	maximum := max(0, lineCount-height)
-	offset := max(0, min(model.inputScrollOffset, maximum))
-	if cursorLine < offset {
-		offset = cursorLine
-	} else if cursorLine >= offset+height {
-		offset = cursorLine - height + 1
-	}
-	model.inputScrollOffset = max(0, min(offset, maximum))
-}
-
-func (model *Model) inputCursorDisplayLine() int {
-	displayLines := model.inputDisplayLines()
-	if len(displayLines) == 0 {
-		return 0
-	}
-	cursorOffset := model.inputCursorOffset()
-	for index, line := range displayLines {
-		if cursorOffset < line.end {
-			return index
-		}
-		if cursorOffset == line.end {
-			if index+1 < len(displayLines) && displayLines[index+1].start == cursorOffset {
-				return index + 1
-			}
-			return index
-		}
-	}
-	return len(displayLines) - 1
-}
-
-func (model *Model) inputCursorOffset() int {
-	value := model.input.Value()
-	parts := strings.Split(value, "\n")
-	logicalLine := max(0, min(model.input.Line(), len(parts)-1))
-	base := 0
-	for index := range logicalLine {
-		base += len([]rune(parts[index])) + 1
-	}
-	info := model.input.LineInfo()
-	return base + info.StartColumn + info.ColumnOffset
-}
-
 func (model *Model) inputTopRow() int {
-	return model.transcriptTopRow() + model.viewport.Height + 2
+	return model.transcriptTopRow() + model.viewport.Height() + 2
 }
 
 func compactPath(path string) string {

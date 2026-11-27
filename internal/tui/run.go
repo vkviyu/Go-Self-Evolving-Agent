@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
@@ -158,9 +158,7 @@ func Run(ctx context.Context, input io.Reader, output io.Writer, config Config) 
 		model,
 		tea.WithContext(ctx),
 		tea.WithInput(input),
-		tea.WithOutput(wrapCursorWriter(output)),
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		tea.WithOutput(output),
 		tea.WithoutSignalHandler(),
 	)
 	if _, err := program.Run(); err != nil {

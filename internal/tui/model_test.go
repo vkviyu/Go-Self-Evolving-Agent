@@ -1,13 +1,12 @@
 package tui
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
@@ -63,7 +62,7 @@ func TestModelRendersStableTerminalLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.resize(80, 24)
-	view := model.View()
+	view := model.View().Content
 	plain := ansi.Strip(view)
 	for _, expected := range []string{"GSEA", "previous question", "previous answer", "Ask GSEA", "Alt+I"} {
 		if !strings.Contains(plain, expected) {
@@ -71,7 +70,7 @@ func TestModelRendersStableTerminalLayout(t *testing.T) {
 		}
 	}
 	model.toggleSessionInfo()
-	expanded := ansi.Strip(model.View())
+	expanded := ansi.Strip(model.View().Content)
 	for _, expected := range []string{"openai/gpt-test", "workspace  /tmp/project", "session    session-1"} {
 		if !strings.Contains(expanded, expected) {
 			t.Fatalf("expanded info missing %q:\n%s", expected, expanded)
@@ -117,7 +116,7 @@ func TestModelRestoresLastUsageFromHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.resize(100, 24)
-	plain := ansi.Strip(model.View())
+	plain := ansi.Strip(model.View().Content)
 	for _, expected := range []string{"in 10", "out 4", "reasoning 2", "total 14", "cache 8 80.0%"} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("resumed view does not contain %q:\n%s", expected, plain)
@@ -134,10 +133,10 @@ func TestInputHeightAccountsForSoftWrappedText(t *testing.T) {
 	if model.input.Height() < 3 {
 		t.Fatalf("input height = %d, want at least 3 for soft-wrapped text", model.input.Height())
 	}
-	if model.viewport.Height != 24-model.headerHeight()-3-model.input.Height() {
-		t.Fatalf("viewport height = %d, expected it to shrink for multi-line input", model.viewport.Height)
+	if model.viewport.Height() != 24-model.headerHeight()-3-model.input.Height() {
+		t.Fatalf("viewport height = %d, expected it to shrink for multi-line input", model.viewport.Height())
 	}
-	if got := lipgloss.Height(model.renderInput()); got != model.input.Height() {
+	if got := lipgloss.Height(model.input.View()); got != model.input.Height() {
 		t.Fatalf("rendered input height = %d, want %d", got, model.input.Height())
 	}
 }
@@ -156,10 +155,10 @@ func TestInputWrapBoundaryKeepsAllRowsVisible(t *testing.T) {
 	for _, length := range []int{width - 1, width, width + 1, width * 2, width*2 + 1} {
 		model.input.SetValue(strings.Repeat("x", length))
 		model.resizeInput()
-		lines := strings.Split(ansi.Strip(model.renderInput()), "\n")
+		lines := strings.Split(ansi.Strip(model.input.View()), "\n")
 		wantHeight := wantHeights[length]
 		if len(lines) != wantHeight {
-			t.Fatalf("length=%d rendered lines=%d, want %d: %q", length, len(lines), wantHeight, ansi.Strip(model.renderInput()))
+			t.Fatalf("length=%d rendered lines=%d, want %d: %q", length, len(lines), wantHeight, ansi.Strip(model.input.View()))
 		}
 		joined := strings.ReplaceAll(strings.Join(lines, ""), "›", "")
 		if got := strings.Count(joined, "x"); got != length {
@@ -175,18 +174,18 @@ func TestInputTypingExpandsPastTwoRows(t *testing.T) {
 	model.input.Focus()
 	for index := 0; index < width*3+1; index++ {
 		var command tea.Cmd
-		model.input, command = model.input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+		model.input, command = model.input.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 		_ = command
 		model.resizeInput()
 		if model.input.Value() != strings.Repeat("x", index+1) {
 			t.Fatalf("typed value at %d = %q", index+1, model.input.Value())
 		}
 	}
-	if got := model.inputDisplayHeight(); got < 4 {
+	if got := model.input.Height(); got < 4 {
 		t.Fatalf("input display height = %d, want at least 4", got)
 	}
-	if model.inputCursorDisplayLine() < model.inputVisibleStart(model.inputDisplayHeight()) {
-		t.Fatalf("cursor row %d is hidden above offset %d", model.inputCursorDisplayLine(), model.inputVisibleStart(model.inputDisplayHeight()))
+	if c := model.View().Cursor; c == nil || c.Y < model.inputTopRow() || c.Y >= model.height {
+		t.Fatalf("cursor outside visible input: %+v", c)
 	}
 }
 
@@ -196,7 +195,7 @@ func TestInputRenderPreservesWideAndSpacedText(t *testing.T) {
 	value := "你好 世界 这是一个跨行输入测试"
 	model.input.SetValue(value)
 	model.resizeInput()
-	rendered := model.renderInput()
+	rendered := model.input.View()
 	plain := ansi.Strip(rendered)
 	if got := strings.Count(plain, "你") + strings.Count(plain, "好") + strings.Count(plain, "世") + strings.Count(plain, "界"); got != 4 {
 		t.Fatalf("wide characters rendered=%d, want 4: %q", got, plain)
@@ -214,13 +213,13 @@ func TestInputRenderPreservesWideAndSpacedText(t *testing.T) {
 func TestInputCtrlASelectsAllText(t *testing.T) {
 	model := newTestModel(t)
 	model.input.SetValue("第一行\nsecond line")
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA}); !handled {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}); !handled {
 		t.Fatal("Ctrl+A was not handled by the TUI")
 	}
-	if got, want := model.selectedInputText(), model.input.Value(); got != want {
+	if got, want := model.input.SelectedText(), model.input.Value(); got != want {
 		t.Fatalf("selected input = %q, want %q", got, want)
 	}
-	if !model.inputSelection.active {
+	if !model.input.HasSelection() {
 		t.Fatal("Ctrl+A did not activate input selection")
 	}
 }
@@ -228,10 +227,10 @@ func TestInputCtrlASelectsAllText(t *testing.T) {
 func TestInputAltASelectsAllText(t *testing.T) {
 	model := newTestModel(t)
 	model.input.SetValue("第一行\nsecond line")
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}, Alt: true}); !handled {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: 'a', Mod: tea.ModAlt}); !handled {
 		t.Fatal("Alt+A was not handled by the TUI")
 	}
-	if got, want := model.selectedInputText(), model.input.Value(); got != want {
+	if got, want := model.input.SelectedText(), model.input.Value(); got != want {
 		t.Fatalf("selected input = %q, want %q", got, want)
 	}
 }
@@ -243,23 +242,21 @@ func TestInputMouseDragSelectsText(t *testing.T) {
 	model.resizeInput()
 	top := model.inputTopRow()
 
-	if _, handled := model.handleInputMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	if _, handled := model.handleInputMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      3,
 		Y:      top,
 	}); !handled {
 		t.Fatal("input mouse press was not handled")
 	}
-	if _, handled := model.handleInputMouse(tea.MouseMsg{
-		Action: tea.MouseActionMotion,
-		Button: tea.MouseButtonLeft,
+	if _, handled := model.handleInputMouse(tea.MouseMotionMsg{
+		Button: tea.MouseLeft,
 		X:      12,
 		Y:      top,
 	}); !handled {
 		t.Fatal("input mouse motion was not handled")
 	}
-	if got, want := model.selectedInputText(), "copy this"; got != want {
+	if got, want := model.input.SelectedText(), "copy this"; got != want {
 		t.Fatalf("drag selection = %q, want %q", got, want)
 	}
 }
@@ -270,53 +267,42 @@ func TestInputMouseDragSelectsAcrossWrappedRows(t *testing.T) {
 	model.input.SetValue(strings.Repeat("x", model.input.Width()+4))
 	model.resizeInput()
 	top := model.inputTopRow()
-	if _, handled := model.handleInputMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	if _, handled := model.handleInputMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      3,
 		Y:      top,
 	}); !handled {
 		t.Fatal("input mouse press was not handled")
 	}
-	if _, handled := model.handleInputMouse(tea.MouseMsg{
-		Action: tea.MouseActionMotion,
-		Button: tea.MouseButtonLeft,
+	if _, handled := model.handleInputMouse(tea.MouseMotionMsg{
+		Button: tea.MouseLeft,
 		X:      8,
 		Y:      top + 1,
 	}); !handled {
 		t.Fatal("input mouse motion was not handled")
 	}
-	selected := model.selectedInputText()
+	selected := model.input.SelectedText()
 	if len([]rune(selected)) != model.input.Width()+4 {
 		t.Fatalf("wrapped drag selection length=%d, want %d", len([]rune(selected)), model.input.Width()+4)
 	}
 }
 
-func TestCursorWriterPlacesPhysicalCursorAfterPrompt(t *testing.T) {
-	var output bytes.Buffer
-	writer := cursorWriter{output: &output}
-	frame := []byte("frame" + cursorMarker + "7\a\r")
-	if _, err := writer.Write(frame); err != nil {
-		t.Fatal(err)
+func TestViewPlacesTerminalCursorForIME(t *testing.T) {
+	model := newTestModel(t)
+	model.resize(40, 24)
+	model.input.Focus()
+	model.input.SetValue("first\n你好")
+	model.resizeInput()
+	view := model.View()
+	if !view.AltScreen || view.MouseMode != tea.MouseModeCellMotion || view.WindowTitle != "GSEA · "+model.displaySessionTitle() {
+		t.Fatalf("frame modes or title missing: %+v", view)
 	}
-	if got, want := output.String(), "\rframe\x1b[8G"; got != want {
-		t.Fatalf("cursor frame = %q, want %q", got, want)
+	if c := view.Cursor; c == nil || c.X != 7 || c.Y != model.inputTopRow()+1 {
+		t.Fatalf("cursor after two wide characters = %+v", c)
 	}
-	output.Reset()
-	frame = []byte("frame" + cursorMarker + "7\a\x1b[24;H")
-	if _, err := writer.Write(frame); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := output.String(), "frame\x1b[24;8H"; got != want {
-		t.Fatalf("alternate-screen cursor frame = %q, want %q", got, want)
-	}
-	output.Reset()
-	frame = []byte("top\r\ninput" + cursorMarker + "2,7\a\r")
-	if _, err := writer.Write(frame); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := output.String(), "\rtop\r\ninput\x1b[2A\x1b[8G"; got != want {
-		t.Fatalf("multiline cursor frame = %q, want %q", got, want)
+	model.input.SelectAll()
+	if model.View().Cursor != nil {
+		t.Fatal("cursor visible over input selection")
 	}
 }
 
@@ -438,8 +424,8 @@ func TestToolBlockRendersDistinctSections(t *testing.T) {
 		}
 	}
 	for index, line := range strings.Split(model.renderBlock(&block), "\n") {
-		if width := ansi.StringWidth(line); width > model.viewport.Width-1 {
-			t.Fatalf("tool line %d width=%d exceeds %d: %q", index, width, model.viewport.Width-1, ansi.Strip(line))
+		if width := ansi.StringWidth(line); width > model.viewport.Width()-1 {
+			t.Fatalf("tool line %d width=%d exceeds %d: %q", index, width, model.viewport.Width()-1, ansi.Strip(line))
 		}
 	}
 }
@@ -476,9 +462,8 @@ func TestToolDetailsDefaultCollapsedAndToggleWithMouse(t *testing.T) {
 	if headerRow < 0 {
 		t.Fatal("collapsed tool header was not rendered")
 	}
-	if _, handled := model.handleTranscriptMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	if _, handled := model.handleTranscriptMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      5,
 		Y:      model.transcriptTopRow() + headerRow,
 	}); !handled {
@@ -502,13 +487,13 @@ func TestToolDetailsKeyboardToggleReturnsToChat(t *testing.T) {
 		toolArguments: `{"path":"approval-check.txt"}`,
 		toolResult:    `{"bytes_written":14}`,
 	}}
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO}); !handled {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}); !handled {
 		t.Fatal("Ctrl+O was not handled")
 	}
 	if model.toolInspector == nil || !strings.Contains(model.transcriptContent, "bytes_written") {
 		t.Fatal("Ctrl+O did not open tool details")
 	}
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO}); !handled {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}); !handled {
 		t.Fatal("second Ctrl+O was not handled")
 	}
 	if model.toolInspector != nil || strings.Contains(model.transcriptContent, "bytes_written") {
@@ -539,8 +524,8 @@ func TestApprovalReasonRendersInlineAndWrapsLongText(t *testing.T) {
 		t.Fatalf("long approval reason was truncated: %q", plain)
 	}
 	for index, line := range strings.Split(long, "\n") {
-		if width := ansi.StringWidth(line); width > model.viewport.Width-1 {
-			t.Fatalf("approval reason line %d width=%d exceeds %d: %q", index, width, model.viewport.Width-1, ansi.Strip(line))
+		if width := ansi.StringWidth(line); width > model.viewport.Width()-1 {
+			t.Fatalf("approval reason line %d width=%d exceeds %d: %q", index, width, model.viewport.Width()-1, ansi.Strip(line))
 		}
 	}
 }
@@ -655,7 +640,7 @@ func TestActiveApprovalStatusAppearsOnceInView(t *testing.T) {
 				Decision: policy.Decision{Reason: "shell commands can modify the system"},
 			})
 			model.refreshTranscript(true)
-			plain := ansi.Strip(model.View())
+			plain := ansi.Strip(model.View().Content)
 			if count := strings.Count(plain, "approval required"); count != 1 {
 				t.Fatalf("attached=%v: pending label appears %d times:\n%s", attached, count, plain)
 			}
@@ -665,7 +650,7 @@ func TestActiveApprovalStatusAppearsOnceInView(t *testing.T) {
 				}
 			}
 			model.resolveApproval(approved)
-			plain = ansi.Strip(model.View())
+			plain = ansi.Strip(model.View().Content)
 			if approved {
 				if strings.Contains(plain, "approval: approved") || !strings.Contains(plain, "✓") {
 					t.Fatalf("attached=%v approved=%v: successful approval was too verbose:\n%s", attached, approved, plain)
@@ -693,7 +678,7 @@ func TestApprovalUsesArrowSelectionAndEnter(t *testing.T) {
 	if rendered := ansi.Strip(model.renderBlock(&model.blocks[0])); !strings.Contains(rendered, "› Allow") || strings.Contains(rendered, "› Reject") {
 		t.Fatalf("initial approval options = %q", rendered)
 	}
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyDown}); !handled {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: tea.KeyDown}); !handled {
 		t.Fatal("down arrow was not handled")
 	}
 	if model.approvalChoice != approvalReject {
@@ -702,10 +687,10 @@ func TestApprovalUsesArrowSelectionAndEnter(t *testing.T) {
 	if rendered := ansi.Strip(model.renderBlock(&model.blocks[0])); !strings.Contains(rendered, "› Reject") || strings.Contains(rendered, "› Allow") {
 		t.Fatalf("selected reject options = %q", rendered)
 	}
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); !handled || model.approvalPending == nil {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: 'y', Text: "y"}); !handled || model.approvalPending == nil {
 		t.Fatal("y unexpectedly resolved approval")
 	}
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter}); !handled {
 		t.Fatal("enter was not handled")
 	}
 	if model.approvalPending != nil || model.blocks[0].approvalState != approvalRejected {
@@ -750,8 +735,8 @@ func TestTranscriptUsesDistinctUserReasoningAndAssistantMarkers(t *testing.T) {
 			t.Fatalf("transcript is missing marker %q: %q", marker, plain)
 		}
 	}
-	if lipgloss.Width(model.transcriptContent) > model.viewport.Width {
-		t.Fatalf("transcript width = %d, want <= %d", lipgloss.Width(model.transcriptContent), model.viewport.Width)
+	if lipgloss.Width(model.transcriptContent) > model.viewport.Width() {
+		t.Fatalf("transcript width = %d, want <= %d", lipgloss.Width(model.transcriptContent), model.viewport.Width())
 	}
 }
 
@@ -839,7 +824,7 @@ func TestModelConsumesReasoningToolAndAssistantEvents(t *testing.T) {
 		},
 	}}
 	model.finishTurn(turnDoneMsg{result: agentruntime.Result{Final: final}})
-	plain := ansi.Strip(model.View())
+	plain := ansi.Strip(model.View().Content)
 	for _, expected := range []string{"inspect runtime", "runtime_diagnostics", "go1.27.0", "prepare answer", "final answer", "reasoning 2", "total 15", "cache 4 40.0%"} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("view does not contain %q:\n%s", expected, plain)
@@ -942,7 +927,7 @@ func TestModelCancelsAnActiveTurn(t *testing.T) {
 	model.turnContext = turnContext
 	model.turnCancel = cancel
 
-	_, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, handled := model.handleKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if !handled || !model.cancelling || model.stage != "Cancelling" {
 		t.Fatalf("cancel state: handled=%v cancelling=%v stage=%q", handled, model.cancelling, model.stage)
 	}
@@ -969,7 +954,7 @@ func TestStatusRetainsContextAndCacheOnNarrowTerminal(t *testing.T) {
 		t.Fatalf("narrow status exceeds the available width: %q", status)
 	}
 	model.resize(40, 24)
-	plain := ansi.Strip(model.View())
+	plain := ansi.Strip(model.View().Content)
 	if !strings.Contains(plain, "ctx") || !strings.Contains(plain, "cache") || !strings.Contains(plain, "pending") {
 		t.Fatalf("40-column view dropped context/cache state: %q", plain)
 	}
@@ -993,7 +978,7 @@ func TestModelKeepsNewTurnsPinnedToBottom(t *testing.T) {
 	if !model.viewport.AtBottom() || !model.autoScroll {
 		t.Fatal("initial transcript is not pinned to bottom")
 	}
-	model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	if model.autoScroll {
 		t.Fatal("manual upward scrolling did not pause auto-scroll")
 	}
@@ -1009,7 +994,7 @@ func TestModelCompletesCommandsAndRecallsHistory(t *testing.T) {
 	model.historyIndex = len(model.inputHistory)
 	model.input.SetValue("/he")
 	model.updateCommandSuggestions()
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyTab}); !handled || model.input.Value() != "/help" {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: tea.KeyTab}); !handled || model.input.Value() != "/help" {
 		t.Fatalf("completed input = %q, handled=%v", model.input.Value(), handled)
 	}
 	if command := model.submit(); command == nil {

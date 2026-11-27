@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
@@ -102,7 +102,7 @@ func TestCancelledWakeSuppressesFurtherWakes(t *testing.T) {
 	if !wake(t, model) {
 		t.Fatal("model did not wake")
 	}
-	model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model.handleKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	model.finishTurn(turnDoneMsg{err: context.Canceled})
 	model.lastWake = time.Time{}
 	if !model.wakeSuppressed || model.wakeAllowed() {

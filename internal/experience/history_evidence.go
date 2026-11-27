@@ -103,16 +103,6 @@ func pickFields(fields map[string]json.RawMessage, names ...string) json.RawMess
 	return raw
 }
 
-func projectionsFor(h history, ids map[string]bool) []evidenceEvent {
-	out := []evidenceEvent{}
-	for _, event := range h.Events {
-		if ids[event.SourceID] {
-			out = append(out, event)
-		}
-	}
-	return out
-}
-
 func evidenceReferences(records []ateports.Record) []EvidenceReference {
 	if len(records) == 0 {
 		return nil

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 	"github.com/vkviyu/go-self-evolving-agent/internal/experience"
@@ -118,7 +118,7 @@ func (model *Model) insertMemorySuggestion(value string) bool {
 	model.memorySuggestionItems = nil
 	model.memorySuggestionIndex = 0
 	model.memoryQuery = ""
-	model.clearInputSelection()
+	model.input.ClearSelection()
 	model.updateCommandSuggestions()
 	model.resizeInput()
 	return true

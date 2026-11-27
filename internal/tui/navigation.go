@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"
 )
@@ -33,10 +33,10 @@ type transcriptPosition struct {
 func (model *Model) readingPosition() transcriptPosition {
 	var position transcriptPosition
 	for _, span := range model.transcriptLayout {
-		if span.start > model.viewport.YOffset {
+		if span.start > model.viewport.YOffset() {
 			break
 		}
-		position = transcriptPosition{blockIndex: span.blockIndex, within: model.viewport.YOffset - span.start, valid: true}
+		position = transcriptPosition{blockIndex: span.blockIndex, within: model.viewport.YOffset() - span.start, valid: true}
 	}
 	return position
 }
@@ -71,7 +71,7 @@ func (model *Model) currentQuestion() (queryAnchor, bool) {
 	var current queryAnchor
 	found := false
 	for _, query := range model.queryAnchors {
-		if query.start > model.viewport.YOffset {
+		if query.start > model.viewport.YOffset() {
 			break
 		}
 		current, found = query, true
@@ -83,7 +83,7 @@ func (model *Model) renderQuestionNavigation(width int) string {
 	if model.toolInspector != nil {
 		return model.toolInspectionHeader(width)
 	}
-	if query, ok := model.currentQuestion(); ok && query.end <= model.viewport.YOffset {
+	if query, ok := model.currentQuestion(); ok && query.end <= model.viewport.YOffset() {
 		prefix, hint := "↑ ", "  Alt+P"
 		preview := ansi.Truncate(query.preview, max(1, width-ansi.StringWidth(prefix+hint)), "…")
 		return model.styles.userMarker.Render(prefix+preview) + model.styles.metadata.Render(hint)
@@ -117,10 +117,6 @@ func (model *Model) displaySessionTitle() string {
 		return model.sessionTitle
 	}
 	return "New conversation"
-}
-
-func (model *Model) windowTitleCommand() tea.Cmd {
-	return tea.SetWindowTitle("GSEA · " + model.displaySessionTitle())
 }
 
 // headerHeight fits session metadata into the available rows while preserving space for
@@ -171,8 +167,8 @@ func (model *Model) toggleSessionInfo() {
 }
 
 func (model *Model) handleHeaderMouse(message tea.MouseMsg) (tea.Cmd, bool) {
-	event := tea.MouseEvent(message)
-	if event.Action != tea.MouseActionPress || event.Button != tea.MouseButtonLeft {
+	event, clicked := message.(tea.MouseClickMsg)
+	if !clicked || event.Button != tea.MouseLeft {
 		return nil, false
 	}
 	if event.Y == 0 {
@@ -184,7 +180,7 @@ func (model *Model) handleHeaderMouse(message tea.MouseMsg) (tea.Cmd, bool) {
 			model.backFromTool()
 			return nil, true
 		}
-		if query, ok := model.currentQuestion(); ok && query.end <= model.viewport.YOffset {
+		if query, ok := model.currentQuestion(); ok && query.end <= model.viewport.YOffset() {
 			model.jumpToQuestion()
 			return nil, true
 		}
@@ -193,9 +189,13 @@ func (model *Model) handleHeaderMouse(message tea.MouseMsg) (tea.Cmd, bool) {
 }
 
 func (model *Model) handleActivityMouse(message tea.MouseMsg) (tea.Cmd, bool) {
-	event := tea.MouseEvent(message)
-	wheel := event.Button == tea.MouseButtonWheelUp || event.Button == tea.MouseButtonWheelDown
-	if !wheel && (event.Action != tea.MouseActionPress || event.Button != tea.MouseButtonLeft) {
+	event := message.Mouse()
+	_, wheel := message.(tea.MouseWheelMsg)
+	if wheel && event.Button != tea.MouseWheelUp && event.Button != tea.MouseWheelDown {
+		return nil, false
+	}
+	_, clicked := message.(tea.MouseClickMsg)
+	if !wheel && (!clicked || event.Button != tea.MouseLeft) {
 		return nil, false
 	}
 	rowIndex := event.Y - model.headerHeight() - 1
@@ -214,7 +214,7 @@ func (model *Model) handleActivityMouse(message tea.MouseMsg) (tea.Cmd, bool) {
 			return nil, false
 		}
 		direction := 1
-		if event.Button == tea.MouseButtonWheelUp {
+		if event.Button == tea.MouseWheelUp {
 			direction = -1
 		}
 		model.panelFocused = true

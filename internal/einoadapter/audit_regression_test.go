@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	einotool "github.com/cloudwego/eino/components/tool"
+	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/policy"
 	"github.com/vkviyu/go-self-evolving-agent/internal/session/memorystore"
 	appTool "github.com/vkviyu/go-self-evolving-agent/internal/tool"
@@ -27,7 +28,7 @@ func TestAdapterRequiresDurableToolCallIdentityAndReturnsPolicyDenial(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools, err := NewTools(pipeline, registry.Snapshot(), "session", "runtime", "turn")
+	tools, err := NewToolsWithExecution(pipeline, registry.Snapshot(), "session", "runtime", "turn", orchestration.ActorScope{}, orchestration.ExecutionBinding{})
 	if err != nil {
 		t.Fatal(err)
 	}

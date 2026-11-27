@@ -10,11 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentmanager"
 	"github.com/vkviyu/go-self-evolving-agent/internal/app"
 	"github.com/vkviyu/go-self-evolving-agent/internal/observation"
@@ -119,8 +118,8 @@ func TestResponsesDeltasReachTUIBeforeCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := &responsesTUIOutput{changed: make(chan struct{}, 1)}
-	program := tea.NewProgram(tuiModel, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithoutSignalHandler())
+	output := newTerminalScreen(t, 140, 40, io.Discard)
+	program := tea.NewProgram(tuiModel, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(140, 40), tea.WithoutSignalHandler())
 	var programErr error
 	finished := make(chan struct{})
 	go func() {
@@ -129,17 +128,16 @@ func TestResponsesDeltasReachTUIBeforeCompletion(t *testing.T) {
 	}()
 	defer func() { cancel(); <-finished }()
 
-	program.Send(tea.WindowSizeMsg{Width: 140, Height: 40})
-	output.waitFor(t, ctx, 0, "Ask GSEA")
-	program.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Count the source files in this workspace.")})
-	program.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	output.waitFor(t, ctx, 0, "Waiting for model output")
+	output.expect(t, ctx, "Ask GSEA")
+	program.Send(tea.PasteMsg{Content: "Count the source files in this workspace."})
+	program.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	output.expect(t, ctx, "Waiting for model output")
 	close(releaseReasoning)
-	output.waitFor(t, ctx, 0, reasoning)
+	output.expect(t, ctx, reasoning)
 	close(releaseAnswer)
-	beforeCompletion := output.waitFor(t, ctx, 0, answer)
+	output.expect(t, ctx, answer)
 	close(releaseCompletion)
-	output.waitFor(t, ctx, beforeCompletion, "Ready")
+	output.expect(t, ctx, answer, "Ready")
 	program.Quit()
 	<-finished
 	if programErr != nil || rootChat.CompletedTurns() != 1 {
@@ -183,39 +181,5 @@ func checkTUITrace(t *testing.T, data, sessionID string) {
 	}
 	if streamTurn == "" || strings.Join(blocks[streamTurn], ",") != "reasoning,text" {
 		t.Fatalf("missing gateway-to-TUI trace: turn=%q blocks=%v", streamTurn, blocks)
-	}
-}
-
-type responsesTUIOutput struct {
-	mu      sync.Mutex
-	output  strings.Builder
-	changed chan struct{}
-}
-
-func (output *responsesTUIOutput) Write(p []byte) (int, error) {
-	output.mu.Lock()
-	defer output.mu.Unlock()
-	n, err := output.output.Write(p)
-	select {
-	case output.changed <- struct{}{}:
-	default:
-	}
-	return n, err
-}
-
-func (output *responsesTUIOutput) waitFor(t *testing.T, ctx context.Context, after int, marker string) int {
-	t.Helper()
-	for {
-		output.mu.Lock()
-		current := output.output.String()
-		output.mu.Unlock()
-		if strings.Contains(current[after:], marker) {
-			return len(current)
-		}
-		select {
-		case <-output.changed:
-		case <-ctx.Done():
-			t.Fatalf("TUI did not render %q: last output %q", marker, current[max(0, len(current)-1200):])
-		}
 	}
 }

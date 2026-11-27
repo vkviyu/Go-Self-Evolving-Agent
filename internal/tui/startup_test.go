@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
@@ -94,7 +94,7 @@ func TestStartupQueuesUntilReadyHydratesHistoryAndForwardsEvents(t *testing.T) {
 	if conversation.calls.Load() != 0 || model.startupOperation == nil {
 		t.Fatal("request crossed the startup barrier")
 	}
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	for _, want := range []string{"Waiting for runtime startup", "Session maintenance", "58s", "ATE opening store / handshake"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing startup detail %q:\n%s", want, view)
@@ -177,7 +177,7 @@ func TestStartupFailureVisibleWithoutSubmissionAndClosedChannelStops(t *testing.
 		if command != nil || model.startup != nil || model.startupErr == nil {
 			t.Fatal("terminal startup state did not stop the receive chain")
 		}
-		if view := ansi.Strip(model.View()); !strings.Contains(view, "Runtime startup failed") {
+		if view := ansi.Strip(model.View().Content); !strings.Contains(view, "Runtime startup failed") {
 			t.Fatalf("startup error is invisible without user input: %s", view)
 		}
 		if waitForStartup(t.Context(), model.startup) != nil {
@@ -198,7 +198,7 @@ func TestStartupQueuedCancellationAndFailureNeverRunRequest(t *testing.T) {
 		if fail {
 			model.Update(StartupMsg{State: StartupState{Err: errors.New("recovery failed")}})
 		} else {
-			model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+			model.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 			model.Update(StartupMsg{State: StartupState{Ready: true}})
 		}
 		if model.startupOperation != nil || model.busy || conversation.calls.Load() != 0 {

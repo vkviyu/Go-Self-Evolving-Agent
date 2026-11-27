@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,13 +17,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
+
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 )
 
 func TestResumeInteractiveSessionIsolation(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil || runtime.GOOS == "windows" {
-		t.Skip("interactive resume requires python3 and a Unix PTY")
+	if runtime.GOOS == "windows" {
+		t.Skip("interactive resume requires a Unix PTY")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
@@ -213,18 +215,89 @@ func TestResumeInteractiveSessionIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	driver, err := filepath.Abs(filepath.Join("testdata", "resume_interactive.py"))
+	const width, height = 300, 48
+	cmd := exec.CommandContext(ctx, currentHost, "resume")
+	cmd.Dir, cmd.Env = cfg.WorkspaceDirectory, env
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: width, Rows: height})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(ctx, python, "-I", driver, currentHost, oldTurn,
-		selected, answer, unfinished, partial, other, otherReply, follow, reply, after, afterReply)
-	cmd.Dir, cmd.Env = cfg.WorkspaceDirectory, env
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("PTY resume: %v\n%s", err, out)
+	screen := newTerminalScreen(t, width, height, terminal)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = io.Copy(screen, terminal)
+	}()
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+		_ = terminal.Close()
+		<-drained
+	})
+	send := func(keys string) {
+		t.Helper()
+		if _, err := io.WriteString(terminal, keys); err != nil {
+			t.Fatal(err)
+		}
 	}
-	t.Log(strings.TrimSpace(string(out)))
+	expect := func(markers ...string) string {
+		t.Helper()
+		return screen.expect(t, ctx, markers...)
+	}
+	click := func(marker string) {
+		t.Helper()
+		for row, line := range strings.Split(expect(marker), "\n") {
+			if strings.Contains(line, marker) {
+				send(fmt.Sprintf("\x1b[<0;3;%dM\x1b[<0;3;%dm", row+1, row+1))
+				return
+			}
+		}
+		t.Fatalf("no visible row for %q", marker)
+	}
+	expect("Resume a previous session", "› "+other, selected)
+	send("\x1b[B")
+	expect("› " + selected)
+	send("\r")
+	history := expect(selected, answer, unfinished, partial, "Partial model response", "2 tool calls", "Ready", "Ask GSEA")
+	for _, unwanted := range []string{other, otherReply, "At session open", "/recoveries"} {
+		if strings.Contains(history, unwanted) {
+			t.Fatalf("unexpected %q in resumed chat:\n%s", unwanted, history)
+		}
+	}
+	click("2 tool calls")
+	if text := expect("‹ Back", "ledger.txt", "Enter open"); strings.Contains(text, answer) {
+		t.Fatalf("root transcript visible in tool list:\n%s", text)
+	}
+	click("ledger.txt")
+	if text := expect("Esc back", "↑↓ scroll", ledger); strings.Contains(text, answer) {
+		t.Fatalf("root transcript visible in tool detail:\n%s", text)
+	}
+	click("‹ Back")
+	expect("Enter open", "ledger.txt")
+	click("‹ Back")
+	if text := expect("2 tool calls", answer, partial); strings.Contains(text, ledger) || strings.Contains(text, "‹ Back") {
+		t.Fatalf("tool inspector still visible:\n%s", text)
+	}
+	const notice = "host executable changed"
+	send(follow + "\r")
+	if text := expect(reply, "Ready"); strings.Contains(text, notice) {
+		t.Fatalf("ordinary follow-up triggered recovery:\n%s", text)
+	}
+	send("/recoveries\r")
+	expect(oldTurn, "unavailable", "requires the original GSEA executable")
+	send("/resume " + oldTurn + "\r")
+	const advice = "Use the original GSEA executable"
+	if text := expect(notice, advice, "Ready"); strings.Count(text, notice) != 1 || strings.Count(text, advice) != 1 {
+		t.Fatalf("duplicate recovery notice:\n%s", text)
+	}
+	send(after + "\r")
+	expect(afterReply, "Ready")
+	send("\x04") // Ctrl-D at the idle prompt.
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("exit interactive resume: %v", err)
+	}
 	if got := int(calls.Load()); got != len(steps) {
 		t.Fatalf("model POSTs = %d, want %d", got, len(steps))
 	}

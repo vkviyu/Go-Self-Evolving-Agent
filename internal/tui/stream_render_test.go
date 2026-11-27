@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
@@ -103,7 +103,7 @@ func BenchmarkGrowingTranscript(b *testing.B) {
 				b.StartTimer()
 				for range 8 {
 					model.Update(delta)
-					_ = model.View()
+					_ = model.View().Content
 				}
 			}
 		})

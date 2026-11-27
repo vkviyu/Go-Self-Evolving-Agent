@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 	"github.com/vkviyu/go-self-evolving-agent/internal/render"
@@ -174,7 +174,7 @@ func (model *Model) transcriptParts() []transcriptPart {
 			}
 			if end-index > 1 {
 				parts = append(parts, transcriptPart{
-					rendered: ansi.Hardwrap(model.renderToolGroupSummary(blocks[index:end]), max(1, model.viewport.Width), true),
+					rendered: ansi.Hardwrap(model.renderToolGroupSummary(blocks[index:end]), max(1, model.viewport.Width()), true),
 					block:    block,
 					index:    index,
 					toolEnd:  end,
@@ -260,7 +260,7 @@ func (model *Model) renderToolGroupSummary(group []transcriptBlock) string {
 		label += " · " + strings.Join(previews, ", ")
 	}
 	// Keep the disclosure and failure count visible even in a narrow terminal.
-	label = ansi.Truncate(label, max(1, model.viewport.Width-5), "…")
+	label = ansi.Truncate(label, max(1, model.viewport.Width()-5), "…")
 	return model.styles.toolHeader.Render("• " + label + "  ▸")
 }
 
@@ -294,8 +294,8 @@ func (model *Model) renderViewport() string {
 		return content
 	}
 	start, end, startColumn, endColumn := model.selectionBounds()
-	start -= model.viewport.YOffset
-	end -= model.viewport.YOffset
+	start -= model.viewport.YOffset()
+	end -= model.viewport.YOffset()
 	lines := strings.Split(content, "\n")
 	for index := max(0, start); index <= min(end, len(lines)-1); index++ {
 		lineStart, lineEnd := 0, ansi.StringWidth(lines[index])
@@ -344,7 +344,7 @@ func (model *Model) renderBlock(block *transcriptBlock) string {
 }
 
 func (model *Model) renderBlockWithDetails(block *transcriptBlock, arguments, result bool) string {
-	viewportWidth := max(1, model.viewport.Width)
+	viewportWidth := max(1, model.viewport.Width())
 	width := max(12, viewportWidth-3)
 	if block.cachedContent == block.content && block.cachedToolName == block.toolName && block.cachedToolArguments == block.toolArguments && block.cachedToolResult == block.toolResult && block.cachedApprovalReason == block.approvalReason && block.cachedArgumentsExpanded == arguments && block.cachedResultExpanded == result && block.cachedWidth == viewportWidth && block.cachedPending == block.pending && block.cachedApproval == block.approvalState && (block.approvalState != approvalPending || block.cachedApprovalChoice == model.approvalChoice) {
 		return block.cachedOutput

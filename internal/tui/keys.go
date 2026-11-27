@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/agentruntime"
 )
@@ -19,26 +19,26 @@ var (
 	jumpQuestionBinding   = key.NewBinding(key.WithKeys("alt+p"))
 )
 
-func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
+func (model *Model) handleKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	if model.approvalPending != nil {
-		switch message.Type {
-		case tea.KeyEnter:
+		switch message.Keystroke() {
+		case "enter":
 			return model.resolveApproval(model.approvalChoice == approvalAllow), true
-		case tea.KeyEsc, tea.KeyCtrlC:
+		case "esc", "ctrl+c":
 			return model.resolveApproval(false), true
-		case tea.KeyUp, tea.KeyLeft:
+		case "up", "left":
 			model.approvalChoice = approvalAllow
 			model.refreshTranscript(false)
 			return nil, true
-		case tea.KeyDown, tea.KeyRight:
+		case "down", "right":
 			model.approvalChoice = approvalReject
 			model.refreshTranscript(false)
 			return nil, true
-		case tea.KeyHome:
+		case "home":
 			model.approvalChoice = approvalAllow
 			model.refreshTranscript(false)
 			return nil, true
-		case tea.KeyEnd:
+		case "end":
 			model.approvalChoice = approvalReject
 			model.refreshTranscript(false)
 			return nil, true
@@ -56,7 +56,8 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 		return command, true
 	}
 	if !model.busy && key.Matches(message, selectAllInputBinding) {
-		model.selectAllInput()
+		model.selection = transcriptSelection{}
+		model.input.SelectAll()
 		return nil, true
 	}
 	if key.Matches(message, toggleToolBinding) {
@@ -75,12 +76,12 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	if key.Matches(message, copyInputBinding) {
-		if selected := model.selectedInputText(); selected != "" {
+		if selected := model.input.SelectedText(); selected != "" {
 			return copyToClipboard(selected, strings.Count(selected, "\n")+1), true
 		}
 	}
-	switch message.Type {
-	case tea.KeyCtrlC:
+	switch message.Keystroke() {
+	case "ctrl+c":
 		// copyInputBinding above already copied any selected input text.
 		if model.busy {
 			if model.startupOperation != nil {
@@ -105,7 +106,7 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		if model.input.Value() != "" {
 			model.input.Reset()
-			model.clearInputSelection()
+			model.input.ClearSelection()
 			model.updateCommandSuggestions()
 			model.memorySuggestions = nil
 			model.memorySuggestionItems = nil
@@ -114,11 +115,11 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return tea.Quit, true
-	case tea.KeyCtrlD:
+	case "ctrl+d":
 		if !model.busy && model.input.Value() == "" {
 			return tea.Quit, true
 		}
-	case tea.KeyEnter:
+	case "enter":
 		if len(model.memorySuggestions) > 0 {
 			model.insertMemorySuggestion(model.memorySuggestions[model.memorySuggestionIndex])
 			return nil, true
@@ -131,41 +132,41 @@ func (model *Model) handleKey(message tea.KeyMsg) (tea.Cmd, bool) {
 			}
 		}
 		return model.submit(), true
-	case tea.KeyPgUp, tea.KeyPgDown:
+	case "pgup", "pgdown":
 		if model.ready {
 			var command tea.Cmd
 			model.viewport, command = model.viewport.Update(message)
-			if message.Type == tea.KeyPgUp {
+			if message.Keystroke() == "pgup" {
 				model.autoScroll = false
 			} else if model.viewport.AtBottom() {
 				model.autoScroll = true
 			}
 			return command, true
 		}
-	case tea.KeyUp:
+	case "up":
 		if len(model.memorySuggestions) > 0 {
 			model.memorySuggestionIndex = (model.memorySuggestionIndex - 1 + len(model.memorySuggestions)) % len(model.memorySuggestions)
 			return nil, true
 		}
-		if model.inputDisplayHeight() == 1 && model.recallPrevious() {
+		if model.input.LineCount() == 1 && model.input.LineInfo().Height == 1 && model.recallPrevious() {
 			return nil, true
 		}
-	case tea.KeyDown:
+	case "down":
 		if len(model.memorySuggestions) > 0 {
 			model.memorySuggestionIndex = (model.memorySuggestionIndex + 1) % len(model.memorySuggestions)
 			return nil, true
 		}
-		if model.inputDisplayHeight() == 1 && model.recallNext() {
+		if model.input.LineCount() == 1 && model.input.LineInfo().Height == 1 && model.recallNext() {
 			return nil, true
 		}
-	case tea.KeyTab:
+	case "tab":
 		if len(model.memorySuggestions) > 0 {
 			model.insertMemorySuggestion(model.memorySuggestions[model.memorySuggestionIndex])
 			return nil, true
 		}
 		if len(model.commandSuggestions) > 0 {
 			model.input.SetValue(model.commandSuggestions[0])
-			model.clearInputSelection()
+			model.input.ClearSelection()
 			model.updateCommandSuggestions()
 			model.resizeInput()
 			return nil, true
@@ -181,7 +182,7 @@ func (model *Model) submit() tea.Cmd {
 	}
 	if command, handled := model.handleCommand(input); handled {
 		model.input.Reset()
-		model.clearInputSelection()
+		model.input.ClearSelection()
 		model.updateCommandSuggestions()
 		model.memorySuggestions = nil
 		model.memorySuggestionItems = nil
@@ -194,7 +195,10 @@ func (model *Model) submit() tea.Cmd {
 	}
 
 	model.closeTranscriptViewer()
-	titleCommand := model.showUserInput(input)
+	model.blocks = append(model.blocks, transcriptBlock{kind: blockUser, content: input})
+	if model.sessionTitle == "" {
+		model.sessionTitle = singleLinePreview(input, 80)
+	}
 	if contextConversation, ok := model.conversation.(pendingContextConversation); ok {
 		model.contextUsage = contextConversation.ContextUsageFor(input)
 	}
@@ -203,26 +207,17 @@ func (model *Model) submit() tea.Cmd {
 	model.historyIndex = len(model.inputHistory)
 	model.historyDraft = ""
 	model.input.Reset()
-	model.clearInputSelection()
+	model.input.ClearSelection()
 	model.updateCommandSuggestions()
 	model.memorySuggestions = nil
 	model.memorySuggestionItems = nil
 	model.memorySuggestionIndex = 0
 	model.resizeInput()
-	return tea.Batch(titleCommand, model.startOperation("Starting request", func(ctx context.Context, events chan<- tea.Msg) tea.Cmd {
+	return model.startOperation("Starting request", func(ctx context.Context, events chan<- tea.Msg) tea.Cmd {
 		return runOperationCommand(ctx, func(turnCtx context.Context, sink agentruntime.EventSink) (agentruntime.Result, error) {
 			return model.runTurnWithMemory(turnCtx, input, sink)
 		}, events, model.ctx)
-	}))
-}
-
-func (model *Model) showUserInput(input string) tea.Cmd {
-	model.blocks = append(model.blocks, transcriptBlock{kind: blockUser, content: input})
-	if model.sessionTitle == "" {
-		model.sessionTitle = singleLinePreview(input, 80)
-		return model.windowTitleCommand()
-	}
-	return nil
+	})
 }
 
 func (model *Model) startOperation(stage string, command func(context.Context, chan<- tea.Msg) tea.Cmd) tea.Cmd {

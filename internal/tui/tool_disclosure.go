@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -106,7 +106,7 @@ func (model *Model) toolInspectionParts(blocks []transcriptBlock) []transcriptPa
 	parts := make([]transcriptPart, 0, len(view.indices))
 	for row, index := range view.indices {
 		block := &blocks[index]
-		name := singleLinePreview(block.toolName, model.viewport.Width)
+		name := singleLinePreview(block.toolName, model.viewport.Width())
 		if name == "" {
 			name = "Tool result"
 		}
@@ -115,11 +115,11 @@ func (model *Model) toolInspectionParts(blocks []transcriptBlock) []transcriptPa
 			marker = "› "
 		}
 		if fail := block.failureSummary(); fail != "" {
-			name = model.styles.failure.Render("! "+name) + "  " + singleLinePreview(fail, model.viewport.Width)
+			name = model.styles.failure.Render("! "+name) + "  " + singleLinePreview(fail, model.viewport.Width())
 		} else {
-			name = model.styles.toolHeader.Render(name) + "  " + model.styles.metadata.Render(toolArgumentPreview(block.toolArguments, model.viewport.Width))
+			name = model.styles.toolHeader.Render(name) + "  " + model.styles.metadata.Render(toolArgumentPreview(block.toolArguments, model.viewport.Width()))
 		}
-		parts = append(parts, transcriptPart{rendered: ansi.Truncate(marker+name, max(1, model.viewport.Width), "…"), block: block, index: index, toolEnd: index + 1})
+		parts = append(parts, transcriptPart{rendered: ansi.Truncate(marker+name, max(1, model.viewport.Width()), "…"), block: block, index: index, toolEnd: index + 1})
 	}
 	return parts
 }
@@ -167,35 +167,37 @@ func (model *Model) toggleToolDisclosureAtLine(line int) bool {
 
 func (model *Model) keepToolSelected() {
 	row := model.toolInspector.selected
-	if row < model.viewport.YOffset {
+	if row < model.viewport.YOffset() {
 		model.viewport.SetYOffset(row)
-	} else if row >= model.viewport.YOffset+model.viewport.Height {
-		model.viewport.SetYOffset(row - model.viewport.Height + 1)
+	} else if row >= model.viewport.YOffset()+model.viewport.Height() {
+		model.viewport.SetYOffset(row - model.viewport.Height() + 1)
 	}
 }
 
-func (model *Model) handleToolInspectionKey(msg tea.KeyMsg) bool {
+func (model *Model) handleToolInspectionKey(msg tea.KeyPressMsg) bool {
 	view := model.toolInspector
-	switch {
-	case key.Matches(msg, toggleToolBinding):
+	if key.Matches(msg, toggleToolBinding) {
 		model.closeToolInspector()
-	case msg.Type == tea.KeyEsc:
+		return true
+	}
+	switch stroke := msg.Keystroke(); stroke {
+	case "esc":
 		model.backFromTool()
-	case msg.Type == tea.KeyEnter:
+	case "enter":
 		if !view.detail {
 			view.detail = true
 			model.resetToolPage()
 		}
-	case msg.Type == tea.KeyUp || msg.Type == tea.KeyDown || msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown:
+	case "up", "down", "pgup", "pgdown":
 		step := 1
-		if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
-			step = max(1, model.viewport.Height-1)
+		if stroke == "pgup" || stroke == "pgdown" {
+			step = max(1, model.viewport.Height()-1)
 		}
-		if msg.Type == tea.KeyUp || msg.Type == tea.KeyPgUp {
+		if stroke == "up" || stroke == "pgup" {
 			step = -step
 		}
 		if view.detail {
-			model.viewport.SetYOffset(model.viewport.YOffset + step)
+			model.viewport.SetYOffset(model.viewport.YOffset() + step)
 		} else {
 			view.selected = max(0, min(len(view.indices)-1, view.selected+step))
 			model.refreshTranscript(false)

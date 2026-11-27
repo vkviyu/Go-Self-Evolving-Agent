@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/vkviyu/go-self-evolving-agent/internal/orchestration"
 	"github.com/vkviyu/go-self-evolving-agent/internal/workspacecoord"
@@ -46,8 +46,8 @@ func (model *Model) selectedMerge() (workspacecoord.MergeRequest, bool) {
 }
 
 // handleViewerKey closes the transcript viewer on Esc.
-func (model *Model) handleViewerKey(message tea.KeyMsg) (tea.Cmd, bool) {
-	if model.viewer == nil || message.Type != tea.KeyEsc {
+func (model *Model) handleViewerKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
+	if model.viewer == nil || message.Keystroke() != "esc" {
 		return nil, false
 	}
 	model.closeTranscriptViewer()
@@ -56,41 +56,34 @@ func (model *Model) handleViewerKey(message tea.KeyMsg) (tea.Cmd, bool) {
 
 // handlePanelKey runs /agents panel actions while the panel has focus. Keys
 // that are not panel actions return the focus to the input.
-func (model *Model) handlePanelKey(message tea.KeyMsg) (tea.Cmd, bool) {
+func (model *Model) handlePanelKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	// Panel keys are letters; once the user writes, they belong to the input.
 	if !model.showActivity || !model.panelFocused || model.input.Value() != "" {
 		return nil, false
 	}
 	confirm := model.panelConfirm
 	model.panelConfirm = ""
-	switch message.Type {
-	case tea.KeyUp:
+	switch message.Keystroke() {
+	case "up":
 		model.panelSelected = max(0, model.panelSelected-1)
-	case tea.KeyDown:
+	case "down":
 		model.panelSelected = max(0, min(model.panelSelected+1, model.panelRows()-1))
-	case tea.KeyEnter:
+	case "enter":
 		return model.openSelectedTranscript(), true
-	case tea.KeyEsc:
+	case "esc":
 		model.panelFocused = false
-	case tea.KeyRunes:
-		if len(message.Runes) != 1 {
-			model.panelFocused = false
-			return nil, false
-		}
-		switch message.Runes[0] {
-		case 'o':
-			return model.openSelectedTranscript(), true
-		case 'x':
-			return model.interruptSelected(confirm), true
-		case 'r':
-			return model.reviewMerges(), true
-		case 'd':
-			return model.discardSelected(confirm), true
-		default:
-			model.panelFocused = false
-			return nil, false
-		}
+	case "o":
+		return model.openSelectedTranscript(), true
+	case "x":
+		return model.interruptSelected(confirm), true
+	case "r":
+		return model.reviewMerges(), true
+	case "d":
+		return model.discardSelected(confirm), true
 	default:
+		if message.Text != "" {
+			model.panelFocused = false
+		}
 		return nil, false
 	}
 	model.refreshTranscript(false)

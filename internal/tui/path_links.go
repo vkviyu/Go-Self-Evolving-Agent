@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Consume SGR sequences separately so their final "m" cannot become the
-// first character of a file path in styled Markdown.
-var fileLinkTokenPattern = regexp.MustCompile(`\x1b\[[0-9;:]*m|(?:(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+|/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+)(?::[0-9]+|#L[0-9]+)?`)
+// Match Glamour's OSC 8 links and SGR styles as whole tokens. A path in a
+// hyperlink destination is metadata, even when its visible label is wrapped.
+var fileLinkTokenPattern = regexp.MustCompile(`\x1b\]8;[^;\x07\x1b]*;[^\x1b\x07]*(?:\x07|\x1b\\)|\x1b\[[0-9;:]*m|(?:(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+|/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+)(?::[0-9]+|#L[0-9]+)?`)
 
 const fileLinkPrefix = "\x1b]8;;"
 
@@ -20,18 +20,36 @@ const fileLinkPrefix = "\x1b]8;;"
 // Apply it after Markdown rendering, which processes link syntax and would
 // otherwise interpret the control sequences as part of the source text.
 func linkFilePaths(content, workspace string) string {
-	if !strings.Contains(content, "/") {
+	if !strings.Contains(content, "/") && !strings.Contains(content, "\x1b]8;") {
 		return content
 	}
-	workspace, err := filepath.Abs(strings.TrimSpace(workspace))
-	if err != nil {
-		workspace = ""
+	workspace = strings.TrimSpace(workspace)
+	if workspace != "" {
+		workspace, _ = filepath.Abs(workspace)
 	}
 	var output strings.Builder
 	last := 0
+	inLink, emittedLink := false, false
 	for _, match := range fileLinkTokenPattern.FindAllStringIndex(content, -1) {
 		token := content[match[0]:match[1]]
-		if token[0] == '\x1b' {
+		if body, ok := strings.CutPrefix(token, "\x1b]8;"); ok {
+			_, target, _ := strings.Cut(body, ";")
+			target = target[:strings.IndexAny(target, "\a\x1b")] // BEL or ST
+			output.WriteString(content[last:match[0]])
+			last = match[1]
+			if emittedLink {
+				output.WriteString(ansi.ResetHyperlink())
+			}
+			inLink, emittedLink = target != "", false
+			if inLink {
+				if dest := markdownLinkTarget(target, workspace); dest != "" {
+					output.WriteString(ansi.SetHyperlink(dest))
+					emittedLink = true
+				}
+			}
+			continue
+		}
+		if inLink || token[0] == '\x1b' {
 			continue
 		}
 		pathToken, lineSuffix := splitPathLine(token)
@@ -40,7 +58,7 @@ func linkFilePaths(content, workspace string) string {
 			continue
 		}
 		output.WriteString(content[last:match[0]])
-		output.WriteString(osc8FileLink(target+lineSuffix, token))
+		output.WriteString(ansi.SetHyperlink(fileLinkURL(target, lineSuffix)) + token + ansi.ResetHyperlink())
 		last = match[1]
 	}
 	if last == 0 {
@@ -101,13 +119,32 @@ func resolveFileToken(token, workspace string) (string, bool) {
 	return absolute, true
 }
 
-func osc8FileLink(path, label string) string {
-	link := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	if index := strings.LastIndex(link.Path, "#L"); index >= 0 {
-		link.Fragment = link.Path[index+1:]
-		link.Path = link.Path[:index]
+// markdownLinkTarget preserves web links and resolves local citations against
+// the same workspace boundary as bare paths in tool output.
+func markdownLinkTarget(target, workspace string) string {
+	u, err := url.Parse(target)
+	if err != nil {
+		return ""
 	}
-	return ansi.SetHyperlink(link.String()) + label + ansi.ResetHyperlink()
+	if (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		return u.String()
+	}
+	if (u.Scheme != "" && u.Scheme != "file") || u.Host != "" || u.Path == "" {
+		return ""
+	}
+	path, line := splitPathLine(u.Path)
+	if u.Fragment != "" {
+		line = "#" + u.Fragment
+	}
+	resolved, ok := resolveFileToken(path, workspace)
+	if !ok {
+		return ""
+	}
+	return fileLinkURL(resolved, line)
+}
+
+func fileLinkURL(path, fragment string) string {
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), Fragment: strings.TrimPrefix(fragment, "#")}).String()
 }
 
 // The viewport and terminal renderer can display any row on its own. Close a

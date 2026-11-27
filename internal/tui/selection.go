@@ -3,8 +3,8 @@ package tui
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -18,14 +18,14 @@ type transcriptSelection struct {
 }
 
 func (model *Model) handleTranscriptMouse(message tea.MouseMsg) (tea.Cmd, bool) {
-	event := tea.MouseEvent(message)
-	if event.IsWheel() {
+	if _, wheel := message.(tea.MouseWheelMsg); wheel {
 		return nil, false
 	}
+	event := message.Mouse()
 	line, inside := model.transcriptLine(event.Y)
-	switch {
-	case event.Action == tea.MouseActionPress && event.Button == tea.MouseButtonLeft:
-		if !inside {
+	switch message.(type) {
+	case tea.MouseClickMsg:
+		if event.Button != tea.MouseLeft || !inside {
 			return nil, false
 		}
 		if model.toggleToolDisclosureAtLine(line) {
@@ -40,18 +40,24 @@ func (model *Model) handleTranscriptMouse(message tea.MouseMsg) (tea.Cmd, bool) 
 			startColumn: column,
 			endColumn:   column,
 		}
-		model.clearInputSelection()
+		model.input.ClearSelection()
 		model.autoScroll = false
 		model.refreshTranscript(false)
 		return nil, true
-	case event.Action == tea.MouseActionMotion && model.selection.dragging:
+	case tea.MouseMotionMsg:
+		if !model.selection.dragging {
+			return nil, false
+		}
 		if inside {
 			model.selection.end = line
 			model.selection.endColumn = max(0, event.X-1)
 		}
 		model.refreshTranscript(false)
 		return nil, true
-	case event.Action == tea.MouseActionRelease && model.selection.dragging:
+	case tea.MouseReleaseMsg:
+		if !model.selection.dragging {
+			return nil, false
+		}
 		if inside {
 			model.selection.end = line
 			model.selection.endColumn = max(0, event.X-1)
@@ -69,38 +75,34 @@ func (model *Model) handleTranscriptMouse(message tea.MouseMsg) (tea.Cmd, bool) 
 }
 
 func (model *Model) handleInputMouse(message tea.MouseMsg) (tea.Cmd, bool) {
-	event := tea.MouseEvent(message)
-	if event.IsWheel() {
-		return nil, false
-	}
+	event := message.Mouse()
 	inside := event.Y >= model.inputTopRow() && event.Y < model.inputTopRow()+model.input.Height()
-	if inside && event.Action == tea.MouseActionPress && event.Button == tea.MouseButtonLeft {
+	x, y := event.X-1, event.Y-model.inputTopRow()
+	switch message.(type) {
+	case tea.MouseClickMsg:
+		if !inside || event.Button != tea.MouseLeft {
+			return nil, false
+		}
 		model.closeToolInspector()
-	}
-	if !inside && !model.inputSelection.dragging {
-		return nil, false
-	}
-	switch {
-	case event.Action == tea.MouseActionPress && event.Button == tea.MouseButtonLeft && inside:
 		model.input.Focus()
 		model.selection = transcriptSelection{}
-		offset := model.inputOffsetAt(event.Y, event.X)
-		model.inputSelection = inputTextSelection{active: true, dragging: true, start: offset, end: offset}
+		model.draggingInput = true
+		model.input.BeginSelection(x, y)
 		return nil, true
-	case event.Action == tea.MouseActionMotion && model.inputSelection.dragging:
+	case tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		if !model.draggingInput {
+			return nil, false
+		}
 		if inside {
-			model.inputSelection.end = model.inputOffsetAt(event.Y, event.X)
+			model.input.ExtendSelection(x, y)
 		}
-		return nil, true
-	case event.Action == tea.MouseActionRelease && model.inputSelection.dragging:
-		if inside {
-			model.inputSelection.end = model.inputOffsetAt(event.Y, event.X)
+		if _, released := message.(tea.MouseReleaseMsg); released {
+			model.draggingInput = false
+			model.input.EndSelection()
+			if text := model.input.SelectedText(); text != "" {
+				return copyToClipboard(text, strings.Count(text, "\n")+1), true
+			}
 		}
-		model.inputSelection.dragging = false
-		if selected := model.selectedInputText(); selected != "" {
-			return copyToClipboard(selected, strings.Count(selected, "\n")+1), true
-		}
-		model.clearInputSelection()
 		return nil, true
 	default:
 		return nil, false
@@ -109,10 +111,10 @@ func (model *Model) handleInputMouse(message tea.MouseMsg) (tea.Cmd, bool) {
 
 func (model *Model) transcriptLine(row int) (int, bool) {
 	top := model.transcriptTopRow()
-	if row < top || row >= top+model.viewport.Height {
+	if row < top || row >= top+model.viewport.Height() {
 		return 0, false
 	}
-	line := model.viewport.YOffset + row - top
+	line := model.viewport.YOffset() + row - top
 	contentLines := strings.Split(model.transcriptContent, "\n")
 	if line < 0 || line >= len(contentLines) {
 		return 0, false

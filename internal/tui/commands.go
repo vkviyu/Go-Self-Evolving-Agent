@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 var commandNames = []string{"/activity", "/agents", "/clear", "/compress", "/context", "/diff", "/exit", "/help", "/info", "/memory", "/merge", "/question", "/reasoning", "/recoveries", "/resume", "/session"}
@@ -134,7 +134,7 @@ func (model *Model) recallPrevious() bool {
 	}
 	model.historyIndex--
 	model.input.SetValue(model.inputHistory[model.historyIndex])
-	model.clearInputSelection()
+	model.input.ClearSelection()
 	model.updateCommandSuggestions()
 	model.resizeInput()
 	return true
@@ -150,7 +150,7 @@ func (model *Model) recallNext() bool {
 	} else {
 		model.input.SetValue(model.inputHistory[model.historyIndex])
 	}
-	model.clearInputSelection()
+	model.input.ClearSelection()
 	model.updateCommandSuggestions()
 	model.resizeInput()
 	return true

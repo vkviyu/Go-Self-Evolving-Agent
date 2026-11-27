@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 
@@ -68,7 +68,7 @@ func newPanelModel(t *testing.T) (*Model, *fakeAgentControl) {
 }
 
 func pressRune(model *Model, value rune) tea.Cmd {
-	command, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{value}})
+	command, _ := model.handleKey(tea.KeyPressMsg{Code: value, Text: string(value)})
 	return command
 }
 
@@ -109,7 +109,7 @@ func TestMouseSwitchesRunningAgentsWithoutChangingRootInput(t *testing.T) {
 	model.input.SetValue("保留输入草稿")
 	model.resize(84, 24)
 	click := func(panelRow int) tea.Cmd {
-		_, command := model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: model.headerHeight() + 1 + panelRow})
+		_, command := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 2, Y: model.headerHeight() + 1 + panelRow})
 		return command
 	}
 	runAction(t, model, click(2))
@@ -136,7 +136,7 @@ func TestMouseOpensAgentFromScrolledFullPanel(t *testing.T) {
 	model.resize(90, 16)
 	const y = 4
 	for range 11 {
-		model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 2, Y: y})
+		model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 2, Y: y})
 	}
 	selected, ok := model.selectedAgent()
 	if !ok || selected.ID != "agent-extra-i" {
@@ -144,7 +144,7 @@ func TestMouseOpensAgentFromScrolledFullPanel(t *testing.T) {
 	}
 	for index, row := range model.activityPanelRows(model.width - 2) {
 		if row.selectable && row.index == model.panelSelected {
-			_, command := model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 2, Y: model.headerHeight() + 1 + index})
+			_, command := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 2, Y: model.headerHeight() + 1 + index})
 			runAction(t, model, command)
 			if model.viewer == nil || model.viewer.agentID != selected.ID {
 				t.Fatal("mouse hit the wrong Agent after scrolling")
@@ -165,11 +165,11 @@ func TestAgentsOverviewShowsFinishedChildrenAndOpensDuringTurn(t *testing.T) {
 	model.activity.Agents[2].InitialPrompt = "Review chapter two\nand list errors"
 	model.busy = true
 	model.resize(80, 24)
-	view := ansi.Strip(model.View())
+	view := ansi.Strip(model.View().Content)
 	if !strings.Contains(view, "Child agents 2 · 1 failed · 1 canceled") {
 		t.Fatalf("finished Agents disappeared from the overview:\n%s", view)
 	}
-	model.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: model.headerHeight() + 1, X: 2})
+	model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: model.headerHeight() + 1, X: 2})
 	if !model.showActivity || !model.busy {
 		t.Fatal("activity click did not open the panel during the turn")
 	}
@@ -181,7 +181,7 @@ func TestAgentsOverviewShowsFinishedChildrenAndOpensDuringTurn(t *testing.T) {
 	}
 	model.toggleActivity()
 	model.input.SetValue("/agents")
-	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !model.showActivity || !model.busy || model.input.Value() != "" {
 		t.Fatal("/agents did not open the panel without sending another turn")
 	}
@@ -189,7 +189,7 @@ func TestAgentsOverviewShowsFinishedChildrenAndOpensDuringTurn(t *testing.T) {
 	model.showSessionInfo = true
 	model.input.SetValue(strings.Repeat("draft ", 20))
 	model.resize(24, 8)
-	if view := ansi.Strip(model.View()); !strings.Contains(view, "Agents 2") || !strings.Contains(view, "Ctrl+G") || lipgloss.Height(view) != 8 {
+	if view := ansi.Strip(model.View().Content); !strings.Contains(view, "Agents 2") || !strings.Contains(view, "Ctrl+G") || lipgloss.Height(view) != 8 {
 		t.Fatalf("small terminal lost the count or the frame layout:\n%s", view)
 	}
 }
@@ -211,7 +211,7 @@ func TestAgentsPanelInterruptsChildAfterConfirmation(t *testing.T) {
 	if command := pressRune(model, 'x'); command != nil || len(control.interrupted) != 0 {
 		t.Fatal("root Agent was interruptible from the panel")
 	}
-	model.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	model.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	if command := pressRune(model, 'x'); command != nil {
 		t.Fatal("interrupt ran without confirmation")
 	}
@@ -231,7 +231,7 @@ func TestAgentsPanelReviewsAndDiscardsMerges(t *testing.T) {
 		t.Fatalf("reviewed = %v", control.reviewed)
 	}
 	for range model.activity.Agents {
-		model.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+		model.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if merge, ok := model.selectedMerge(); !ok || merge.ID != "merge-1" {
 		t.Fatalf("selection did not reach the merge row: %d", model.panelSelected)
@@ -246,14 +246,14 @@ func TestAgentsPanelReviewsAndDiscardsMerges(t *testing.T) {
 func TestAgentsPanelOpensChildTranscript(t *testing.T) {
 	model, _ := newPanelModel(t)
 	model.blocks = append(model.blocks, transcriptBlock{kind: blockUser, content: "root question"})
-	model.handleKey(tea.KeyMsg{Type: tea.KeyDown})
-	command, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	model.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	command, _ := model.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAction(t, model, command)
 	plain := ansi.Strip(model.transcriptContent)
 	if model.viewer == nil || !strings.Contains(plain, "parser inspected") || strings.Contains(plain, "root question") {
 		t.Fatalf("viewer did not replace the transcript: %q", plain)
 	}
-	model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	model.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if model.viewer != nil || !strings.Contains(ansi.Strip(model.transcriptContent), "root question") {
 		t.Fatal("Esc did not return to the root transcript")
 	}
@@ -261,11 +261,11 @@ func TestAgentsPanelOpensChildTranscript(t *testing.T) {
 
 func TestAgentsPanelLeavesTypedTextToInput(t *testing.T) {
 	model, control := newPanelModel(t)
-	model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	model.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if model.panelFocused {
 		t.Fatal("Esc did not return focus to the input")
 	}
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); handled || len(control.reviewed) != 0 {
+	if _, handled := model.handleKey(tea.KeyPressMsg{Code: 'r', Text: "r"}); handled || len(control.reviewed) != 0 {
 		t.Fatal("unfocused panel consumed a letter")
 	}
 }
